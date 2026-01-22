@@ -4,7 +4,14 @@ Automaticky analyzuje herní weby a navrhuje témata článků
 """
 
 import sys
+import io
 from datetime import datetime
+
+# Fix pro Windows konzoli - UTF-8 encoding
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
 import config
 import rss_scraper
 import claude_analyzer
