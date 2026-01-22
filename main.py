@@ -55,6 +55,10 @@ def main():
             print("   Zkontroluj internetové připojení a RSS feedy v config.py\n")
             sys.exit(1)
 
+        # Uložení článků do JSON
+        print()
+        rss_scraper.save_articles_to_json(articles)
+
     except Exception as e:
         print(f"\n❌ Chyba při stahování článků: {e}\n")
         sys.exit(1)

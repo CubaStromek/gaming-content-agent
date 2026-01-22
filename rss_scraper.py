@@ -6,6 +6,7 @@ Stahuje nejnovější články z RSS feedů
 import feedparser
 from datetime import datetime
 from typing import List, Dict
+import json
 import config
 
 def scrape_rss_feed(feed_info: Dict) -> List[Dict]:
@@ -94,6 +95,40 @@ def format_articles_for_analysis(articles: List[Dict]) -> str:
         )
 
     return "\n".join(formatted)
+
+
+def save_articles_to_json(articles: List[Dict], filename: str = None) -> str:
+    """
+    Uloží články do JSON souboru
+
+    Args:
+        articles: Seznam článků
+        filename: Volitelný název souboru (jinak se vygeneruje s datem)
+
+    Returns:
+        Cesta k uloženému souboru
+    """
+    if not filename:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"articles_{timestamp}.json"
+
+    data = {
+        "downloaded_at": datetime.now().isoformat(),
+        "total_articles": len(articles),
+        "sources": list(set(article['source'] for article in articles)),
+        "articles": articles
+    }
+
+    try:
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        print(f"💾 Články uloženy do: {filename}")
+        return filename
+
+    except Exception as e:
+        print(f"❌ Chyba při ukládání článků: {e}")
+        return None
 
 
 if __name__ == "__main__":
