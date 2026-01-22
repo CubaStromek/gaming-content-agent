@@ -47,6 +47,7 @@ cache/
 
 # Output soubory agenta
 articles_*.json
+articles_*.csv
 report_*.txt
 
 # OS

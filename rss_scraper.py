@@ -7,6 +7,7 @@ import feedparser
 from datetime import datetime
 from typing import List, Dict
 import json
+import csv
 import config
 
 def scrape_rss_feed(feed_info: Dict) -> List[Dict]:
@@ -128,6 +129,48 @@ def save_articles_to_json(articles: List[Dict], filename: str = None) -> str:
 
     except Exception as e:
         print(f"❌ Chyba při ukládání článků: {e}")
+        return None
+
+
+def save_articles_to_csv(articles: List[Dict], filename: str = None) -> str:
+    """
+    Uloží články do CSV souboru
+
+    Args:
+        articles: Seznam článků
+        filename: Volitelný název souboru (jinak se vygeneruje s datem)
+
+    Returns:
+        Cesta k uloženému souboru
+    """
+    if not filename:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"articles_{timestamp}.csv"
+
+    try:
+        with open(filename, 'w', encoding='utf-8-sig', newline='') as f:
+            # utf-8-sig přidá BOM pro správné zobrazení v Excelu
+            writer = csv.writer(f)
+
+            # Hlavička
+            writer.writerow(['Zdroj', 'Jazyk', 'Titulek', 'Popis', 'Link', 'Publikováno'])
+
+            # Data
+            for article in articles:
+                writer.writerow([
+                    article['source'],
+                    article['language'],
+                    article['title'],
+                    article['summary'],
+                    article['link'],
+                    article['published']
+                ])
+
+        print(f"📊 Články uloženy do: {filename}")
+        return filename
+
+    except Exception as e:
+        print(f"❌ Chyba při ukládání CSV: {e}")
         return None
 
 
