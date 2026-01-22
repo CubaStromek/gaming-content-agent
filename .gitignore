@@ -46,9 +46,7 @@ cache/
 *.sqlite3
 
 # Output soubory agenta
-articles_*.json
-articles_*.csv
-report_*.txt
+output/
 
 # OS
 .DS_Store

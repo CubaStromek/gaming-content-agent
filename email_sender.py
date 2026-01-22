@@ -103,18 +103,20 @@ Pro změnu nastavení uprav soubor .env
         return False
 
 
-def save_report_to_file(analysis: str, stats: dict) -> str:
+def save_report_to_file(analysis: str, stats: dict, run_dir: str = ".") -> str:
     """
     Uloží report do souboru (záložní varianta)
 
     Args:
         analysis: Analýza od Claude
         stats: Statistiky
+        run_dir: Složka, kam uložit (výchozí aktuální složka)
 
     Returns:
         Cesta k souboru
     """
-    filename = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    import os
+    filename = os.path.join(run_dir, "report.txt")
 
     content = f"""Gaming Content Agent - Report
 Datum: {datetime.now().strftime('%d.%m.%Y %H:%M')}

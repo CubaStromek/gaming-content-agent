@@ -98,20 +98,19 @@ def format_articles_for_analysis(articles: List[Dict]) -> str:
     return "\n".join(formatted)
 
 
-def save_articles_to_json(articles: List[Dict], filename: str = None) -> str:
+def save_articles_to_json(articles: List[Dict], run_dir: str = ".") -> str:
     """
     Uloží články do JSON souboru
 
     Args:
         articles: Seznam článků
-        filename: Volitelný název souboru (jinak se vygeneruje s datem)
+        run_dir: Složka, kam uložit (výchozí aktuální složka)
 
     Returns:
         Cesta k uloženému souboru
     """
-    if not filename:
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f"articles_{timestamp}.json"
+    import os
+    filename = os.path.join(run_dir, "articles.json")
 
     data = {
         "downloaded_at": datetime.now().isoformat(),
@@ -132,20 +131,19 @@ def save_articles_to_json(articles: List[Dict], filename: str = None) -> str:
         return None
 
 
-def save_articles_to_csv(articles: List[Dict], filename: str = None) -> str:
+def save_articles_to_csv(articles: List[Dict], run_dir: str = ".") -> str:
     """
     Uloží články do CSV souboru
 
     Args:
         articles: Seznam článků
-        filename: Volitelný název souboru (jinak se vygeneruje s datem)
+        run_dir: Složka, kam uložit (výchozí aktuální složka)
 
     Returns:
         Cesta k uloženému souboru
     """
-    if not filename:
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f"articles_{timestamp}.csv"
+    import os
+    filename = os.path.join(run_dir, "articles.csv")
 
     try:
         with open(filename, 'w', encoding='utf-8-sig', newline='') as f:

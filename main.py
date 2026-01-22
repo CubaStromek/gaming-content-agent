@@ -16,6 +16,7 @@ import config
 import rss_scraper
 import claude_analyzer
 import email_sender
+import file_manager
 
 def print_banner():
     """Vykreslí banner agenta"""
@@ -46,6 +47,10 @@ def main():
 
     print("✅ Konfigurace OK\n")
 
+    # 1.5. Vytvoření složky pro tento běh
+    run_dir = file_manager.create_run_directory()
+    print(f"📁 Výstupní složka: {run_dir}\n")
+
     # 2. Stahování článků z RSS
     try:
         articles = rss_scraper.scrape_all_feeds()
@@ -57,8 +62,8 @@ def main():
 
         # Uložení článků do JSON a CSV
         print()
-        rss_scraper.save_articles_to_json(articles)
-        rss_scraper.save_articles_to_csv(articles)
+        rss_scraper.save_articles_to_json(articles, run_dir)
+        rss_scraper.save_articles_to_csv(articles, run_dir)
 
     except Exception as e:
         print(f"\n❌ Chyba při stahování článků: {e}\n")
@@ -91,12 +96,12 @@ def main():
         # Pokud email selhal, ulož do souboru
         if not email_sent:
             print("\nℹ️  Ukládám report do souboru...")
-            email_sender.save_report_to_file(analysis, stats)
+            email_sender.save_report_to_file(analysis, stats, run_dir)
 
     except Exception as e:
         print(f"\n⚠️  Chyba při odesílání reportu: {e}")
         print("   Ukládám report do souboru...\n")
-        email_sender.save_report_to_file(analysis, stats)
+        email_sender.save_report_to_file(analysis, stats, run_dir)
 
     # 7. Shrnutí
     print("\n" + "="*70)
