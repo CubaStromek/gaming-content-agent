@@ -45,6 +45,10 @@ cache/
 *.sqlite
 *.sqlite3
 
+# Output soubory agenta
+articles_*.json
+report_*.txt
+
 # OS
 .DS_Store
 Thumbs.db
