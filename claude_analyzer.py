@@ -36,7 +36,7 @@ Pro každé téma napiš:
 - 🎯 ÚHEL POHLEDU: [jak téma uchopit, jaký angle použít]
 - 🔥 VIRALITA: [hodnocení 1-100, jak virální může být]
 - 💡 PROČ TEĎKA: [proč je to aktuální, proč to napsat teď]
-- 🔗 ZDROJE: [odkazy na relevantní články ze vstupních dat]
+- 🔗 ZDROJE: [PŘESNÉ URL adresy relevantních článků - zkopíruj celé URL z Link: polí výše]
 - 🏷️ SEO KLÍČOVÁ SLOVA: [3-5 klíčových slov pro SEO]
 
 DŮLEŽITÉ:
@@ -45,6 +45,7 @@ DŮLEŽITÉ:
 - Ignoruj témata starší než 3 dny (pokud nejsou viral)
 - Dej přednost news a analýzám před recenzemi
 - Pokud jsou tam oznámení nových her, dej jim prioritu
+- V sekci ZDROJE musíš uvést PLNÉ URL adresy (začínající https://), ne čísla článků!
 
 ČLÁNKY K ANALÝZE:
 {articles_text}
