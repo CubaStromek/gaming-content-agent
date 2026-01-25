@@ -9,7 +9,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('GAMEINFO_VERSION', '1.5.1');
+define('GAMEINFO_VERSION', '1.5.2');
 
 /**
  * Theme Setup
@@ -61,7 +61,7 @@ function gameinfo_scripts() {
     // Google Fonts
     wp_enqueue_style(
         'gameinfo-google-fonts',
-        'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap',
+        'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500;700&subset=latin-ext&display=swap',
         array(),
         null
     );
@@ -752,7 +752,7 @@ function gameinfo_login_styles() {
 
         body.login {
             background-color: #101c22;
-            font-family: 'JetBrains Mono', monospace;
+            font-family: 'Fira Code', monospace;
         }
 
         .login #login {
@@ -802,7 +802,7 @@ function gameinfo_login_styles() {
             font-size: 1.5rem !important;
             font-weight: 700;
             color: #fff;
-            font-family: 'JetBrains Mono', monospace;
+            font-family: 'Fira Code', monospace;
         }
 
         .login h1 a::before {
@@ -835,7 +835,7 @@ function gameinfo_login_styles() {
             background-color: #282828 !important;
             border: 1px solid rgba(255, 255, 255, 0.1) !important;
             color: #d1d5db !important;
-            font-family: 'JetBrains Mono', monospace !important;
+            font-family: 'Fira Code', monospace !important;
             font-size: 0.875rem !important;
             padding: 0.75rem !important;
             border-radius: 0.125rem !important;
@@ -857,7 +857,7 @@ function gameinfo_login_styles() {
         /* Labels */
         .login label {
             color: #9ca3af !important;
-            font-family: 'JetBrains Mono', monospace !important;
+            font-family: 'Fira Code', monospace !important;
             font-size: 0.75rem !important;
             text-transform: uppercase;
             letter-spacing: 0.05em;
@@ -874,7 +874,7 @@ function gameinfo_login_styles() {
             background-color: #13a4ec !important;
             border: none !important;
             color: #fff !important;
-            font-family: 'JetBrains Mono', monospace !important;
+            font-family: 'Fira Code', monospace !important;
             font-size: 0.875rem !important;
             font-weight: 600 !important;
             padding: 0.75rem 1.5rem !important;
@@ -933,7 +933,7 @@ function gameinfo_login_styles() {
         .login #nav a,
         .login #backtoblog a {
             color: #6b7280 !important;
-            font-family: 'JetBrains Mono', monospace !important;
+            font-family: 'Fira Code', monospace !important;
             font-size: 0.75rem !important;
             text-decoration: none;
             transition: color 0.2s ease;
@@ -950,7 +950,7 @@ function gameinfo_login_styles() {
             background-color: #282828 !important;
             border-left: 3px solid #13a4ec !important;
             color: #d1d5db !important;
-            font-family: 'JetBrains Mono', monospace !important;
+            font-family: 'Fira Code', monospace !important;
             font-size: 0.75rem !important;
             padding: 0.75rem 1rem !important;
             margin-bottom: 1rem !important;
@@ -973,7 +973,7 @@ function gameinfo_login_styles() {
 
         .login .privacy-policy-page-link a {
             color: #4b5563 !important;
-            font-family: 'JetBrains Mono', monospace !important;
+            font-family: 'Fira Code', monospace !important;
             font-size: 0.625rem !important;
         }
 
