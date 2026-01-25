@@ -17,51 +17,7 @@ get_header();
     </p>
 </div>
 
-<nav class="category-tabs">
-    <a class="category-tab<?php echo is_home() && !is_category() ? ' active' : ''; ?>" href="<?php echo esc_url(home_url('/')); ?>">
-        <span class="material-symbols-outlined">database</span> ALL_LOGS
-    </a>
-    <?php
-    if (has_nav_menu('category')) {
-        wp_nav_menu(array(
-            'theme_location' => 'category',
-            'container'      => false,
-            'items_wrap'     => '%3$s',
-            'walker'         => new GameInfo_Walker_Category_Tabs(),
-        ));
-    } else {
-        // Vyloučit "Nezařazeno" / "Uncategorized" ve všech jazycích
-        $exclude_ids = array(1);
-        $uncategorized_en = get_category_by_slug('uncategorized');
-        if ($uncategorized_en) {
-            $exclude_ids[] = $uncategorized_en->term_id;
-        }
-
-        $categories = get_categories(array(
-            'number'     => 4,
-            'hide_empty' => false, // Show even empty categories
-            'orderby'    => 'name',
-            'order'      => 'ASC',
-            'exclude'    => $exclude_ids,
-        ));
-
-        $icons = array('token', 'rocket_launch', 'memory', 'sports_esports');
-        $i = 0;
-
-        foreach ($categories as $category) {
-            $is_active = is_category($category->term_id) ? ' active' : '';
-            $icon = isset($icons[$i]) ? $icons[$i] : 'folder';
-            ?>
-            <a class="category-tab<?php echo $is_active; ?>" href="<?php echo esc_url(get_category_link($category->term_id)); ?>">
-                <span class="material-symbols-outlined"><?php echo esc_html($icon); ?></span>
-                <?php echo esc_html(mb_strtoupper($category->name, 'UTF-8')); ?>
-            </a>
-            <?php
-            $i++;
-        }
-    }
-    ?>
-</nav>
+<?php get_template_part('template-parts/category', 'tabs'); ?>
 
 <div class="news-list">
     <?php

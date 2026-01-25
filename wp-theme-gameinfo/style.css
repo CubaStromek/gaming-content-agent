@@ -4,7 +4,7 @@ Theme URI: https://gamefo.cz
 Author: GAMEfo Team
 Author URI: https://gamefo.cz
 Description: A terminal-style gaming news theme with dark console aesthetic. Features monospace typography, animated cursors, and a hacker-inspired design. Includes light/dark mode toggle.
-Version: 1.5.4
+Version: 1.5.5
 License: GNU General Public License v2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 Text Domain: gamefo
@@ -1234,15 +1234,27 @@ html[dir="rtl"] .terminal-info {
     transition: all 0.2s ease;
     z-index: 1000;
     padding: 0.5rem 0;
-    margin-top: 0.25rem;
+    padding-top: 0.75rem;
+    margin-top: 0;
+}
+
+/* Invisible bridge to prevent hover gap */
+.dropdown-menu::before {
+    content: '';
+    position: absolute;
+    top: -10px;
+    left: 0;
+    right: 0;
+    height: 10px;
 }
 
 /* Show dropdown on hover */
-.nav-item:hover .dropdown-menu,
-.category-tab-wrapper:hover .dropdown-menu {
-    opacity: 1;
-    visibility: visible;
-    transform: translateY(0);
+.nav-item:hover > .dropdown-menu,
+.category-tab-wrapper:hover > .dropdown-menu {
+    opacity: 1 !important;
+    visibility: visible !important;
+    transform: translateY(0) !important;
+    pointer-events: auto !important;
 }
 
 /* Dropdown links */

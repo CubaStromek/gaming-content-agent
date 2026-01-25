@@ -29,41 +29,7 @@ $latest_posts = new WP_Query($args);
     </p>
 </div>
 
-<nav class="category-tabs">
-    <a class="category-tab active" href="<?php echo esc_url(home_url('/')); ?>">
-        <span class="material-symbols-outlined">database</span> ALL_LOGS
-    </a>
-    <?php
-    // Vyloučit "Nezařazeno" / "Uncategorized" ve všech jazycích
-    $exclude_ids = array(1);
-    $uncategorized_en = get_category_by_slug('uncategorized');
-    if ($uncategorized_en) {
-        $exclude_ids[] = $uncategorized_en->term_id;
-    }
-
-    $categories = get_categories(array(
-        'number'     => 4,
-        'hide_empty' => false,
-        'orderby'    => 'name',
-        'order'      => 'ASC',
-        'exclude'    => $exclude_ids,
-    ));
-
-    $icons = array('token', 'rocket_launch', 'memory', 'sports_esports');
-    $i = 0;
-
-    foreach ($categories as $category) {
-        $icon = isset($icons[$i]) ? $icons[$i] : 'folder';
-        ?>
-        <a class="category-tab" href="<?php echo esc_url(get_category_link($category->term_id)); ?>">
-            <span class="material-symbols-outlined"><?php echo esc_html($icon); ?></span>
-            <?php echo esc_html(mb_strtoupper($category->name, 'UTF-8')); ?>
-        </a>
-        <?php
-        $i++;
-    }
-    ?>
-</nav>
+<?php get_template_part('template-parts/category', 'tabs'); ?>
 
 <div class="news-list">
     <?php if ($latest_posts->have_posts()) : ?>
