@@ -23,7 +23,7 @@
     </div><!-- .console-container -->
 
     <div class="bottom-bar">
-        <div><?php echo esc_html(gameinfo_get_option('site_title', 'game_info')); ?> build <?php echo esc_html(gameinfo_get_option('build_version', '2.4.0-stable')); ?></div>
+        <div><?php echo esc_html(gameinfo_get_option('site_title', 'game_info')); ?> build v<?php echo esc_html(wp_get_theme()->get('Version')); ?></div>
         <div class="bottom-links">
             <?php
             if (has_nav_menu('footer')) {
