@@ -4,7 +4,7 @@ Theme URI: https://gamefo.cz
 Author: GAMEfo Team
 Author URI: https://gamefo.cz
 Description: A terminal-style gaming news theme with dark console aesthetic. Features monospace typography, animated cursors, and a hacker-inspired design. Includes light/dark mode toggle.
-Version: 1.5.9
+Version: 1.7.3
 License: GNU General Public License v2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 Text Domain: gamefo
@@ -413,15 +413,22 @@ a {
 
 .news-item {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 1rem;
-    padding: 1rem 0;
+    padding: 1rem;
+    margin: 0 -1rem;
     cursor: pointer;
     border-bottom: 1px solid var(--border-color);
+    border-radius: 0.25rem;
+    transition: background-color 0.2s ease;
 }
 
 .news-item:last-child {
     border-bottom: none;
+}
+
+.news-item:hover {
+    background-color: rgba(255, 255, 255, 0.03);
 }
 
 .news-item:hover .news-title {
@@ -432,11 +439,17 @@ a {
     color: var(--text-secondary);
 }
 
+/* Light mode hover */
+[data-theme="light"] .news-item:hover {
+    background-color: rgba(0, 0, 0, 0.03);
+}
+
 .news-timestamp {
     color: rgba(74, 222, 128, 0.6);
     font-family: 'Fira Code', monospace;
     font-size: 0.75rem;
     flex-shrink: 0;
+    padding-top: 0.25rem;
     user-select: none;
 }
 
@@ -454,6 +467,8 @@ a {
     font-weight: 500;
     line-height: 1.5;
     transition: color 0.2s ease;
+    margin: 0;
+    padding: 0;
 }
 
 .news-title:hover::after {
@@ -539,6 +554,38 @@ a {
     transition: color 0.2s ease;
 }
 
+/* News Actions (article + audio icons) */
+.news-actions {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    margin-left: auto;
+    flex-shrink: 0;
+    padding-top: 0.1rem;
+}
+
+/* Article Link */
+.article-link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 0.25rem;
+    background-color: rgba(19, 164, 236, 0.1);
+    color: var(--primary);
+    transition: all 0.2s ease;
+}
+
+.article-link:hover {
+    background-color: var(--primary);
+    color: white;
+}
+
+.article-link .material-symbols-outlined {
+    font-size: 1.125rem;
+}
+
 /* Audio Link */
 .audio-link {
     display: flex;
@@ -551,7 +598,6 @@ a {
     background-color: rgba(19, 164, 236, 0.1);
     color: var(--primary);
     transition: all 0.2s ease;
-    margin-left: auto;
 }
 
 .audio-link:hover {
@@ -1359,4 +1405,66 @@ html[dir="rtl"] .terminal-info {
 
 [data-theme="light"] .dropdown-link:hover {
     background-color: rgba(19, 164, 236, 0.08);
+}
+
+/* ============================================
+   WORDPRESS EMBED BLOCKS (Spotify, YouTube, etc.)
+   ============================================ */
+
+/* Reset figure margins in content */
+.entry-content figure {
+    margin: 0 0 1.5rem 0;
+    padding: 0;
+}
+
+/* WordPress embed blocks - minimal spacing */
+.entry-content .wp-block-embed,
+.entry-content figure.wp-block-embed {
+    margin: 0 0 1.5rem 0 !important;
+    padding: 0 !important;
+}
+
+/* Embed wrapper - ensure proper positioning context */
+.wp-block-embed__wrapper {
+    position: relative;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+/* ---- Spotify specific ---- */
+.wp-block-embed-spotify,
+.is-provider-spotify {
+    margin-bottom: 1rem !important;
+}
+
+/* Disable WordPress aspect ratio for Spotify (fixed height) */
+.wp-block-embed-spotify.wp-has-aspect-ratio .wp-block-embed__wrapper::before,
+.is-provider-spotify.wp-has-aspect-ratio .wp-block-embed__wrapper::before {
+    display: none !important;
+    content: none !important;
+}
+
+.wp-block-embed-spotify iframe,
+.is-provider-spotify iframe {
+    position: relative !important;
+    width: 100% !important;
+    height: 152px !important;
+    border-radius: 12px;
+    display: block;
+}
+
+/* ---- YouTube and video embeds ---- */
+/* Let WordPress default responsive embed styles handle aspect ratio */
+/* Just ensure iframe fills the container properly */
+.wp-block-embed-youtube iframe,
+.wp-block-embed-vimeo iframe,
+.is-provider-youtube iframe {
+    border-radius: 0.25rem;
+}
+
+/* Figcaption spacing */
+.entry-content figure figcaption {
+    margin-top: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--text-muted);
 }

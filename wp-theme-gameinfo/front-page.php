@@ -9,13 +9,17 @@
 
 get_header();
 
-// Force query for latest posts
+// Get current page number
+$paged = (get_query_var('paged')) ? get_query_var('paged') : 1;
+
+// Force query for latest posts with pagination
 $args = array(
     'post_type'      => 'post',
     'post_status'    => 'publish',
     'posts_per_page' => get_option('posts_per_page', 10),
     'orderby'        => 'date',
     'order'          => 'DESC',
+    'paged'          => $paged,
 );
 
 $latest_posts = new WP_Query($args);
@@ -38,18 +42,6 @@ $latest_posts = new WP_Query($args);
         <?php endwhile; ?>
         <?php wp_reset_postdata(); ?>
 
-        <div class="news-item" style="opacity: 0.5;">
-            <span class="news-timestamp"><?php echo esc_html(date('d/m/Y', strtotime('-1 day'))); ?></span>
-            <div class="news-content">
-                <h2 class="news-title" style="color: #6b7280;">
-                    [END_OF_LOGS] <?php esc_html_e('No further entries for previous session', 'gameinfo-terminal'); ?>
-                </h2>
-                <div class="news-meta">
-                    <span>TERMINAL_REACHED</span>
-                </div>
-            </div>
-        </div>
-
     <?php else : ?>
         <div class="news-item">
             <span class="news-timestamp"><?php echo esc_html(date('d/m/Y')); ?></span>
@@ -65,6 +57,24 @@ $latest_posts = new WP_Query($args);
         </div>
     <?php endif; ?>
 </div>
+
+<?php if ($latest_posts->max_num_pages > 1) : ?>
+<nav class="navigation pagination" aria-label="<?php esc_attr_e('Posts navigation', 'gameinfo-terminal'); ?>">
+    <div class="nav-links">
+        <?php
+        echo paginate_links(array(
+            'total'        => $latest_posts->max_num_pages,
+            'current'      => $paged,
+            'prev_text'    => '<span class="material-symbols-outlined" style="font-size: 1rem; vertical-align: middle;">chevron_left</span> PREV',
+            'next_text'    => 'NEXT <span class="material-symbols-outlined" style="font-size: 1rem; vertical-align: middle;">chevron_right</span>',
+            'type'         => 'plain',
+            'end_size'     => 1,
+            'mid_size'     => 1,
+        ));
+        ?>
+    </div>
+</nav>
+<?php endif; ?>
 
 <?php
 get_footer();

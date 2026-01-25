@@ -25,12 +25,16 @@ $audio_url = gameinfo_get_audio_url();
                 <?php echo esc_html($category_tag); ?>
             </span>
             <span><?php echo esc_html($source); ?></span>
-            <span class="read-more"><?php esc_html_e('Read full report...', 'gameinfo-terminal'); ?></span>
         </div>
     </div>
-    <?php if (!empty($audio_url)) : ?>
-        <a href="<?php echo esc_url($audio_url); ?>" class="audio-link" target="_blank" title="<?php esc_attr_e('Listen to audio version', 'gameinfo-terminal'); ?>">
-            <span class="material-symbols-outlined">headphones</span>
+    <div class="news-actions">
+        <a href="<?php the_permalink(); ?>" class="article-link" title="<?php esc_attr_e('Read full article', 'gameinfo-terminal'); ?>">
+            <span class="material-symbols-outlined">article</span>
         </a>
-    <?php endif; ?>
+        <?php if (!empty($audio_url)) : ?>
+            <a href="<?php echo esc_url($audio_url); ?>" class="audio-link" target="_blank" title="<?php esc_attr_e('Listen to audio version', 'gameinfo-terminal'); ?>">
+                <span class="material-symbols-outlined">headphones</span>
+            </a>
+        <?php endif; ?>
+    </div>
 </article>
