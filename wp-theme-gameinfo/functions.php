@@ -197,14 +197,14 @@ class GameInfo_Walker_Category_Tabs extends Walker_Nav_Menu {
             $output .= '<div class="category-tab-wrapper' . $parent_class . '">';
             $output .= '<a class="category-tab' . $active_class . '" href="' . esc_url($item->url) . '">';
             $output .= '<span class="material-symbols-outlined">' . esc_html($icon) . '</span>';
-            $output .= esc_html(strtoupper($item->title));
+            $output .= esc_html(mb_strtoupper($item->title, 'UTF-8'));
             if ($has_children) {
                 $output .= ' <span class="dropdown-arrow">▼</span>';
             }
             $output .= '</a>';
         } else {
             $output .= '<a class="dropdown-link' . $active_class . '" href="' . esc_url($item->url) . '">';
-            $output .= esc_html($item->title);
+            $output .= esc_html(mb_strtoupper($item->title, 'UTF-8'));
             $output .= '</a>';
         }
     }

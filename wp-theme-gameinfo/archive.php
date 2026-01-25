@@ -12,11 +12,11 @@ get_header();
     <h1 class="page-title mono-text">
         <?php
         if (is_category()) {
-            echo 'FILTER_BY: [' . esc_html(strtoupper(single_cat_title('', false))) . ']';
+            echo 'FILTER_BY: [' . esc_html(mb_strtoupper(single_cat_title('', false), 'UTF-8')) . ']';
         } elseif (is_tag()) {
-            echo 'TAG_SEARCH: [' . esc_html(strtoupper(single_tag_title('', false))) . ']';
+            echo 'TAG_SEARCH: [' . esc_html(mb_strtoupper(single_tag_title('', false), 'UTF-8')) . ']';
         } elseif (is_author()) {
-            echo 'AUTHOR_LOGS: [' . esc_html(strtoupper(get_the_author())) . ']';
+            echo 'AUTHOR_LOGS: [' . esc_html(mb_strtoupper(get_the_author(), 'UTF-8')) . ']';
         } elseif (is_date()) {
             if (is_year()) {
                 echo 'YEAR_ARCHIVE: [' . esc_html(get_the_date('Y')) . ']';
@@ -74,7 +74,7 @@ get_header();
         ?>
         <a class="category-tab<?php echo $is_active; ?>" href="<?php echo esc_url(get_category_link($category->term_id)); ?>">
             <span class="material-symbols-outlined"><?php echo esc_html($icon); ?></span>
-            <?php echo esc_html(strtoupper($category->name)); ?>
+            <?php echo esc_html(mb_strtoupper($category->name, 'UTF-8')); ?>
         </a>
         <?php
         $i++;

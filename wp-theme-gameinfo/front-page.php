@@ -57,7 +57,7 @@ $latest_posts = new WP_Query($args);
         ?>
         <a class="category-tab" href="<?php echo esc_url(get_category_link($category->term_id)); ?>">
             <span class="material-symbols-outlined"><?php echo esc_html($icon); ?></span>
-            <?php echo esc_html(strtoupper($category->name)); ?>
+            <?php echo esc_html(mb_strtoupper($category->name, 'UTF-8')); ?>
         </a>
         <?php
         $i++;

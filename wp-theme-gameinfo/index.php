@@ -53,7 +53,7 @@ get_header();
             ?>
             <a class="category-tab<?php echo $is_active; ?>" href="<?php echo esc_url(get_category_link($category->term_id)); ?>">
                 <span class="material-symbols-outlined"><?php echo esc_html($icon); ?></span>
-                <?php echo esc_html(strtoupper($category->name)); ?>
+                <?php echo esc_html(mb_strtoupper($category->name, 'UTF-8')); ?>
             </a>
             <?php
             $i++;
