@@ -142,7 +142,7 @@ class GameInfo_Walker_Nav_Menu extends Walker_Nav_Menu {
             $output .= '<a class="nav-link text-gray-500 hover:text-white transition-colors' . $active_class . '" href="' . esc_url($item->url) . '">';
             $output .= '[' . esc_html($item->title) . ']';
             if ($has_children) {
-                $output .= ' <span class="dropdown-arrow">▼</span>';
+                $output .= ' <span class="dropdown-arrow material-symbols-outlined">expand_more</span>';
             }
             $output .= '</a>';
         } else {
@@ -199,7 +199,7 @@ class GameInfo_Walker_Category_Tabs extends Walker_Nav_Menu {
             $output .= '<span class="material-symbols-outlined">' . esc_html($icon) . '</span>';
             $output .= esc_html(mb_strtoupper($item->title, 'UTF-8'));
             if ($has_children) {
-                $output .= ' <span class="dropdown-arrow">▼</span>';
+                $output .= ' <span class="dropdown-arrow material-symbols-outlined">expand_more</span>';
             }
             $output .= '</a>';
         } else {
