@@ -4,7 +4,7 @@ Theme URI: https://gamefo.cz
 Author: GAMEfo Team
 Author URI: https://gamefo.cz
 Description: A terminal-style gaming news theme with dark console aesthetic. Features monospace typography, animated cursors, and a hacker-inspired design. Includes light/dark mode toggle.
-Version: 1.5.6
+Version: 1.5.7
 License: GNU General Public License v2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 Text Domain: gamefo
@@ -1301,31 +1301,37 @@ html[dir="rtl"] .terminal-info {
     letter-spacing: 0.05em;
 }
 
-/* Mobile responsive dropdown */
+/* Mobile responsive dropdown - overlay style */
 @media (max-width: 768px) {
     .dropdown-menu {
-        position: static;
-        opacity: 1;
-        visibility: visible;
-        transform: none;
-        box-shadow: none;
-        border: none;
-        background-color: transparent;
-        padding-left: 1rem;
-        margin-top: 0;
-        max-height: 0;
-        overflow: hidden;
-        transition: max-height 0.3s ease;
-    }
-
-    .nav-item.open .dropdown-menu,
-    .category-tab-wrapper.open .dropdown-menu {
-        max-height: 500px;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: auto;
+        min-width: 180px;
+        background-color: var(--header-bg, #181818);
+        border: 1px solid var(--border-color);
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+        padding: 0.5rem 0;
+        z-index: 1000;
     }
 
     .dropdown-link {
-        padding: 0.4rem 0.75rem;
+        padding: 0.5rem 1rem;
         font-size: 0.8rem;
+    }
+
+    /* Touch-friendly: show on tap via .open class */
+    .category-tab-wrapper .dropdown-menu {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+    }
+
+    .category-tab-wrapper.open .dropdown-menu {
+        opacity: 1 !important;
+        visibility: visible !important;
+        pointer-events: auto !important;
     }
 }
 
