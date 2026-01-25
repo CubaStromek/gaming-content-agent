@@ -39,8 +39,10 @@ RSS_FEEDS = [
     {"name": "Polygon", "url": "https://www.polygon.com/rss/index.xml", "lang": "en"},
 
     # České weby
-    {"name": "Bonusweb", "url": "https://bonusweb.idnes.cz/rss.aspx", "lang": "cs"},
-    {"name": "Games.cz", "url": "https://www.games.cz/rss/novinky/", "lang": "cs"},
+    {"name": "Hrej.cz", "url": "https://hrej.cz/rss/all", "lang": "cs"},
+    {"name": "Zing.cz", "url": "https://zing.cz/rss/clanky", "lang": "cs"},
+    {"name": "Jiří Bigas", "url": "https://jiribigas.substack.com/feed", "lang": "cs"},
+    {"name": "Games.cz", "url": "https://games.tiscali.cz/rss.xml", "lang": "cs"},
 ]
 
 def validate_config():
@@ -49,12 +51,6 @@ def validate_config():
 
     if not CLAUDE_API_KEY or CLAUDE_API_KEY == "sk-ant-api03-your-api-key-here":
         errors.append("CLAUDE_API_KEY")
-
-    if not EMAIL_TO:
-        errors.append("EMAIL_TO")
-
-    if SMTP_USER and not SMTP_PASSWORD:
-        errors.append("SMTP_PASSWORD (pokud chceš posílat emaily)")
 
     if errors:
         print("⚠️  Chybí následující nastavení v .env:")

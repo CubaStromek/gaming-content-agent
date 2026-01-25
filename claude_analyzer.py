@@ -22,18 +22,26 @@ def analyze_gaming_articles(articles_text: str) -> str:
 
     client = anthropic.Anthropic(api_key=config.CLAUDE_API_KEY)
 
+    # Spočítej počet článků pro dynamický prompt
+    article_count = articles_text.count("ČLÁNEK ")
+    max_topics = min(5, max(1, article_count))
+
     prompt = f"""Analyzuj tyto herní články z dnešního dne a vytvoř report pro českého herního blogera.
 
 ÚKOL:
-1. Identifikuj TOP 5 nejvíce relevantních témat pro český herní blog
+1. Identifikuj TOP {max_topics} nejvíce relevantních témat pro český herní blog (POUZE {max_topics} - NE VÍCE!)
 2. Pro každé téma navrhni konkrétní článek, který by mohl napsat
-3. Uveď důvod, proč je téma zajímavé a aktuální
+3. Poskytni dostatek kontextu pro vytvoření grafických bannerů k článku
+4. DŮLEŽITÉ: Každé téma MUSÍ mít vyplněné VŠECHNY sekce včetně KONTEXTU a ZDROJŮ. Nevytvářej prázdná témata!
 
 FORMÁT VÝSTUPU:
 Pro každé téma napiš:
 - 🎮 TÉMA: [název tématu]
 - 📰 NAVRŽENÝ TITULEK: [catchy český titulek článku]
 - 🎯 ÚHEL POHLEDU: [jak téma uchopit, jaký angle použít]
+- 📝 KONTEXT: [2-3 věty shrnující klíčové informace - co se stalo, proč je to důležité, jaké jsou detaily]
+- 💬 HLAVNÍ HOOK: [jedna úderná věta nebo číslo pro banner - např. "Prodáno 10 milionů kopií za 3 dny" nebo "První gameplay záběry odhaleny"]
+- 🖼️ VIZUÁLNÍ NÁVRH: [co by mělo být na banneru - jaká hra, postava, scéna, barvy, nálada]
 - 🔥 VIRALITA: [hodnocení 1-100, jak virální může být]
 - 💡 PROČ TEĎKA: [proč je to aktuální, proč to napsat teď]
 - 🔗 ZDROJE: [PŘESNÉ URL adresy relevantních článků - zkopíruj celé URL z Link: polí výše]
@@ -46,18 +54,21 @@ DŮLEŽITÉ:
 - Dej přednost news a analýzám před recenzemi
 - Pokud jsou tam oznámení nových her, dej jim prioritu
 - V sekci ZDROJE musíš uvést PLNÉ URL adresy (začínající https://), ne čísla článků!
+- KONTEXT musí obsahovat konkrétní fakta a čísla, ne obecné fráze
+- NIKDY nevytvářej prázdná témata! Každé téma musí mít kompletní obsah všech sekcí
+- Počet témat musí odpovídat počtu dostupných článků (max {max_topics})
 
 ČLÁNKY K ANALÝZE:
 {articles_text}
 
 ---
 
-VÝSTUP (seřaď od nejdůležitějšího):"""
+VÝSTUP (seřaď od nejdůležitějšího, vytvoř PŘESNĚ {max_topics} témat s kompletním obsahem):"""
 
     try:
         message = client.messages.create(
             model="claude-3-haiku-20240307",
-            max_tokens=3000,
+            max_tokens=4000,
             temperature=0.7,
             messages=[{
                 "role": "user",
@@ -100,7 +111,8 @@ def extract_key_insights(articles: List[Dict]) -> Dict:
         'total_articles': len(articles),
         'sources': {},
         'languages': {},
-        'most_common_words': []
+        'most_common_words': [],
+        'all_articles': articles  # Přidáno pro zobrazení zbylých článků
     }
 
     # Počet článků podle zdrojů
@@ -114,6 +126,22 @@ def extract_key_insights(articles: List[Dict]) -> Dict:
         insights['languages'][lang] = insights['languages'].get(lang, 0) + 1
 
     return insights
+
+
+def extract_used_urls_from_analysis(analysis: str) -> set:
+    """
+    Extrahuje URL adresy použité v analýze Claude
+
+    Args:
+        analysis: Text analýzy od Claude
+
+    Returns:
+        Set URL adres
+    """
+    import re
+    url_pattern = r'https?://[^\s<>"\')\]]+[^\s<>"\')\].,]'
+    urls = re.findall(url_pattern, analysis)
+    return set(urls)
 
 
 if __name__ == "__main__":

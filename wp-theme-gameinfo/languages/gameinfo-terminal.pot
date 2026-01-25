@@ -1,0 +1,166 @@
+# Copyright (C) 2024 GameInfo Terminal Theme
+# This file is distributed under the same license as the GameInfo Terminal package.
+msgid ""
+msgstr ""
+"Project-Id-Version: GameInfo Terminal 1.0.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2024-01-01 00:00+0000\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: header.php
+msgid "System Online"
+msgstr ""
+
+#: header.php
+msgid "Terminal"
+msgstr ""
+
+#: footer.php
+msgid "Type /help for navigation commands"
+msgstr ""
+
+#: footer.php
+msgid "SYNCED"
+msgstr ""
+
+#: functions.php
+msgid "Primary Menu"
+msgstr ""
+
+#: functions.php
+msgid "Footer Menu"
+msgstr ""
+
+#: functions.php
+msgid "Category Tabs"
+msgstr ""
+
+#: functions.php
+msgid "Sidebar"
+msgstr ""
+
+#: functions.php
+msgid "Add widgets here."
+msgstr ""
+
+#: functions.php
+msgid "Footer Widget Area"
+msgstr ""
+
+#: functions.php
+msgid "Footer widgets."
+msgstr ""
+
+#: functions.php
+msgid "QUERY_SYSTEM..."
+msgstr ""
+
+#: functions.php
+msgid "Source Information"
+msgstr ""
+
+#: functions.php
+msgid "Source Tag:"
+msgstr ""
+
+#: functions.php
+msgid "Theme Options"
+msgstr ""
+
+#: functions.php
+msgid "Terminal Title"
+msgstr ""
+
+#: functions.php
+msgid "Terminal Path"
+msgstr ""
+
+#: functions.php
+msgid "Build Version"
+msgstr ""
+
+#: index.php
+msgid "DATA_STREAM"
+msgstr ""
+
+#: index.php
+msgid "Last indexed:"
+msgstr ""
+
+#: index.php
+msgid "LOAD_MORE --page"
+msgstr ""
+
+#: index.php
+msgid "No posts found."
+msgstr ""
+
+#: single.php
+msgid "Posted on"
+msgstr ""
+
+#: single.php
+msgid "by"
+msgstr ""
+
+#: single.php
+msgid "Read more"
+msgstr ""
+
+#: search.php
+msgid "Search Results for:"
+msgstr ""
+
+#: search.php
+msgid "Nothing found"
+msgstr ""
+
+#: search.php
+msgid "Sorry, but nothing matched your search terms."
+msgstr ""
+
+#: 404.php
+msgid "ERROR_404"
+msgstr ""
+
+#: 404.php
+msgid "Page not found"
+msgstr ""
+
+#: 404.php
+msgid "The requested resource could not be located."
+msgstr ""
+
+#: archive.php
+msgid "Category:"
+msgstr ""
+
+#: archive.php
+msgid "Tag:"
+msgstr ""
+
+#: archive.php
+msgid "Author:"
+msgstr ""
+
+#: archive.php
+msgid "Archives"
+msgstr ""
+
+#: comments.php
+msgid "Comments"
+msgstr ""
+
+#: comments.php
+msgid "Leave a comment"
+msgstr ""
+
+#: comments.php
+msgid "Comments are closed."
+msgstr ""

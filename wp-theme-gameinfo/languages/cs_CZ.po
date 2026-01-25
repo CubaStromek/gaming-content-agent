@@ -1,0 +1,204 @@
+# Czech translation for GameInfo Terminal Theme
+# Copyright (C) 2024 GameInfo Terminal Theme
+# This file is distributed under the same license as the GameInfo Terminal package.
+msgid ""
+msgstr ""
+"Project-Id-Version: GameInfo Terminal 1.0.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2024-01-01 00:00+0000\n"
+"PO-Revision-Date: 2024-01-01 00:00+0000\n"
+"Last-Translator: \n"
+"Language-Team: Czech\n"
+"Language: cs_CZ\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=(n==1 ? 0 : n>=2 && n<=4 ? 1 : 2);\n"
+
+#: header.php
+msgid "System Online"
+msgstr "System Aktivni"
+
+#: header.php
+msgid "Terminal"
+msgstr "Terminal"
+
+#: footer.php
+msgid "Type /help for navigation commands"
+msgstr "Zadej /help pro navigacni prikazy"
+
+#: footer.php
+msgid "SYNCED"
+msgstr "SYNCHRONIZOVANO"
+
+#: functions.php
+msgid "Primary Menu"
+msgstr "Hlavni menu"
+
+#: functions.php
+msgid "Footer Menu"
+msgstr "Paticka menu"
+
+#: functions.php
+msgid "Category Tabs"
+msgstr "Zalozky kategorii"
+
+#: functions.php
+msgid "Sidebar"
+msgstr "Bocni panel"
+
+#: functions.php
+msgid "Add widgets here."
+msgstr "Pridat widgety zde."
+
+#: functions.php
+msgid "Footer Widget Area"
+msgstr "Oblast widgetu v paticce"
+
+#: functions.php
+msgid "Footer widgets."
+msgstr "Widgety paticky."
+
+#: functions.php
+msgid "QUERY_SYSTEM..."
+msgstr "DOTAZ_SYSTEM..."
+
+#: functions.php
+msgid "Source Information"
+msgstr "Informace o zdroji"
+
+#: functions.php
+msgid "Source Tag:"
+msgstr "Stitek zdroje:"
+
+#: functions.php
+msgid "Theme Options"
+msgstr "Nastaveni sablony"
+
+#: functions.php
+msgid "Terminal Title"
+msgstr "Nazev terminalu"
+
+#: functions.php
+msgid "Terminal Path"
+msgstr "Cesta terminalu"
+
+#: functions.php
+msgid "Build Version"
+msgstr "Verze sestaveni"
+
+#: index.php
+msgid "DATA_STREAM"
+msgstr "DATA_STREAM"
+
+#: index.php
+msgid "Last indexed:"
+msgstr "Posledni indexace:"
+
+#: index.php
+msgid "LOAD_MORE --page"
+msgstr "NACIST_DALSI --stranka"
+
+#: index.php
+msgid "No posts found."
+msgstr "Zadne clanky nenalezeny."
+
+#: single.php
+msgid "Posted on"
+msgstr "Publikovano"
+
+#: single.php
+msgid "by"
+msgstr "autorem"
+
+#: single.php
+msgid "Read more"
+msgstr "Cist dale"
+
+#: search.php
+msgid "Search Results for:"
+msgstr "Vysledky hledani pro:"
+
+#: search.php
+msgid "Nothing found"
+msgstr "Nic nenalezeno"
+
+#: search.php
+msgid "Sorry, but nothing matched your search terms."
+msgstr "Bohuzel, zadne vysledky neodpovidaji vasemu dotazu."
+
+#: 404.php
+msgid "ERROR_404"
+msgstr "CHYBA_404"
+
+#: 404.php
+msgid "Page not found"
+msgstr "Stranka nenalezena"
+
+#: 404.php
+msgid "The requested resource could not be located."
+msgstr "Pozadovany zdroj nebyl nalezen."
+
+#: archive.php
+msgid "Category:"
+msgstr "Kategorie:"
+
+#: archive.php
+msgid "Tag:"
+msgstr "Stitek:"
+
+#: archive.php
+msgid "Author:"
+msgstr "Autor:"
+
+#: archive.php
+msgid "Archives"
+msgstr "Archivy"
+
+#: comments.php
+msgid "Comments"
+msgstr "Komentare"
+
+#: comments.php
+msgid "Leave a comment"
+msgstr "Zanechat komentar"
+
+#: comments.php
+msgid "Comments are closed."
+msgstr "Komentare jsou uzavreny."
+
+#: index.php
+msgid "Latest Game Intel"
+msgstr "Nejnovejsi herní zpravy"
+
+#: index.php
+msgid "No further entries for previous session"
+msgstr "Zadne dalsi zaznamy z predchozi relace"
+
+#: index.php
+msgid "No data found in current query"
+msgstr "V aktualnim dotazu nebyla nalezena zadna data"
+
+#: index.php
+msgid "FETCH_MORE_DATA"
+msgstr "NACIST_DALSI_DATA"
+
+#: index.php
+msgid "&laquo; PREV"
+msgstr "&laquo; PREDCHOZI"
+
+#: index.php
+msgid "NEXT &raquo;"
+msgstr "DALSI &raquo;"
+
+#: single.php
+msgid "Pages:"
+msgstr "Stranky:"
+
+#: single.php
+msgid "SOURCE"
+msgstr "ZDROJ"
+
+#: header.php
+msgid "Toggle theme"
+msgstr "Prepnout tema"
