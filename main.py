@@ -15,8 +15,8 @@ if sys.platform == 'win32':
 import config
 import rss_scraper
 import claude_analyzer
-import email_sender
 import file_manager
+import article_history
 
 def print_banner():
     """Vykreslí banner agenta"""
@@ -42,7 +42,7 @@ def main():
     print("🔍 Kontroluji konfiguraci...")
     if not config.validate_config():
         print("\n❌ Prosím, uprav soubor .env podle .env.example")
-        print("   Minimálně nastav CLAUDE_API_KEY a EMAIL_TO\n")
+        print("   Minimálně nastav CLAUDE_API_KEY\n")
         sys.exit(1)
 
     print("✅ Konfigurace OK\n")
@@ -51,30 +51,38 @@ def main():
     run_dir = file_manager.create_run_directory()
     print(f"📁 Výstupní složka: {run_dir}\n")
 
-    # 2. Stahování článků z RSS
+    # 2. Načtení historie zpracovaných článků
+    print("📚 Načítám historii zpracovaných článků...")
+    history = article_history.load_history()
+    history_stats = article_history.get_stats(history)
+    processed_urls = article_history.get_processed_urls(history)
+    print(f"   Již zpracováno: {history_stats['total_processed']} článků\n")
+
+    # 3. Stahování článků z RSS (přeskakuje již zpracované)
     try:
-        articles = rss_scraper.scrape_all_feeds()
+        articles = rss_scraper.scrape_all_feeds(skip_urls=processed_urls)
 
         if not articles:
-            print("\n❌ Nepodařilo se stáhnout žádné články!")
-            print("   Zkontroluj internetové připojení a RSS feedy v config.py\n")
-            sys.exit(1)
+            print("\n✅ Žádné nové články k analýze!")
+            print("   Všechny články v RSS feedech již byly zpracovány dříve.")
+            print(f"⏰ Dokončeno: {datetime.now().strftime('%H:%M:%S')}\n")
+            sys.exit(0)
 
-        # Uložení článků do JSON a CSV
-        print()
+        print(f"✅ Nalezeno {len(articles)} nových článků\n")
+
+        # Uložení článků do JSON
         rss_scraper.save_articles_to_json(articles, run_dir)
-        rss_scraper.save_articles_to_csv(articles, run_dir)
 
     except Exception as e:
         print(f"\n❌ Chyba při stahování článků: {e}\n")
         sys.exit(1)
 
-    # 3. Příprava dat pro analýzu
+    # 4. Příprava dat pro analýzu
     print("\n📝 Připravuji články pro analýzu...")
     articles_text = rss_scraper.format_articles_for_analysis(articles)
     print(f"✅ Připraveno {len(articles)} článků\n")
 
-    # 4. Analýza pomocí Claude AI
+    # 5. Analýza pomocí Claude AI
     try:
         analysis = claude_analyzer.analyze_gaming_articles(articles_text)
 
@@ -86,24 +94,28 @@ def main():
         print(f"\n❌ Chyba při analýze: {e}\n")
         sys.exit(1)
 
-    # 5. Extrakce statistik
+    # 6. Extrakce statistik
     stats = claude_analyzer.extract_key_insights(articles)
 
-    # 6. Odeslání reportu
-    try:
-        email_sent = email_sender.send_email_report(analysis, stats)
+    # 7. Zobrazení analýzy
+    print("\n" + "="*70)
+    print("📊 VÝSLEDKY ANALÝZY")
+    print("="*70 + "\n")
+    print(analysis)
+    print("\n" + "="*70)
 
-        # Pokud email selhal, ulož do souboru
-        if not email_sent:
-            print("\nℹ️  Ukládám report do souboru...")
-            email_sender.save_report_to_file(analysis, stats, run_dir)
+    # 8. Uložení reportu
+    print("\n💾 Ukládám report...")
+    file_manager.save_report(analysis, stats, run_dir)
 
-    except Exception as e:
-        print(f"\n⚠️  Chyba při odesílání reportu: {e}")
-        print("   Ukládám report do souboru...\n")
-        email_sender.save_report_to_file(analysis, stats, run_dir)
+    # 9. Uložení zpracovaných článků do historie
+    print("\n💾 Ukládám zpracované články do historie...")
+    history = article_history.mark_as_processed(articles, history)
+    history = article_history.cleanup_old_entries(history)
+    if article_history.save_history(history):
+        print("✅ Historie aktualizována")
 
-    # 7. Shrnutí
+    # 10. Shrnutí
     print("\n" + "="*70)
     print("✅ HOTOVO!")
     print("="*70)
