@@ -9,7 +9,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('GAMEINFO_VERSION', '1.5.0');
+define('GAMEINFO_VERSION', '1.5.1');
 
 /**
  * Theme Setup
@@ -1230,3 +1230,37 @@ function gameinfo_add_status_to_posts_rest() {
     ));
 }
 add_action('rest_api_init', 'gameinfo_add_status_to_posts_rest');
+
+/**
+ * Include subcategory posts in parent category archives
+ *
+ * When viewing a category archive, this includes posts from all child categories.
+ * Example: "Technologie" shows posts from Technologie + Zprávy + Hardware
+ */
+function gameinfo_include_subcategory_posts($query) {
+    // Only modify main query on category archives (frontend only)
+    if (is_admin() || !$query->is_main_query() || !$query->is_category()) {
+        return;
+    }
+
+    $category = $query->get_queried_object();
+
+    if (!$category || !isset($category->term_id)) {
+        return;
+    }
+
+    // Get all child category IDs
+    $child_categories = get_term_children($category->term_id, 'category');
+
+    if (!empty($child_categories) && !is_wp_error($child_categories)) {
+        // Include parent + all children
+        $all_categories = array_merge(array($category->term_id), $child_categories);
+
+        // Set category__in to include all
+        $query->set('category__in', $all_categories);
+
+        // Remove the original cat parameter to avoid conflicts
+        $query->set('cat', '');
+    }
+}
+add_action('pre_get_posts', 'gameinfo_include_subcategory_posts');
