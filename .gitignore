@@ -47,6 +47,7 @@ cache/
 
 # Output soubory agenta
 output/
+processed_articles.json
 
 # OS
 .DS_Store
@@ -56,3 +57,20 @@ desktop.ini
 # Testovací soubory
 test_output/
 temp/
+
+# Android APP (samostatný repozitář)
+APP/
+
+# WordPress šablona (samostatný repozitář)
+wp-theme-gameinfo/
+
+# Claude Code
+.claude/
+
+# Generované soubory
+Audio/
+*.zip
+nul
+_ul
+Verze šablon/
+*homepage_output.html
