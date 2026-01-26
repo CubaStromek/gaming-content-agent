@@ -242,7 +242,7 @@ function gamefo_send_push_notification($post) {
                 ),
                 'body' => wp_json_encode($messages),
                 'timeout' => 30,
-                'blocking' => false // Non-blocking for better performance
+                'blocking' => true
             ));
 
             // Log errors for debugging (optional)
