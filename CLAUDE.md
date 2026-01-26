@@ -60,6 +60,99 @@ Agent si pamatuje již zpracované články v `processed_articles.json`:
 
 ## WordPress šablona (wp-theme-gameinfo)
 
+- **Repo:** https://github.com/CubaStromek/gamefo-wordpress-theme (private)
+- **Lokální složka:** `wp-theme-gameinfo/`
+- **Verze:** 1.7.3
+- **WP:** 5.0+, PHP 7.4+, testováno na WP 6.4
+
+### Struktura souborů
+
+```
+wp-theme-gameinfo/
+├── assets/
+│   ├── css/
+│   ├── fonts/
+│   └── js/main.js                  (JS: theme toggle, AJAX load more, dropdown, search)
+├── languages/
+│   ├── gameinfo-terminal.pot        (překlad šablona)
+│   ├── cs_CZ.po / .mo              (české překlady)
+├── mu-plugins/
+│   └── gamefo-game-posts.php        (shortcode [game_posts tag="slug" limit="10"])
+├── template-parts/
+│   ├── category-tabs.php            (kategorie navigace s ikonami)
+│   └── content-news-item.php        (news item v seznamu)
+├── style.css          (1 470 ř.) - všechny styly, CSS proměnné, dark/light mode
+├── functions.php      (1 266 ř.) - funkce, walker, meta boxy, AJAX, REST API, customizer
+├── header.php         - terminálová hlavička, navigace, search, theme toggle, lang switcher
+├── footer.php         - patička s verzí z style.css
+├── front-page.php     - úvodní stránka s category tabs a stránkováním
+├── index.php          - blog index s AJAX load more
+├── single.php         - detail článku (featured image, tagy, navigace, komentáře)
+├── archive.php        - archiv/kategorie (dynamické titulky ve stylu terminálu)
+├── search.php         - výsledky hledání
+├── 404.php            - chybová stránka
+├── page.php           - standardní stránka
+├── home.php           - homepage
+├── comments.php       - komentáře (terminálový styl)
+├── sidebar.php        - widget area
+├── readme.txt
+├── debug-posts.php    - debug utilita (podmíněné vložení)
+└── MULTILINGUAL-SETUP.md
+```
+
+### Design systém
+
+**Barvy (CSS proměnné):**
+| Proměnná | Dark mode | Light mode |
+|----------|-----------|------------|
+| Primary | `#13a4ec` | `#0284c7` |
+| Background | `#101c22` | — |
+| Console BG | `#1e1e1e` | `#ffffff` |
+| Header BG | `#181818` | `#f0f2f4` |
+| Input BG | `#282828` | `#e5e7eb` |
+| Terminal green | `#4ade80` | — |
+| Text primary | `#d1d5db` | — |
+| Text secondary | `#9ca3af` | — |
+
+**Status tag barvy:** leak=#f97316, critical=#ef4444, success=#4ade80, indie=#a78bfa, review=#38bdf8, trailer=#fbbf24, rumor=#fb923c, update=#2dd4bf, news=#13a4ec, info=#6b7280
+
+**Fonty:** Inter (body), Fira Code (terminal/monospace), Material Symbols Outlined (ikony)
+
+### Klíčové funkce (functions.php)
+
+| Funkce | Popis |
+|--------|-------|
+| `gameinfo_get_post_status_data()` | Mapuje kategorie/tagy → status štítky (LEAK, REVIEW, TRAILER...) |
+| `gameinfo_language_switcher()` | Polylang přepínač jazyků, fallback na CZ/EN |
+| `gameinfo_load_more_posts()` | AJAX endpoint pro stránkování (wp_ajax) |
+| `gameinfo_include_subcategory_posts()` | Automaticky zahrnuje podkategorie v archivech |
+| `GameInfo_Walker_Nav_Menu` | Custom walker pro dropdown navigaci |
+| `GameInfo_Walker_Category_Tabs` | Walker pro kategorie taby s ikonami |
+
+**3 menu lokace:** primary (hlavní + dropdown), category-tabs (herní kategorie), footer
+**2 widget areas:** primary-sidebar, footer-widget-area
+
+### Vlastní pole (Custom Fields)
+- `gameinfo_source` - zdroj článku (zobrazí se jako doména)
+- `gameinfo_audio_url` - URL na audio verzi článku
+- Obě pole registrována v REST API
+
+### Customizer nastavení
+- **Terminal Title** (default: "game_info")
+- **Terminal Path** (default: "~/news")
+- **Build Version** (default: "2.4.0-stable")
+- **Facebook URL** (volitelné)
+
+### JavaScript (main.js)
+- Theme toggle (localStorage + prefers-color-scheme)
+- AJAX Load More s category filtrováním
+- Dropdown menu (hover desktop / click mobile)
+- Search focus: Ctrl/Cmd+K, Escape pro blur
+- Terminálové efekty (cursor animace)
+
+### Kategorie → ikony mapování
+indie→token, triple/aaa→rocket_launch, hardware/tech→memory, news/zprávy→newspaper, review/recenze→rate_review, default→database
+
 ### Export ZIP souborů
 **DŮLEŽITÉ:** Při vytváření ZIP archivu šablony:
 
@@ -87,17 +180,6 @@ with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
             arcname = file_path.replace(os.sep, '/').replace(source_dir, target_folder, 1)
             zipf.write(file_path, arcname)
 ```
-
-### Struktura šablony
-- `style.css` - hlavní styly (terminal design)
-- `functions.php` - PHP funkce, meta boxy, AJAX
-- `header.php` - hlavička s language switcherem
-- `front-page.php` - úvodní stránka
-- `template-parts/content-news-item.php` - šablona článku v seznamu
-
-### Vlastní pole (Custom Fields)
-- `gameinfo_source` - zdroj článku
-- `gameinfo_audio_url` - URL na audio verzi článku
 
 ---
 
