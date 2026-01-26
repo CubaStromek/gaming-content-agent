@@ -70,8 +70,9 @@ def main():
 
         print(f"✅ Nalezeno {len(articles)} nových článků\n")
 
-        # Uložení článků do JSON
+        # Uložení článků do JSON a CSV
         rss_scraper.save_articles_to_json(articles, run_dir)
+        rss_scraper.save_articles_to_csv(articles, run_dir)
 
     except Exception as e:
         print(f"\n❌ Chyba při stahování článků: {e}\n")
@@ -106,7 +107,7 @@ def main():
 
     # 8. Uložení reportu
     print("\n💾 Ukládám report...")
-    file_manager.save_report(analysis, stats, run_dir)
+    file_manager.save_report(analysis, stats, run_dir, articles)
 
     # 9. Uložení zpracovaných článků do historie
     print("\n💾 Ukládám zpracované články do historie...")

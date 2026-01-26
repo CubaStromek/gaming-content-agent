@@ -41,7 +41,7 @@ def get_filepath(run_dir: str, filename: str) -> str:
     return os.path.join(run_dir, filename)
 
 
-def save_report(analysis: str, stats: dict, run_dir: str) -> str:
+def save_report(analysis: str, stats: dict, run_dir: str, articles: list = None) -> str:
     """
     Uloží report do souboru
 
@@ -49,19 +49,21 @@ def save_report(analysis: str, stats: dict, run_dir: str) -> str:
         analysis: Analýza od Claude
         stats: Statistiky
         run_dir: Složka, kam uložit
+        articles: Seznam všech článků (pro sekci "ostatní články")
 
     Returns:
         Cesta k souboru nebo None při chybě
     """
-    from claude_analyzer import extract_used_urls_from_analysis
+    import re
 
     filename = os.path.join(run_dir, "report.txt")
 
     # Extrahuj URL použité v analýze
-    used_urls = extract_used_urls_from_analysis(analysis)
+    url_pattern = r'https?://[^\s<>"\')\]]+[^\s<>"\')\].,]'
+    used_urls = set(re.findall(url_pattern, analysis))
 
     # Získej všechny články a najdi ty, které nebyly použity
-    all_articles = stats.get('all_articles', [])
+    all_articles = articles or []
     remaining_articles = [
         article for article in all_articles
         if article.get('link', '') not in used_urls

@@ -10,9 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Claude API
-CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
-if not CLAUDE_API_KEY:
-    raise ValueError("❌ CLAUDE_API_KEY není nastavený v .env souboru!")
+CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")
 
 # Email konfigurace
 EMAIL_TO = os.getenv("EMAIL_TO", "")
@@ -37,6 +35,8 @@ RSS_FEEDS = [
     {"name": "Rock Paper Shotgun", "url": "https://www.rockpapershotgun.com/feed", "lang": "en"},
     {"name": "Kotaku", "url": "https://kotaku.com/rss", "lang": "en"},
     {"name": "Polygon", "url": "https://www.polygon.com/rss/index.xml", "lang": "en"},
+    {"name": "GamesRadar", "url": "https://www.gamesradar.com/rss/", "lang": "en"},
+    {"name": "Pure Xbox", "url": "https://www.purexbox.com/feeds/latest", "lang": "en"},
 
     # České weby
     {"name": "Hrej.cz", "url": "https://hrej.cz/rss/all", "lang": "cs"},

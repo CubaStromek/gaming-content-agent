@@ -3,6 +3,7 @@ Claude AI Analyzer
 Analyzuje herní články a generuje nápady na obsah
 """
 
+import re
 import anthropic
 import json
 from typing import List, Dict
@@ -83,9 +84,9 @@ VÝSTUP (seřaď od nejdůležitějšího, vytvoř PŘESNĚ {max_topics} témat 
         print(f"   📊 Input tokeny: {message.usage.input_tokens}")
         print(f"   📊 Output tokeny: {message.usage.output_tokens}")
 
-        # Odhad ceny (Sonnet 3.5 pricing)
-        cost_input = (message.usage.input_tokens / 1_000_000) * 3
-        cost_output = (message.usage.output_tokens / 1_000_000) * 15
+        # Odhad ceny (Claude 3 Haiku pricing: $0.25/MTok input, $1.25/MTok output)
+        cost_input = (message.usage.input_tokens / 1_000_000) * 0.25
+        cost_output = (message.usage.output_tokens / 1_000_000) * 1.25
         total_cost = cost_input + cost_output
 
         print(f"   💰 Odhadovaná cena: ${total_cost:.4f}")
@@ -111,8 +112,7 @@ def extract_key_insights(articles: List[Dict]) -> Dict:
         'total_articles': len(articles),
         'sources': {},
         'languages': {},
-        'most_common_words': [],
-        'all_articles': articles  # Přidáno pro zobrazení zbylých článků
+        'most_common_words': []
     }
 
     # Počet článků podle zdrojů
@@ -138,7 +138,6 @@ def extract_used_urls_from_analysis(analysis: str) -> set:
     Returns:
         Set URL adres
     """
-    import re
     url_pattern = r'https?://[^\s<>"\')\]]+[^\s<>"\')\].,]'
     urls = re.findall(url_pattern, analysis)
     return set(urls)

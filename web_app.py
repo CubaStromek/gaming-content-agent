@@ -4,6 +4,7 @@ Lokalni webove rozhrani pro spousteni agenta
 """
 
 import os
+import re
 import sys
 import json
 import threading
@@ -655,10 +656,10 @@ def json_response(data):
 def run_agent_process():
     global agent_running, output_lines, articles_count, sources_count, run_success
 
-    agent_running = True
     run_success = False
 
     with output_lock:
+        agent_running = True
         output_lines = []
         articles_count = 0
         sources_count = 0
@@ -735,7 +736,8 @@ def run_agent_process():
         with output_lock:
             output_lines.append(f"CHYBA: {str(e)}")
     finally:
-        agent_running = False
+        with output_lock:
+            agent_running = False
 
 
 @app.route('/')
@@ -747,10 +749,11 @@ def index():
 def start():
     global agent_thread, sent_line_index
 
-    if agent_running:
-        return json_response({'status': 'already_running'})
+    with output_lock:
+        if agent_running:
+            return json_response({'status': 'already_running'})
+        sent_line_index = 0
 
-    sent_line_index = 0
     agent_thread = threading.Thread(target=run_agent_process)
     agent_thread.start()
 
@@ -776,7 +779,9 @@ def get_output():
 
 @app.route('/status')
 def status():
-    return json_response({'running': agent_running})
+    with output_lock:
+        running = agent_running
+    return json_response({'running': running})
 
 
 @app.route('/history')
@@ -786,7 +791,7 @@ def get_history():
     if os.path.exists(OUTPUT_DIR):
         for folder in sorted(os.listdir(OUTPUT_DIR), reverse=True):
             folder_path = os.path.join(OUTPUT_DIR, folder)
-            if os.path.isdir(folder_path):
+            if os.path.isdir(folder_path) and re.match(r'^[\w\-]+$', folder):
                 try:
                     date_str = folder[:8]
                     time_str = folder[9:]
@@ -801,6 +806,8 @@ def get_history():
 
 @app.route('/history/<run_id>')
 def get_run(run_id):
+    if not re.match(r'^[\w\-]+$', run_id):
+        return json_response({'error': 'Invalid run_id'}), 400
     run_path = os.path.join(OUTPUT_DIR, run_id)
     result = {'id': run_id, 'report': None, 'articles_count': 0}
 
@@ -834,4 +841,4 @@ if __name__ == '__main__':
     print("")
     print("=" * 70)
 
-    app.run(debug=False, host='0.0.0.0', port=5000, threaded=True)
+    app.run(debug=False, host='127.0.0.1', port=5000, threaded=True)

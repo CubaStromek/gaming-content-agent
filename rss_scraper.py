@@ -3,6 +3,7 @@ RSS Scraper pro herní weby
 Stahuje nejnovější články z RSS feedů
 """
 
+import os
 import feedparser
 from datetime import datetime
 from typing import List, Dict
@@ -10,35 +11,44 @@ import json
 import csv
 import config
 
-def scrape_rss_feed(feed_info: Dict) -> List[Dict]:
+def scrape_rss_feed(feed_info: Dict, skip_urls: set = None) -> List[Dict]:
     """
     Stáhne články z jednoho RSS feedu
 
     Args:
         feed_info: Slovník s 'name', 'url', 'lang'
+        skip_urls: Set URL adres k přeskočení (již zpracované)
 
     Returns:
         Seznam článků
     """
     articles = []
+    skipped = 0
+    skip_urls = skip_urls or set()
 
     try:
         print(f"  📡 Stahuji {feed_info['name']}...")
         feed = feedparser.parse(feed_info['url'])
 
         # Ošetření chyby při parsování
-        if feed.bozo:
-            print(f"  ⚠️  Varování při parsování {feed_info['name']}")
+        if feed.bozo and not feed.entries:
+            print(f"  ⚠️  Chyba při parsování {feed_info['name']}: {feed.bozo_exception}")
 
         # Zpracuj články (max MAX_ARTICLES_PER_SOURCE)
         for entry in feed.entries[:config.MAX_ARTICLES_PER_SOURCE]:
+            # Přeskoč již zpracované články
+            link = entry.get('link', '')
+            if link in skip_urls:
+                skipped += 1
+                continue
+
             article = {
                 'source': feed_info['name'],
                 'language': feed_info['lang'],
-                'title': entry.title if hasattr(entry, 'title') else 'Bez názvu',
-                'link': entry.link if hasattr(entry, 'link') else '',
-                'summary': entry.summary if hasattr(entry, 'summary') else '',
-                'published': entry.published if hasattr(entry, 'published') else ''
+                'title': entry.get('title', 'Bez názvu'),
+                'link': link,
+                'summary': entry.get('summary', ''),
+                'published': entry.get('published', '')
             }
 
             # Zkrácení summary (max 300 znaků pro analýzu)
@@ -47,7 +57,10 @@ def scrape_rss_feed(feed_info: Dict) -> List[Dict]:
 
             articles.append(article)
 
-        print(f"  ✅ {feed_info['name']}: {len(articles)} článků")
+        if skipped > 0:
+            print(f"  ✅ {feed_info['name']}: {len(articles)} nových (⏭️ {skipped} přeskočeno)")
+        else:
+            print(f"  ✅ {feed_info['name']}: {len(articles)} článků")
 
     except Exception as e:
         print(f"  ❌ Chyba při stahování {feed_info['name']}: {e}")
@@ -55,9 +68,12 @@ def scrape_rss_feed(feed_info: Dict) -> List[Dict]:
     return articles
 
 
-def scrape_all_feeds() -> List[Dict]:
+def scrape_all_feeds(skip_urls: set = None) -> List[Dict]:
     """
     Stáhne články ze všech nakonfigurovaných RSS feedů
+
+    Args:
+        skip_urls: Set URL adres k přeskočení (již zpracované)
 
     Returns:
         Seznam všech článků ze všech zdrojů
@@ -67,10 +83,10 @@ def scrape_all_feeds() -> List[Dict]:
     all_articles = []
 
     for feed_info in config.RSS_FEEDS:
-        articles = scrape_rss_feed(feed_info)
+        articles = scrape_rss_feed(feed_info, skip_urls)
         all_articles.extend(articles)
 
-    print(f"\n✅ Celkem staženo: {len(all_articles)} článků")
+    print(f"\n✅ Celkem staženo: {len(all_articles)} nových článků")
     return all_articles
 
 
@@ -109,7 +125,6 @@ def save_articles_to_json(articles: List[Dict], run_dir: str = ".") -> str:
     Returns:
         Cesta k uloženému souboru
     """
-    import os
     filename = os.path.join(run_dir, "articles.json")
 
     data = {
@@ -142,7 +157,6 @@ def save_articles_to_csv(articles: List[Dict], run_dir: str = ".") -> str:
     Returns:
         Cesta k uloženému souboru
     """
-    import os
     filename = os.path.join(run_dir, "articles.csv")
 
     try:
