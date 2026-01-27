@@ -1,5 +1,11 @@
 # Gaming Content Agent - Poznámky pro Claude
 
+## PRAVIDLA
+
+- **NIKDY neprovádět `git commit`, `git push`, ani `eas build` bez výslovného souhlasu uživatele.** Vždy se nejdřív zeptej, než commitneš, pushneš nebo spustíš EAS build (preview/production).
+
+---
+
 ## Přehled projektu
 
 **Účel:** Automatizovaný systém pro objevování herního obsahu pro české gaming bloggery. Monitoruje herní weby, analyzuje trendy pomocí Claude AI a poskytuje denní reporty s návrhy článků.
@@ -223,3 +229,138 @@ Automaticky posílat denní report do NotebookLM pro generování audio souhrnu.
 1. Přidat Google Drive API upload do agenta
 2. V NotebookLM vytvořit notebook se zdrojem z Drive složky
 3. (Volitelně) Playwright skript pro automatické generování audia
+
+---
+
+## Spuštění Android appky na emulátoru (APP/)
+
+### Prerekvizity
+- Android emulátor běží (ověř: `adb devices`)
+- ADB cesta: `C:\Users\jakub\AppData\Local\Android\Sdk\platform-tools\adb.exe`
+- Java (JAVA_HOME): `C:\Program Files\Android\Android Studio\jbr` — **není v systémovém PATH**, musí se nastavit ručně
+
+### Správný postup (jediný spolehlivý)
+
+```bash
+cd "C:\AI\gaming-content-agent\APP"
+JAVA_HOME="C:/Program Files/Android/Android Studio/jbr" npx expo run:android --port 8081
+```
+
+Tento příkaz:
+1. Sestaví native Android debug APK (Gradle)
+2. Nainstaluje APK na emulátor
+3. Spustí Metro bundler
+4. Otevře appku přes deep link `gamefo://expo-development-client/?url=...`
+
+### Co NEFUNGUJE
+
+| Postup | Proč nefunguje |
+|--------|---------------|
+| `npx expo start` + ruční otevření appky | Appka je **custom dev build** (ne Expo Go). `isMetroRunning()` vrátí `false` i když Metro běží — native kód potřebuje deep link od `expo run:android` |
+| `npx expo start --dev-client` | Stejný problém — Metro běží, ale appka ho nedetekuje bez správného deep linku |
+| `adb reverse tcp:8081 tcp:8081` + restart appky | Nepomůže — problém není v síti, ale v tom, že dev client potřebuje být spuštěn přes `expo-development-client://` URL |
+| `npx expo run:android` bez JAVA_HOME | Selže s `JAVA_HOME is not set` |
+
+### Řešení port konfliktu
+Pokud port 8081 je obsazený:
+```bash
+netstat -ano | findstr :8081 | findstr LISTENING
+taskkill //PID <pid> //F
+```
+Pozor: v Git Bash se `/PID` interpretuje jako cesta — nutno `//PID`.
+
+### Package info
+- **Package name:** `com.cubastromek.gamefo`
+- **Activity:** `com.cubastromek.gamefo.MainActivity`
+- **Build type:** Debug (DEBUGGABLE)
+- **App config:** `APP/app.config.ts`
+
+---
+
+## Push notifikace: WordPress + Android (Expo)
+
+### Architektura
+
+```
+WP publish post → gamefo-push-notifications.php → Expo Push API → FCM (Firebase) → Android zařízení
+                                                        ↑
+                                                  Expo access token
+                                                  + FCM V1 key (na expo.dev)
+```
+
+### Potřebné credentials (3 kusy)
+
+| Credential | Kde se nastavuje | K čemu |
+|------------|-----------------|--------|
+| **FCM V1 service account key** | expo.dev → Credentials → Android | Expo ho potřebuje k odeslání přes Firebase |
+| **Expo access token** | WP admin → Settings → Push Notifications | WP plugin ho posílá v Authorization hlavičce na Expo API |
+| **google-services.json** | `APP/google-services.json` | Klientská konfigurace Firebase v appce |
+
+### Postup nastavení od nuly
+
+#### 1. Firebase projekt
+- Vytvoř projekt na [console.firebase.google.com](https://console.firebase.google.com)
+- Přidej Android appku s package name `com.cubastromek.gamefo`
+- Stáhni `google-services.json` → do `APP/`
+- **DŮLEŽITÉ:** Ověř, že **Firebase Cloud Messaging API (V1)** je zapnutá:
+  - [console.cloud.google.com](https://console.cloud.google.com) → APIs & Services → Library → hledej "Firebase Cloud Messaging API" → Enable
+
+#### 2. FCM V1 klíč → Expo
+- Firebase Console → Project Settings → **Service accounts** → **Generate new private key** (stáhne JSON)
+- expo.dev → projekt → **Credentials** → **Android** → sekce **FCM V1 service account key** → Upload JSON
+- Alternativně CLI: `npx eas credentials -p android` → Push Notifications → Upload
+
+#### 3. Expo access token → WordPress
+- expo.dev → Settings → **Access Tokens** → Create (typ Robot nebo Personal)
+- WP admin → Settings → **Push Notifications** → pole "Expo Access Token" → vložit a uložit
+
+#### 4. WP plugin
+- Soubor: `gamefo-push-notifications.php`
+- Nahrát do `wp-content/plugins/` a aktivovat
+- Plugin automaticky:
+  - Vytvoří DB tabulku `wp_gamefo_devices` pro tokeny
+  - Registruje REST endpointy (`/gamefo/v1/devices`)
+  - Odesílá push při publikaci nového příspěvku (`transition_post_status` hook)
+
+#### 5. Appka (klientská strana)
+- `APP/src/services/pushNotifications.ts` — registrace Expo push tokenu
+- `APP/src/api/gamefo.ts` — POST/DELETE na `/gamefo/v1/devices`
+- `APP/src/hooks/usePushNotifications.ts` — hook reagující na nastavení
+- `App.tsx` — notification handler (foreground/background/cold start)
+- Notifikační kanál: `'default'` (Android 8+)
+
+### Push payload (server → Expo API)
+
+```json
+{
+  "to": "ExponentPushToken[xxx]",
+  "title": "NOVY LOG PRIJAT",
+  "body": "Titulek článku",
+  "data": { "postId": 123, "url": "https://gamefo.cz/slug/", "type": "new_post" },
+  "sound": "default",
+  "priority": "high",
+  "channelId": "default"
+}
+```
+
+**`channelId: "default"` je povinný** — bez něj Android 8+ notifikaci tiše zahodí.
+
+### Debugging
+
+- WP admin → Settings → Push Notifications → **Push Log** (posledních 50 záznamů)
+- Log ukazuje: payload, Expo API response (HTTP kód + body), chyby
+- Tlačítko **Send Test Notification** pro ruční test
+- Expo API odpovědi:
+  - `"status":"ok"` + `"id":"xxx"` = doručeno
+  - `"status":"error"` + `"InvalidCredentials"` = chybí FCM V1 klíč na expo.dev
+  - `"status":"error"` + `"DeviceNotRegistered"` = neplatný/expirovaný push token
+
+### Časté problémy
+
+| Problém | Příčina | Řešení |
+|---------|---------|--------|
+| `InvalidCredentials` | Chybí FCM V1 key na expo.dev | Upload service account JSON na expo.dev → Credentials → Android |
+| Nic na expo.dev dashboardu | Chybí Expo access token | Vytvořit na expo.dev → Settings → Access Tokens, vložit do WP |
+| Notifikace nedorazí (ale Expo vrátí ok) | Chybí `channelId` v payloadu | Přidat `"channelId": "default"` |
+| `debug.log` se nevytváří | `WP_DEBUG_LOG` není zapnutý | Použít vestavěný Push Log v admin stránce pluginu |
+| FCM API disabled | Cloud Messaging API není zapnutá | Google Cloud Console → APIs → Enable Firebase Cloud Messaging API |

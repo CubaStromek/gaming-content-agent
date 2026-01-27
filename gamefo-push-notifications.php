@@ -181,6 +181,20 @@ function gamefo_send_push_on_publish($new_status, $old_status, $post) {
 }
 
 /**
+ * Internal log — stores entries in wp_options (last 50)
+ */
+function gamefo_push_log($message) {
+    $log = get_option('gamefo_push_log', array());
+    $log[] = array(
+        'time' => current_time('Y-m-d H:i:s'),
+        'message' => $message,
+    );
+    // Keep last 50 entries
+    $log = array_slice($log, -50);
+    update_option('gamefo_push_log', $log, false);
+}
+
+/**
  * Send push notification to all registered devices
  */
 function gamefo_send_push_notification($post) {
@@ -189,6 +203,7 @@ function gamefo_send_push_notification($post) {
     $tokens = $wpdb->get_col("SELECT token FROM $table_name");
 
     if (empty($tokens)) {
+        gamefo_push_log('No registered devices, skipping.');
         return;
     }
 
@@ -205,8 +220,22 @@ function gamefo_send_push_notification($post) {
 
     // Get featured image if available
     $image = null;
-    if (has_post_thumbnail($post->ID)) {
+    if ($post->ID && has_post_thumbnail($post->ID)) {
         $image = get_the_post_thumbnail_url($post->ID, 'medium');
+    }
+
+    // Build headers — include Expo access token if configured
+    $headers = array(
+        'Content-Type' => 'application/json',
+        'Accept' => 'application/json',
+        'Accept-Encoding' => 'gzip, deflate',
+    );
+    $expo_token = get_option('gamefo_expo_access_token', '');
+    if (!empty($expo_token)) {
+        $headers['Authorization'] = 'Bearer ' . $expo_token;
+        gamefo_push_log('Using Expo access token: ' . substr($expo_token, 0, 8) . '...');
+    } else {
+        gamefo_push_log('WARNING: No Expo access token configured!');
     }
 
     // Chunking for Expo API (max 100 per request)
@@ -223,9 +252,9 @@ function gamefo_send_push_notification($post) {
                 'data' => $data,
                 'sound' => 'default',
                 'priority' => 'high',
+                'channelId' => 'default',
             );
 
-            // Add image for rich notifications (Android)
             if ($image) {
                 $message['image'] = $image;
             }
@@ -234,27 +263,39 @@ function gamefo_send_push_notification($post) {
         }
 
         if (!empty($messages)) {
+            gamefo_push_log('Sending ' . count($messages) . ' message(s) to Expo API...');
+            gamefo_push_log('Payload: ' . wp_json_encode($messages));
+
             $response = wp_remote_post($api_url, array(
-                'headers' => array(
-                    'Content-Type' => 'application/json',
-                    'Accept' => 'application/json',
-                    'Accept-Encoding' => 'gzip, deflate',
-                ),
+                'headers' => $headers,
                 'body' => wp_json_encode($messages),
                 'timeout' => 30,
                 'blocking' => true
             ));
 
-            // Log errors for debugging (optional)
             if (is_wp_error($response)) {
-                error_log('GameFo Push Error: ' . $response->get_error_message());
+                gamefo_push_log('ERROR (network): ' . $response->get_error_message());
+            } else {
+                $status_code = wp_remote_retrieve_response_code($response);
+                $body_text = wp_remote_retrieve_body($response);
+                gamefo_push_log('Expo response: HTTP ' . $status_code . ' — ' . $body_text);
             }
         }
     }
 
-    // Log successful send
-    error_log('GameFo Push: Sent notification for post ' . $post->ID . ' to ' . count($tokens) . ' devices');
+    gamefo_push_log('Done — post ID ' . $post->ID . ', ' . count($tokens) . ' device(s)');
 }
+
+/**
+ * Register Expo access token setting
+ */
+add_action('admin_init', function() {
+    register_setting('gamefo_push_settings', 'gamefo_expo_access_token', array(
+        'type' => 'string',
+        'default' => '',
+        'sanitize_callback' => 'sanitize_text_field',
+    ));
+});
 
 /**
  * Admin menu page for managing devices
@@ -288,8 +329,15 @@ function gamefo_push_admin_page() {
             'post_title' => 'Test Notification',
             'post_type' => 'post'
         );
+        gamefo_push_log('--- TEST NOTIFICATION TRIGGERED ---');
         gamefo_send_push_notification($test_post);
-        echo '<div class="notice notice-success"><p>Test notification sent!</p></div>';
+        echo '<div class="notice notice-success"><p>Test notification sent! See log below.</p></div>';
+    }
+
+    // Handle log clear
+    if (isset($_POST['clear_log']) && wp_verify_nonce($_POST['_wpnonce'], 'gamefo_clear_log')) {
+        delete_option('gamefo_push_log');
+        echo '<div class="notice notice-success"><p>Log cleared.</p></div>';
     }
 
     $devices = $wpdb->get_results("SELECT * FROM $table_name ORDER BY last_used DESC LIMIT 100");
@@ -298,14 +346,33 @@ function gamefo_push_admin_page() {
     <div class="wrap">
         <h1>Push Notifications</h1>
 
+        <div class="card" style="max-width: 600px; padding: 20px; margin-bottom: 20px;">
+            <h2 style="margin-top: 0;">Expo Access Token</h2>
+            <form method="post" action="options.php">
+                <?php settings_fields('gamefo_push_settings'); ?>
+                <p>
+                    <input type="text" name="gamefo_expo_access_token"
+                        value="<?php echo esc_attr(get_option('gamefo_expo_access_token', '')); ?>"
+                        class="regular-text" placeholder="Expo access token" />
+                </p>
+                <p class="description">
+                    Get your token at <a href="https://expo.dev/accounts/[owner]/settings/access-tokens" target="_blank">expo.dev → Settings → Access Tokens</a>.
+                    Required for push delivery and expo.dev dashboard visibility.
+                </p>
+                <?php submit_button('Save Token', 'secondary'); ?>
+            </form>
+        </div>
+
         <div class="card" style="max-width: 400px; padding: 20px; margin-bottom: 20px;">
             <h2 style="margin-top: 0;">Statistics</h2>
             <p><strong>Registered devices:</strong> <?php echo esc_html($total); ?></p>
+            <p><strong>Expo token:</strong> <?php echo get_option('gamefo_expo_access_token', '') ? '✅ Configured' : '❌ Not set'; ?></p>
             <form method="post" style="margin-top: 15px;">
                 <?php wp_nonce_field('gamefo_send_test'); ?>
                 <button type="submit" name="send_test" class="button button-secondary">
                     Send Test Notification
                 </button>
+                <p class="description">Check <code>wp-content/debug.log</code> for Expo API response.</p>
             </form>
         </div>
 
@@ -346,6 +413,38 @@ function gamefo_push_admin_page() {
                 <?php endif; ?>
             </tbody>
         </table>
+
+        <h2>Push Log</h2>
+        <form method="post" style="margin-bottom: 10px;">
+            <?php wp_nonce_field('gamefo_clear_log'); ?>
+            <button type="submit" name="clear_log" class="button button-small">Clear Log</button>
+        </form>
+        <?php
+        $log = get_option('gamefo_push_log', array());
+        if (empty($log)) {
+            echo '<p>No log entries yet. Click "Send Test Notification" to generate logs.</p>';
+        } else {
+            $log_reversed = array_reverse($log);
+            echo '<div style="background: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 4px; max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 12px; line-height: 1.6;">';
+            foreach ($log_reversed as $entry) {
+                $color = '#d4d4d4';
+                if (strpos($entry['message'], 'ERROR') !== false) {
+                    $color = '#f44747';
+                } elseif (strpos($entry['message'], 'WARNING') !== false) {
+                    $color = '#ffcc00';
+                } elseif (strpos($entry['message'], 'Done') === 0) {
+                    $color = '#4ec949';
+                } elseif (strpos($entry['message'], '--- TEST') !== false) {
+                    $color = '#569cd6';
+                }
+                echo '<div style="color:' . $color . ';">';
+                echo '<span style="color:#888;">[' . esc_html($entry['time']) . ']</span> ';
+                echo esc_html($entry['message']);
+                echo '</div>';
+            }
+            echo '</div>';
+        }
+        ?>
 
         <div class="card" style="max-width: 600px; padding: 20px; margin-top: 20px;">
             <h3 style="margin-top: 0;">API Endpoints</h3>
