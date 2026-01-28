@@ -9,7 +9,9 @@ import sys
 import json
 import threading
 import subprocess
-from flask import Flask, render_template_string, make_response
+from flask import Flask, render_template_string, make_response, request
+
+from article_writer import parse_topics_from_report, scrape_full_article, write_article
 
 app = Flask(__name__)
 
@@ -58,7 +60,19 @@ HTML_TEMPLATE = '''
             display: grid;
             grid-template-columns: 1fr 320px;
             gap: 1rem;
-            height: calc(100vh - 2rem);
+            min-height: calc(100vh - 2rem);
+        }
+
+        .main-column {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            min-height: 0;
+        }
+
+        .main-column .console {
+            flex: 1;
+            min-height: 300px;
         }
 
         @media (max-width: 1200px) {
@@ -376,6 +390,257 @@ HTML_TEMPLATE = '''
             color: #d1d5db;
         }
 
+        /* Topics panel */
+        .topics-panel {
+            background: var(--console-bg);
+            border-radius: 0.5rem;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            margin-top: 1rem;
+            overflow: hidden;
+            display: none;
+        }
+
+        .topics-panel.visible { display: block; }
+
+        .topics-panel .panel-header {
+            background: var(--header-bg);
+            padding: 0.6rem 1rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            color: var(--terminal-green);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .topics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 0.75rem;
+            padding: 0.75rem;
+        }
+
+        .topic-card {
+            background: var(--input-bg);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 0.375rem;
+            padding: 0.75rem;
+            transition: border-color 0.2s;
+        }
+
+        .topic-card:hover { border-color: var(--primary); }
+
+        .topic-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .topic-card-name {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: white;
+            line-height: 1.4;
+        }
+
+        .virality-badge {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.6rem;
+            padding: 0.15rem 0.4rem;
+            border-radius: 0.2rem;
+            font-weight: 700;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .virality-high { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+        .virality-med { background: rgba(251, 191, 36, 0.2); color: #fbbf24; }
+        .virality-low { background: rgba(74, 222, 128, 0.2); color: #4ade80; }
+
+        .topic-card-title {
+            font-size: 0.7rem;
+            color: #9ca3af;
+            margin-bottom: 0.5rem;
+            line-height: 1.4;
+        }
+
+        .topic-card-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .topic-card-sources {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.6rem;
+            color: #6b7280;
+        }
+
+        .btn-write {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.65rem;
+            padding: 0.35rem 0.75rem;
+            border: 1px solid var(--primary);
+            background: transparent;
+            color: var(--primary);
+            border-radius: 0.2rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-write:hover { background: var(--primary); color: white; }
+        .btn-write:disabled { border-color: #374151; color: #6b7280; cursor: not-allowed; background: transparent; }
+
+        /* Article modal */
+        .article-modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 1001;
+            padding: 2rem;
+        }
+
+        .article-modal.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .article-modal-content {
+            background: var(--console-bg);
+            border-radius: 0.5rem;
+            width: 100%;
+            max-width: 900px;
+            max-height: 90vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .article-modal-header {
+            background: var(--header-bg);
+            padding: 0.75rem 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .article-modal-title {
+            font-family: 'JetBrains Mono', monospace;
+            color: white;
+            font-size: 0.85rem;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            margin-right: 1rem;
+        }
+
+        .article-modal-close {
+            background: var(--terminal-red);
+            border: none;
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 1rem;
+            flex-shrink: 0;
+        }
+
+        .tab-switcher {
+            display: flex;
+            background: var(--header-bg);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .tab-btn {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            padding: 0.5rem 1.5rem;
+            background: transparent;
+            border: none;
+            color: #6b7280;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+        .tab-btn:hover { color: #d1d5db; }
+
+        .article-body {
+            padding: 1.5rem;
+            overflow-y: auto;
+            flex: 1;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.9rem;
+            line-height: 1.7;
+            color: #d1d5db;
+        }
+
+        .article-body h2 { color: white; margin: 1rem 0 0.5rem; font-size: 1.1rem; }
+        .article-body p { margin-bottom: 0.75rem; }
+        .article-body strong { color: white; }
+
+        .article-actions {
+            background: var(--header-bg);
+            padding: 0.6rem 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .article-meta {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.6rem;
+            color: #6b7280;
+        }
+
+        .btn-copy {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            padding: 0.4rem 1rem;
+            background: var(--primary);
+            border: none;
+            color: white;
+            border-radius: 0.2rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-copy:hover { background: #0d8fd4; }
+
+        .generating-overlay {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 3rem;
+            color: #9ca3af;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            min-height: 200px;
+        }
+
+        .generating-spinner {
+            width: 32px;
+            height: 32px;
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-bottom: 1rem;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: var(--console-bg); }
         ::-webkit-scrollbar-thumb { background: #444; border-radius: 10px; }
@@ -385,6 +650,7 @@ HTML_TEMPLATE = '''
 <body>
     <div class="container">
         <div class="main-grid">
+          <div class="main-column">
             <div class="console">
                 <div class="console-header">
                     <div class="window-controls">
@@ -420,6 +686,12 @@ HTML_TEMPLATE = '''
                     </div>
                 </div>
             </div>
+
+            <div class="topics-panel" id="topicsPanel">
+                <div class="panel-header">TOP TEMATA - WRITE_ARTICLE</div>
+                <div class="topics-grid" id="topicsGrid"></div>
+            </div>
+          </div>
 
             <div class="sidebar">
                 <div class="panel">
@@ -466,10 +738,32 @@ HTML_TEMPLATE = '''
         </div>
     </div>
 
+    <div class="article-modal" id="articleModal">
+        <div class="article-modal-content">
+            <div class="article-modal-header">
+                <div class="article-modal-title" id="articleModalTitle">Generovany clanek</div>
+                <button class="article-modal-close" onclick="closeArticleModal()">&times;</button>
+            </div>
+            <div class="tab-switcher">
+                <button class="tab-btn active" onclick="switchTab('cs')" id="tabCs">CESKY</button>
+                <button class="tab-btn" onclick="switchTab('en')" id="tabEn">ENGLISH</button>
+            </div>
+            <div class="article-body" id="articleBody"></div>
+            <div class="article-actions">
+                <div class="article-meta" id="articleMeta"></div>
+                <button class="btn-copy" onclick="copyArticleHtml()">COPY HTML</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         let polling = null;
         let startTime = null;
         let timerInterval = null;
+        let currentRunId = null;
+        let articleResult = null;
+        let currentArticleLang = 'cs';
+        let articlePolling = null;
 
         document.addEventListener('DOMContentLoaded', loadHistory);
 
@@ -484,6 +778,7 @@ HTML_TEMPLATE = '''
             statusDot.classList.add('running');
             statusText.textContent = 'PROCESSING';
             output.innerHTML = '<span class="info">Spoustim agenta...</span>\\n\\n';
+            hideTopics();
 
             startTime = Date.now();
             timerInterval = setInterval(updateTimer, 1000);
@@ -513,6 +808,16 @@ HTML_TEMPLATE = '''
                     if (!data.running) {
                         finish(data.success);
                         loadHistory();
+                        // Po dokonceni agenta nacti temata z posledniho runu
+                        if (data.success) {
+                            fetch('/history')
+                                .then(r => r.json())
+                                .then(h => {
+                                    if (h.runs.length > 0) {
+                                        loadTopics(h.runs[0].id);
+                                    }
+                                });
+                        }
                     }
                 });
         }
@@ -542,9 +847,7 @@ HTML_TEMPLATE = '''
         }
 
         function linkifyUrls(text) {
-            // First escape HTML, then convert URLs to links
             const escaped = escapeHtml(text);
-            // Match URLs starting with http:// or https://
             const urlRegex = /(https?:\/\/[^\s<>"')\]]+)/g;
             return escaped.replace(urlRegex, '<a href="$1" target="_blank" rel="noopener noreferrer" class="link">$1</a>');
         }
@@ -569,6 +872,7 @@ HTML_TEMPLATE = '''
         function clearOutput() {
             document.getElementById('output').innerHTML = '<span class="dim">Konzole vymazana.</span>\\n\\n<span class="info">Pripraveno.</span>';
             document.getElementById('statusText').textContent = 'READY';
+            hideTopics();
         }
 
         function loadHistory() {
@@ -615,6 +919,8 @@ HTML_TEMPLATE = '''
                     if (data.articles_count) {
                         document.getElementById('statArticles').textContent = data.articles_count;
                     }
+
+                    loadTopics(runId);
                 });
         }
 
@@ -632,8 +938,186 @@ HTML_TEMPLATE = '''
             document.getElementById('modal').classList.remove('active');
         }
 
-        document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+        /* ===== Topics & Article Writer ===== */
+
+        function loadTopics(runId) {
+            currentRunId = runId;
+            fetch('/topics/' + runId)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.error || !data.topics || data.topics.length === 0) {
+                        hideTopics();
+                        return;
+                    }
+                    renderTopics(data.topics, runId);
+                });
+        }
+
+        function hideTopics() {
+            document.getElementById('topicsPanel').classList.remove('visible');
+        }
+
+        function renderTopics(topics, runId) {
+            const grid = document.getElementById('topicsGrid');
+            grid.innerHTML = topics.map(t => {
+                const score = t.virality_score || 0;
+                let badgeClass = 'virality-low';
+                if (score >= 80) badgeClass = 'virality-high';
+                else if (score >= 50) badgeClass = 'virality-med';
+
+                const sourcesCount = (t.sources || []).length;
+                const viewBtn = t.has_article
+                    ? `<button class="btn-write" style="border-color:var(--terminal-green);color:var(--terminal-green);" onclick="viewSavedArticle('${runId}', ${t.index})">VIEW_ARTICLE</button>`
+                    : '';
+                const writeBtn = `<button class="btn-write" onclick="startWriteArticle('${runId}', ${t.index})">WRITE_ARTICLE</button>`;
+
+                return `
+                <div class="topic-card">
+                    <div class="topic-card-header">
+                        <div class="topic-card-name">${escapeHtml(t.topic)}</div>
+                        <div class="virality-badge ${badgeClass}">${score}/100</div>
+                    </div>
+                    <div class="topic-card-title">${escapeHtml(t.title)}</div>
+                    <div class="topic-card-footer">
+                        <div class="topic-card-sources">${sourcesCount} zdroj${sourcesCount !== 1 ? 'e' : ''}</div>
+                        <div style="display:flex;gap:0.4rem;">${viewBtn}${writeBtn}</div>
+                    </div>
+                </div>`;
+            }).join('');
+
+            document.getElementById('topicsPanel').classList.add('visible');
+        }
+
+        function startWriteArticle(runId, topicIndex) {
+            // Disable all write buttons
+            document.querySelectorAll('.btn-write').forEach(btn => {
+                btn.disabled = true;
+                btn.textContent = 'WAIT...';
+            });
+
+            // Show modal with spinner
+            const modal = document.getElementById('articleModal');
+            document.getElementById('articleModalTitle').textContent = 'Generuji clanek...';
+            document.getElementById('articleBody').innerHTML = '<div class="generating-overlay"><div class="generating-spinner"></div><div>Stahuji zdroje a generuji clanek...</div></div>';
+            document.getElementById('articleMeta').textContent = '';
+            modal.classList.add('active');
+
+            fetch('/write-article', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ run_id: runId, topic_index: topicIndex })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    document.getElementById('articleBody').innerHTML = '<div class="generating-overlay" style="color: var(--terminal-red);">' + escapeHtml(data.error) + '</div>';
+                    enableWriteButtons();
+                    return;
+                }
+                // Poll for result
+                articlePolling = setInterval(() => pollArticleOutput(), 1500);
+            });
+        }
+
+        function pollArticleOutput() {
+            fetch('/write-article/output')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.running) return;
+
+                    clearInterval(articlePolling);
+                    enableWriteButtons();
+
+                    if (data.error) {
+                        document.getElementById('articleBody').innerHTML = '<div class="generating-overlay" style="color: var(--terminal-red);">' + escapeHtml(data.error) + '</div>';
+                        return;
+                    }
+
+                    if (data.result) {
+                        articleResult = data.result;
+                        currentArticleLang = 'cs';
+                        document.getElementById('articleModalTitle').textContent = 'Vygenerovany clanek';
+                        showArticleTab('cs');
+
+                        const meta = [];
+                        if (data.result.tokens_in) meta.push('In: ' + data.result.tokens_in);
+                        if (data.result.tokens_out) meta.push('Out: ' + data.result.tokens_out);
+                        if (data.result.cost) meta.push(data.result.cost);
+                        document.getElementById('articleMeta').textContent = meta.join(' | ');
+
+                        // Refresh topics to show VIEW button
+                        if (currentRunId) loadTopics(currentRunId);
+                    }
+                });
+        }
+
+        function enableWriteButtons() {
+            document.querySelectorAll('.btn-write').forEach(btn => {
+                btn.disabled = false;
+                btn.textContent = 'WRITE_ARTICLE';
+            });
+        }
+
+        function viewSavedArticle(runId, topicIndex) {
+            const modal = document.getElementById('articleModal');
+            document.getElementById('articleModalTitle').textContent = 'Ulozeny clanek';
+            document.getElementById('articleBody').innerHTML = '<div class="generating-overlay"><div class="generating-spinner"></div><div>Nacitam...</div></div>';
+            document.getElementById('articleMeta').textContent = 'Ulozeno na disku';
+            modal.classList.add('active');
+
+            fetch('/articles/' + runId + '/' + topicIndex)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.error) {
+                        document.getElementById('articleBody').innerHTML = '<div class="generating-overlay" style="color: var(--terminal-red);">' + escapeHtml(data.error) + '</div>';
+                        return;
+                    }
+                    articleResult = data;
+                    currentArticleLang = 'cs';
+                    showArticleTab('cs');
+                });
+        }
+
+        function switchTab(lang) {
+            currentArticleLang = lang;
+            showArticleTab(lang);
+        }
+
+        function showArticleTab(lang) {
+            document.getElementById('tabCs').classList.toggle('active', lang === 'cs');
+            document.getElementById('tabEn').classList.toggle('active', lang === 'en');
+
+            if (articleResult) {
+                const html = lang === 'cs' ? articleResult.cs : articleResult.en;
+                document.getElementById('articleBody').innerHTML = html || '<div class="generating-overlay">Verze neni k dispozici</div>';
+            }
+        }
+
+        function closeArticleModal() {
+            document.getElementById('articleModal').classList.remove('active');
+            if (articlePolling) clearInterval(articlePolling);
+        }
+
+        function copyArticleHtml() {
+            if (!articleResult) return;
+            const html = currentArticleLang === 'cs' ? articleResult.cs : articleResult.en;
+            if (!html) return;
+
+            navigator.clipboard.writeText(html).then(() => {
+                const btn = document.querySelector('.btn-copy');
+                btn.textContent = 'COPIED!';
+                setTimeout(() => { btn.textContent = 'COPY HTML'; }, 2000);
+            });
+        }
+
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape') {
+                closeArticleModal();
+                closeModal();
+            }
+        });
         document.getElementById('modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
+        document.getElementById('articleModal').addEventListener('click', e => { if (e.target.id === 'articleModal') closeArticleModal(); });
     </script>
 </body>
 </html>
@@ -645,6 +1129,14 @@ articles_count = 0
 sources_count = 0
 run_success = False
 sent_line_index = 0
+
+# Article writer state
+article_writer_state = {
+    'running': False,
+    'result': None,
+    'error': None,
+}
+article_writer_lock = threading.Lock()
 
 
 def json_response(data):
@@ -827,6 +1319,153 @@ def get_run(run_id):
                 result['articles_count'] = len(articles)
         except:
             pass
+
+    return json_response(result)
+
+
+@app.route('/topics/<run_id>')
+def get_topics(run_id):
+    if not re.match(r'^[\w\-]+$', run_id):
+        return json_response({'error': 'Invalid run_id'}), 400
+
+    report_path = os.path.join(OUTPUT_DIR, run_id, 'report.txt')
+    if not os.path.exists(report_path):
+        return json_response({'error': 'Report not found'}), 404
+
+    try:
+        with open(report_path, 'r', encoding='utf-8') as f:
+            report_text = f.read()
+
+        topics = parse_topics_from_report(report_text)
+
+        # Serializovatelna verze
+        topics_out = []
+        run_dir = os.path.join(OUTPUT_DIR, run_id)
+        for i, t in enumerate(topics):
+            has_article = os.path.exists(os.path.join(run_dir, f'article_{i}_cs.html'))
+            topics_out.append({
+                'index': i,
+                'topic': t.get('topic', ''),
+                'title': t.get('title', ''),
+                'angle': t.get('angle', ''),
+                'context': t.get('context', ''),
+                'hook': t.get('hook', ''),
+                'virality': t.get('virality', ''),
+                'virality_score': t.get('virality_score', 0),
+                'seo_keywords': t.get('seo_keywords', ''),
+                'sources': t.get('sources', []),
+                'has_article': has_article,
+            })
+
+        return json_response({'topics': topics_out, 'run_id': run_id})
+    except Exception as e:
+        return json_response({'error': str(e)}), 500
+
+
+@app.route('/write-article', methods=['POST'])
+def write_article_endpoint():
+    global article_writer_state
+
+    data = request.get_json(force=True)
+    run_id = data.get('run_id', '')
+    topic_index = data.get('topic_index', 0)
+
+    if not re.match(r'^[\w\-]+$', run_id):
+        return json_response({'error': 'Invalid run_id'}), 400
+
+    with article_writer_lock:
+        if article_writer_state['running']:
+            return json_response({'error': 'Already generating'}), 409
+
+    report_path = os.path.join(OUTPUT_DIR, run_id, 'report.txt')
+    if not os.path.exists(report_path):
+        return json_response({'error': 'Report not found'}), 404
+
+    try:
+        with open(report_path, 'r', encoding='utf-8') as f:
+            report_text = f.read()
+
+        topics = parse_topics_from_report(report_text)
+        if topic_index < 0 or topic_index >= len(topics):
+            return json_response({'error': 'Invalid topic_index'}), 400
+
+        topic = topics[topic_index]
+    except Exception as e:
+        return json_response({'error': str(e)}), 500
+
+    # Reset state a spust na pozadi
+    with article_writer_lock:
+        article_writer_state = {
+            'running': True,
+            'result': None,
+            'error': None,
+        }
+
+    def generate():
+        try:
+            # Stahni zdrojove clanky
+            source_texts = []
+            for url in topic.get('sources', []):
+                text = scrape_full_article(url)
+                if text:
+                    source_texts.append(text)
+
+            # Generuj clanek
+            result = write_article(topic, source_texts)
+
+            if 'error' in result:
+                with article_writer_lock:
+                    article_writer_state['running'] = False
+                    article_writer_state['error'] = result['error']
+                return
+
+            # Uloz soubory
+            run_dir = os.path.join(OUTPUT_DIR, run_id)
+            for lang in ['cs', 'en']:
+                html = result.get(lang, '')
+                if html:
+                    filepath = os.path.join(run_dir, f'article_{topic_index}_{lang}.html')
+                    with open(filepath, 'w', encoding='utf-8') as f:
+                        f.write(html)
+
+            with article_writer_lock:
+                article_writer_state['running'] = False
+                article_writer_state['result'] = result
+
+        except Exception as e:
+            with article_writer_lock:
+                article_writer_state['running'] = False
+                article_writer_state['error'] = str(e)
+
+    thread = threading.Thread(target=generate)
+    thread.start()
+
+    return json_response({'status': 'started'})
+
+
+@app.route('/write-article/output')
+def write_article_output():
+    with article_writer_lock:
+        state = dict(article_writer_state)
+    return json_response(state)
+
+
+@app.route('/articles/<run_id>/<int:topic_index>')
+def get_saved_article(run_id, topic_index):
+    if not re.match(r'^[\w\-]+$', run_id):
+        return json_response({'error': 'Invalid run_id'}), 400
+
+    run_dir = os.path.join(OUTPUT_DIR, run_id)
+    result = {}
+
+    for lang in ['cs', 'en']:
+        filepath = os.path.join(run_dir, f'article_{topic_index}_{lang}.html')
+        if os.path.exists(filepath):
+            with open(filepath, 'r', encoding='utf-8') as f:
+                result[lang] = f.read()
+
+    if not result:
+        return json_response({'error': 'Article not found'}), 404
 
     return json_response(result)
 

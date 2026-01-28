@@ -26,6 +26,9 @@ SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 MAX_ARTICLES_PER_SOURCE = int(os.getenv("MAX_ARTICLES_PER_SOURCE", "10"))
 MIN_VIRALITY_SCORE = int(os.getenv("MIN_VIRALITY_SCORE", "50"))
 
+# Model pro generování článků
+ARTICLE_MODEL = "claude-3-haiku-20240307"
+
 # RSS Feedy herních webů
 RSS_FEEDS = [
     # Mezinárodní weby
