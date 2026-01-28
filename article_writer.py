@@ -155,7 +155,7 @@ PRAVIDLA:
 - Zahrň konkrétní fakta a čísla ze zdrojů
 - NEZMIŇUJ zdroje v textu článku (ne "podle IGN...")
 - NEPŘIDÁVEJ h1 nadpis - ten bude jako titulek článku
-- Nadpisy piš běžným způsobem (velké jen první písmeno a vlastní jména), NE Title Case
+- KRITICKÉ: V nadpisech (h2) NEPOUŽÍVEJ Title Case! Velké písmeno POUZE na začátku věty a u vlastních jmen. ŠPATNĚ: "Nová Éra Pro Herní Průmysl". SPRÁVNĚ: "Nová éra pro herní průmysl". ŠPATNĚ: "What This Means For Players". SPRÁVNĚ: "What this means for players".
 - Na konec článku VŽDY přidej sekci "Zdroje" (v EN "Sources") jako HTML seznam odkazů
 
 ZDROJOVÉ URL PRO SEKCI ZDROJE:

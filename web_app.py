@@ -896,6 +896,11 @@ HTML_TEMPLATE = '''
                             <button class="history-btn" onclick="event.stopPropagation(); openModal('${run.id}')">REPORT</button>
                         </div>
                     `).join('');
+
+                    // Pri prvnim nacteni zobraz temata z posledniho runu
+                    if (!currentRunId && data.runs.length > 0) {
+                        loadTopics(data.runs[0].id);
+                    }
                 });
         }
 
