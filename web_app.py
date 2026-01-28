@@ -887,15 +887,19 @@ HTML_TEMPLATE = '''
                         return;
                     }
 
-                    list.innerHTML = data.runs.map(run => `
+                    list.innerHTML = data.runs.map(run => {
+                        const badge = run.articles > 0
+                            ? `<span style="font-size:0.55rem;background:rgba(74,222,128,0.15);color:#4ade80;padding:0.1rem 0.3rem;border-radius:0.15rem;margin-left:0.4rem;">${run.articles} cl.</span>`
+                            : '';
+                        return `
                         <div class="history-item" onclick="loadRun('${run.id}')">
                             <div>
-                                <div class="history-date">${run.date}</div>
+                                <div class="history-date">${run.date}${badge}</div>
                                 <div class="history-time">${run.time}</div>
                             </div>
                             <button class="history-btn" onclick="event.stopPropagation(); openModal('${run.id}')">REPORT</button>
-                        </div>
-                    `).join('');
+                        </div>`;
+                    }).join('');
 
                     // Pri prvnim nacteni zobraz temata z posledniho runu
                     if (!currentRunId && data.runs.length > 0) {
@@ -1294,9 +1298,11 @@ def get_history():
                     time_str = folder[9:]
                     formatted_date = f"{date_str[6:8]}.{date_str[4:6]}.{date_str[:4]}"
                     formatted_time = f"{time_str[:2]}:{time_str[2:4]}"
-                    runs.append({'id': folder, 'date': formatted_date, 'time': formatted_time})
+                    # Spocitej vygenerovane clanky (article_*_cs.html)
+                    article_count = len([f for f in os.listdir(folder_path) if f.startswith('article_') and f.endswith('_cs.html')])
+                    runs.append({'id': folder, 'date': formatted_date, 'time': formatted_time, 'articles': article_count})
                 except:
-                    runs.append({'id': folder, 'date': folder, 'time': ''})
+                    runs.append({'id': folder, 'date': folder, 'time': '', 'articles': 0})
 
     return json_response({'runs': runs})
 
