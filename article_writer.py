@@ -207,3 +207,102 @@ POSTUP:
 
     except Exception as e:
         return {'error': str(e)}
+
+
+def generate_podcast_script(article_html: str, lang: str = 'cs') -> Dict:
+    """
+    Vygeneruje podcast script ze clanku (styl NotebookLM - 2 moderatori)
+
+    Args:
+        article_html: HTML obsah clanku
+        lang: 'cs' pro cestinu, 'en' pro anglictinu
+
+    Returns:
+        {"script": "...", "tokens_in": ..., "tokens_out": ..., "cost": "..."} nebo {"error": "..."}
+    """
+    client = anthropic.Anthropic(api_key=config.CLAUDE_API_KEY)
+
+    # Odstran HTML tagy pro citelnejsi vstup
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(article_html, 'html.parser')
+    article_text = soup.get_text(separator='\n', strip=True)
+
+    if lang == 'cs':
+        prompt = f"""Vytvoř podcast script ze následujícího článku. Formát: konverzace dvou moderátorů (ALEX a MAYA).
+
+ČLÁNEK:
+{article_text}
+
+PRAVIDLA PRO SCRIPT:
+- Styl: přátelský, informativní, jako NotebookLM podcast
+- Délka: 3-5 minut mluveného slova (cca 500-800 slov)
+- ALEX začíná, představí téma
+- MAYA doplňuje, klade otázky, přidává kontext
+- Střídají se přirozeně, ne mechanicky
+- Používej hovorovou češtinu, ne spisovnou
+- Zahrň všechny důležité informace z článku
+- Konec: krátké shrnutí a rozloučení
+
+FORMÁT VÝSTUPU (přesně dodržuj):
+ALEX: [text]
+
+MAYA: [text]
+
+ALEX: [text]
+...
+
+Začni přímo scriptem, bez úvodu."""
+
+    else:
+        prompt = f"""Create a podcast script from the following article. Format: conversation between two hosts (ALEX and MAYA).
+
+ARTICLE:
+{article_text}
+
+SCRIPT RULES:
+- Style: friendly, informative, NotebookLM podcast style
+- Length: 3-5 minutes of spoken word (approx 500-800 words)
+- ALEX starts, introduces the topic
+- MAYA adds context, asks questions, provides insights
+- Natural back-and-forth, not mechanical
+- Use conversational English
+- Include all important information from the article
+- End: brief summary and sign-off
+
+OUTPUT FORMAT (follow exactly):
+ALEX: [text]
+
+MAYA: [text]
+
+ALEX: [text]
+...
+
+Start directly with the script, no preamble."""
+
+    try:
+        message = client.messages.create(
+            model=config.ARTICLE_MODEL,
+            max_tokens=4000,
+            temperature=0.8,
+            messages=[{
+                "role": "user",
+                "content": prompt
+            }]
+        )
+
+        script = message.content[0].text.strip()
+
+        # Odhad ceny (Haiku pricing)
+        cost_input = (message.usage.input_tokens / 1_000_000) * 0.25
+        cost_output = (message.usage.output_tokens / 1_000_000) * 1.25
+        total_cost = cost_input + cost_output
+
+        return {
+            'script': script,
+            'tokens_in': message.usage.input_tokens,
+            'tokens_out': message.usage.output_tokens,
+            'cost': f"${total_cost:.4f}"
+        }
+
+    except Exception as e:
+        return {'error': str(e)}

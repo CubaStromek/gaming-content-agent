@@ -11,7 +11,7 @@ import threading
 import subprocess
 from flask import Flask, render_template_string, make_response, request
 
-from article_writer import parse_topics_from_report, scrape_full_article, write_article
+from article_writer import parse_topics_from_report, scrape_full_article, write_article, generate_podcast_script
 
 app = Flask(__name__)
 
@@ -617,6 +617,39 @@ HTML_TEMPLATE = '''
 
         .btn-copy:hover { background: #0d8fd4; }
 
+        .btn-podcast {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            padding: 0.4rem 1rem;
+            background: transparent;
+            border: 1px solid var(--terminal-green);
+            color: var(--terminal-green);
+            border-radius: 0.2rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-right: 0.5rem;
+        }
+
+        .btn-podcast:hover { background: var(--terminal-green); color: #000; }
+        .btn-podcast:disabled { border-color: #374151; color: #6b7280; cursor: not-allowed; }
+
+        .podcast-content {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            line-height: 1.9;
+            white-space: pre-wrap;
+        }
+
+        .podcast-content .speaker-alex {
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        .podcast-content .speaker-maya {
+            color: var(--terminal-green);
+            font-weight: 600;
+        }
+
         .generating-overlay {
             display: flex;
             flex-direction: column;
@@ -747,11 +780,15 @@ HTML_TEMPLATE = '''
             <div class="tab-switcher">
                 <button class="tab-btn active" onclick="switchTab('cs')" id="tabCs">CESKY</button>
                 <button class="tab-btn" onclick="switchTab('en')" id="tabEn">ENGLISH</button>
+                <button class="tab-btn" onclick="switchTab('podcast')" id="tabPodcast">PODCAST</button>
             </div>
             <div class="article-body" id="articleBody"></div>
             <div class="article-actions">
                 <div class="article-meta" id="articleMeta"></div>
-                <button class="btn-copy" onclick="copyArticleHtml()">COPY HTML</button>
+                <div>
+                    <button class="btn-podcast" onclick="generatePodcast()" id="btnPodcast">PODCAST_SCRIPT</button>
+                    <button class="btn-copy" onclick="copyContent()">COPY</button>
+                </div>
             </div>
         </div>
     </div>
@@ -998,6 +1035,9 @@ HTML_TEMPLATE = '''
         }
 
         function startWriteArticle(runId, topicIndex) {
+            // Set context for podcast generation
+            setArticleContext(runId, topicIndex);
+
             // Disable all write buttons
             document.querySelectorAll('.btn-write').forEach(btn => {
                 btn.disabled = true;
@@ -1009,6 +1049,7 @@ HTML_TEMPLATE = '''
             document.getElementById('articleModalTitle').textContent = 'Generuji clanek...';
             document.getElementById('articleBody').innerHTML = '<div class="generating-overlay"><div class="generating-spinner"></div><div>Stahuji zdroje a generuji clanek...</div></div>';
             document.getElementById('articleMeta').textContent = '';
+            articleResult = { cs: null, en: null, podcast: null };
             modal.classList.add('active');
 
             fetch('/write-article', {
@@ -1044,6 +1085,7 @@ HTML_TEMPLATE = '''
 
                     if (data.result) {
                         articleResult = data.result;
+                        articleResult.podcast = null;
                         currentArticleLang = 'cs';
                         document.getElementById('articleModalTitle').textContent = 'Vygenerovany clanek';
                         showArticleTab('cs');
@@ -1068,23 +1110,30 @@ HTML_TEMPLATE = '''
         }
 
         function viewSavedArticle(runId, topicIndex) {
+            // Set context for podcast generation
+            setArticleContext(runId, topicIndex);
+
             const modal = document.getElementById('articleModal');
             document.getElementById('articleModalTitle').textContent = 'Ulozeny clanek';
             document.getElementById('articleBody').innerHTML = '<div class="generating-overlay"><div class="generating-spinner"></div><div>Nacitam...</div></div>';
             document.getElementById('articleMeta').textContent = 'Ulozeno na disku';
             modal.classList.add('active');
 
-            fetch('/articles/' + runId + '/' + topicIndex)
-                .then(r => r.json())
-                .then(data => {
-                    if (data.error) {
-                        document.getElementById('articleBody').innerHTML = '<div class="generating-overlay" style="color: var(--terminal-red);">' + escapeHtml(data.error) + '</div>';
-                        return;
-                    }
-                    articleResult = data;
-                    currentArticleLang = 'cs';
-                    showArticleTab('cs');
-                });
+            // Nacti clanek i pripadny podcast
+            Promise.all([
+                fetch('/articles/' + runId + '/' + topicIndex).then(r => r.json()),
+                fetch('/podcast/' + runId + '/' + topicIndex + '/cs').then(r => r.json()).catch(() => null),
+                fetch('/podcast/' + runId + '/' + topicIndex + '/en').then(r => r.json()).catch(() => null)
+            ]).then(([articleData, podcastCs, podcastEn]) => {
+                if (articleData.error) {
+                    document.getElementById('articleBody').innerHTML = '<div class="generating-overlay" style="color: var(--terminal-red);">' + escapeHtml(articleData.error) + '</div>';
+                    return;
+                }
+                articleResult = articleData;
+                articleResult.podcast = (podcastCs && podcastCs.script) || (podcastEn && podcastEn.script) || null;
+                currentArticleLang = 'cs';
+                showArticleTab('cs');
+            });
         }
 
         function switchTab(lang) {
@@ -1095,28 +1144,126 @@ HTML_TEMPLATE = '''
         function showArticleTab(lang) {
             document.getElementById('tabCs').classList.toggle('active', lang === 'cs');
             document.getElementById('tabEn').classList.toggle('active', lang === 'en');
+            document.getElementById('tabPodcast').classList.toggle('active', lang === 'podcast');
 
             if (articleResult) {
-                const html = lang === 'cs' ? articleResult.cs : articleResult.en;
-                document.getElementById('articleBody').innerHTML = html || '<div class="generating-overlay">Verze neni k dispozici</div>';
+                if (lang === 'podcast') {
+                    if (articleResult.podcast) {
+                        document.getElementById('articleBody').innerHTML = formatPodcastScript(articleResult.podcast);
+                    } else {
+                        document.getElementById('articleBody').innerHTML = '<div class="generating-overlay">Podcast script neni k dispozici.<br><br>Klikni na PODCAST_SCRIPT pro vygenerovani.</div>';
+                    }
+                } else {
+                    const html = lang === 'cs' ? articleResult.cs : articleResult.en;
+                    document.getElementById('articleBody').innerHTML = html || '<div class="generating-overlay">Verze neni k dispozici</div>';
+                }
             }
         }
 
         function closeArticleModal() {
             document.getElementById('articleModal').classList.remove('active');
             if (articlePolling) clearInterval(articlePolling);
+            if (podcastPolling) clearInterval(podcastPolling);
         }
 
-        function copyArticleHtml() {
+        function copyContent() {
             if (!articleResult) return;
-            const html = currentArticleLang === 'cs' ? articleResult.cs : articleResult.en;
-            if (!html) return;
+            let content;
+            if (currentArticleLang === 'podcast') {
+                content = articleResult.podcast || '';
+            } else {
+                content = currentArticleLang === 'cs' ? articleResult.cs : articleResult.en;
+            }
+            if (!content) return;
 
-            navigator.clipboard.writeText(html).then(() => {
+            navigator.clipboard.writeText(content).then(() => {
                 const btn = document.querySelector('.btn-copy');
                 btn.textContent = 'COPIED!';
-                setTimeout(() => { btn.textContent = 'COPY HTML'; }, 2000);
+                setTimeout(() => { btn.textContent = 'COPY'; }, 2000);
             });
+        }
+
+        let currentRunIdForPodcast = null;
+        let currentTopicIndexForPodcast = null;
+        let podcastPolling = null;
+
+        function setArticleContext(runId, topicIndex) {
+            currentRunIdForPodcast = runId;
+            currentTopicIndexForPodcast = topicIndex;
+        }
+
+        function generatePodcast() {
+            if (!currentRunIdForPodcast || currentTopicIndexForPodcast === null) {
+                alert('Article context not set');
+                return;
+            }
+
+            const lang = currentArticleLang === 'podcast' ? 'cs' : currentArticleLang;
+            const btn = document.getElementById('btnPodcast');
+            btn.disabled = true;
+            btn.textContent = 'GENERATING...';
+
+            // Prepni na podcast tab a ukaž spinner
+            switchTab('podcast');
+            document.getElementById('articleBody').innerHTML = '<div class="generating-overlay"><div class="generating-spinner"></div><div>Generuji podcast script...</div></div>';
+
+            fetch('/generate-podcast', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    run_id: currentRunIdForPodcast,
+                    topic_index: currentTopicIndexForPodcast,
+                    lang: lang
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    document.getElementById('articleBody').innerHTML = '<div class="generating-overlay" style="color: var(--terminal-red);">' + escapeHtml(data.error) + '</div>';
+                    btn.disabled = false;
+                    btn.textContent = 'PODCAST_SCRIPT';
+                    return;
+                }
+                podcastPolling = setInterval(() => pollPodcastOutput(), 1500);
+            });
+        }
+
+        function pollPodcastOutput() {
+            fetch('/generate-podcast/output')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.running) return;
+
+                    clearInterval(podcastPolling);
+                    const btn = document.getElementById('btnPodcast');
+                    btn.disabled = false;
+                    btn.textContent = 'PODCAST_SCRIPT';
+
+                    if (data.error) {
+                        document.getElementById('articleBody').innerHTML = '<div class="generating-overlay" style="color: var(--terminal-red);">' + escapeHtml(data.error) + '</div>';
+                        return;
+                    }
+
+                    if (data.result && data.result.script) {
+                        articleResult.podcast = data.result.script;
+                        showArticleTab('podcast');
+
+                        const meta = document.getElementById('articleMeta');
+                        const metaParts = [];
+                        if (data.result.tokens_in) metaParts.push('In: ' + data.result.tokens_in);
+                        if (data.result.tokens_out) metaParts.push('Out: ' + data.result.tokens_out);
+                        if (data.result.cost) metaParts.push(data.result.cost);
+                        meta.textContent = metaParts.join(' | ');
+                    }
+                });
+        }
+
+        function formatPodcastScript(script) {
+            // Zvyrazni ALEX: a MAYA:
+            let html = escapeHtml(script);
+            html = html.replace(/^(ALEX:)/gm, '<span class="speaker-alex">$1</span>');
+            html = html.replace(/^(MAYA:)/gm, '<span class="speaker-maya">$1</span>');
+            return '<div class="podcast-content">' + html + '</div>';
         }
 
         document.addEventListener('keydown', e => {
@@ -1146,6 +1293,14 @@ article_writer_state = {
     'error': None,
 }
 article_writer_lock = threading.Lock()
+
+# Podcast writer state
+podcast_writer_state = {
+    'running': False,
+    'result': None,
+    'error': None,
+}
+podcast_writer_lock = threading.Lock()
 
 
 def json_response(data):
@@ -1479,6 +1634,102 @@ def get_saved_article(run_id, topic_index):
         return json_response({'error': 'Article not found'}), 404
 
     return json_response(result)
+
+
+@app.route('/generate-podcast', methods=['POST'])
+def generate_podcast_endpoint():
+    global podcast_writer_state
+
+    data = request.get_json(force=True)
+    run_id = data.get('run_id', '')
+    topic_index = data.get('topic_index', 0)
+    lang = data.get('lang', 'cs')
+
+    if not re.match(r'^[\w\-]+$', run_id):
+        return json_response({'error': 'Invalid run_id'}), 400
+
+    if lang not in ['cs', 'en']:
+        return json_response({'error': 'Invalid lang'}), 400
+
+    with podcast_writer_lock:
+        if podcast_writer_state['running']:
+            return json_response({'error': 'Already generating podcast'}), 409
+
+    # Nacti clanek
+    run_dir = os.path.join(OUTPUT_DIR, run_id)
+    article_path = os.path.join(run_dir, f'article_{topic_index}_{lang}.html')
+
+    if not os.path.exists(article_path):
+        return json_response({'error': 'Article not found. Generate article first.'}), 404
+
+    try:
+        with open(article_path, 'r', encoding='utf-8') as f:
+            article_html = f.read()
+    except Exception as e:
+        return json_response({'error': str(e)}), 500
+
+    # Reset state a spust na pozadi
+    with podcast_writer_lock:
+        podcast_writer_state = {
+            'running': True,
+            'result': None,
+            'error': None,
+        }
+
+    def generate():
+        try:
+            result = generate_podcast_script(article_html, lang)
+
+            if 'error' in result:
+                with podcast_writer_lock:
+                    podcast_writer_state['running'] = False
+                    podcast_writer_state['error'] = result['error']
+                return
+
+            # Uloz soubor
+            script_path = os.path.join(run_dir, f'podcast_{topic_index}_{lang}.txt')
+            with open(script_path, 'w', encoding='utf-8') as f:
+                f.write(result['script'])
+
+            with podcast_writer_lock:
+                podcast_writer_state['running'] = False
+                podcast_writer_state['result'] = result
+
+        except Exception as e:
+            with podcast_writer_lock:
+                podcast_writer_state['running'] = False
+                podcast_writer_state['error'] = str(e)
+
+    thread = threading.Thread(target=generate)
+    thread.start()
+
+    return json_response({'status': 'started'})
+
+
+@app.route('/generate-podcast/output')
+def generate_podcast_output():
+    with podcast_writer_lock:
+        state = dict(podcast_writer_state)
+    return json_response(state)
+
+
+@app.route('/podcast/<run_id>/<int:topic_index>/<lang>')
+def get_saved_podcast(run_id, topic_index, lang):
+    if not re.match(r'^[\w\-]+$', run_id):
+        return json_response({'error': 'Invalid run_id'}), 400
+
+    if lang not in ['cs', 'en']:
+        return json_response({'error': 'Invalid lang'}), 400
+
+    script_path = os.path.join(OUTPUT_DIR, run_id, f'podcast_{topic_index}_{lang}.txt')
+
+    if not os.path.exists(script_path):
+        return json_response({'error': 'Podcast script not found'}), 404
+
+    with open(script_path, 'r', encoding='utf-8') as f:
+        script = f.read()
+
+    return json_response({'script': script})
 
 
 if __name__ == '__main__':
