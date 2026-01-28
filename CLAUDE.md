@@ -68,41 +68,43 @@ Agent si pamatuje již zpracované články v `processed_articles.json`:
 
 - **Repo:** https://github.com/CubaStromek/gamefo-wordpress-theme (private)
 - **Lokální složka:** `wp-theme-gameinfo/`
-- **Verze:** 1.7.3
-- **WP:** 5.0+, PHP 7.4+, testováno na WP 6.4
+- **Verze:** 1.13.8
+- **WP:** 5.0+, PHP 7.4+
+- **Text Domain:** gamefo
+- **Textdomain soubor:** gameinfo-terminal (v languages/)
 
 ### Struktura souborů
 
 ```
 wp-theme-gameinfo/
 ├── assets/
-│   ├── css/
-│   ├── fonts/
 │   └── js/main.js                  (JS: theme toggle, AJAX load more, dropdown, search)
 ├── languages/
 │   ├── gameinfo-terminal.pot        (překlad šablona)
 │   ├── cs_CZ.po / .mo              (české překlady)
 ├── mu-plugins/
-│   └── gamefo-game-posts.php        (shortcode [game_posts tag="slug" limit="10"])
+│   ├── gamefo-game-posts.php        (shortcode [game_posts] v2.0.0)
+│   └── gamefo-game-import.php       (import herních profilů z JSON)
 ├── template-parts/
 │   ├── category-tabs.php            (kategorie navigace s ikonami)
-│   └── content-news-item.php        (news item v seznamu)
-├── style.css          (1 470 ř.) - všechny styly, CSS proměnné, dark/light mode
-├── functions.php      (1 266 ř.) - funkce, walker, meta boxy, AJAX, REST API, customizer
+│   ├── content-news-item.php        (news item v seznamu)
+│   └── content-news-item-compact.php (kompaktní news item pro game page shortcode)
+├── style.css          (2 068 ř.) - všechny styly, CSS proměnné, dark/light mode
+├── functions.php      (2 479 ř.) - funkce, walker, meta boxy, AJAX, REST API, customizer, status tags
 ├── header.php         - terminálová hlavička, navigace, search, theme toggle, lang switcher
-├── footer.php         - patička s verzí z style.css
+├── footer.php         - patička s verzí z style.css, UTF-8 info, post/category count
 ├── front-page.php     - úvodní stránka s category tabs a stránkováním
 ├── index.php          - blog index s AJAX load more
 ├── single.php         - detail článku (featured image, tagy, navigace, komentáře)
 ├── archive.php        - archiv/kategorie (dynamické titulky ve stylu terminálu)
 ├── search.php         - výsledky hledání
 ├── 404.php            - chybová stránka
-├── page.php           - standardní stránka
+├── page.php           - standardní stránka s [DOC] prefixem
+├── page-about-game.php - herní profil (two-column layout, timeline, game info sidebar)
 ├── home.php           - homepage
-├── comments.php       - komentáře (terminálový styl)
+├── comments.php       - komentáře (terminálový styl, custom callback)
 ├── sidebar.php        - widget area
 ├── readme.txt
-├── debug-posts.php    - debug utilita (podmíněné vložení)
 └── MULTILINGUAL-SETUP.md
 ```
 
@@ -112,36 +114,82 @@ wp-theme-gameinfo/
 | Proměnná | Dark mode | Light mode |
 |----------|-----------|------------|
 | Primary | `#13a4ec` | `#0284c7` |
+| Primary hover | `#0d8fd4` | `#0369a1` |
 | Background | `#101c22` | — |
 | Console BG | `#1e1e1e` | `#ffffff` |
-| Header BG | `#181818` | `#f0f2f4` |
+| Header BG | `#181818` | `#d5d9e0` |
 | Input BG | `#282828` | `#e5e7eb` |
-| Terminal green | `#4ade80` | — |
+| Terminal green | `#4ade80` | `#16a34a` |
 | Text primary | `#d1d5db` | — |
 | Text secondary | `#9ca3af` | — |
+| Text muted | `#6b7280` | — |
+| Text dim | `#4b5563` | — |
+| Heading | `#fff` | — |
 
-**Status tag barvy:** leak=#f97316, critical=#ef4444, success=#4ade80, indie=#a78bfa, review=#38bdf8, trailer=#fbbf24, rumor=#fb923c, update=#2dd4bf, news=#13a4ec, info=#6b7280
+**Status tag barvy (10 výchozích):** leak=#f97316, critical=#ef4444, success=#4ade80, indie=#a78bfa, review=#38bdf8, trailer=#fbbf24, rumor=#fb923c, update=#2dd4bf, news=#13a4ec, info=#6b7280
+- Spravovatelné přes admin: Theme > Status Tags (přidat/upravit/smazat)
+- Dynamicky generované CSS styly pro status tagy
 
-**Fonty:** Inter (body), Fira Code (terminal/monospace), Material Symbols Outlined (ikony)
+**Fonty:** Inter (4 řezy, body), Fira Code (3 řezy, terminal/monospace), Material Symbols Outlined (ikony)
 
 ### Klíčové funkce (functions.php)
 
 | Funkce | Popis |
 |--------|-------|
 | `gameinfo_get_post_status_data()` | Mapuje kategorie/tagy → status štítky (LEAK, REVIEW, TRAILER...) |
-| `gameinfo_language_switcher()` | Polylang přepínač jazyků, fallback na CZ/EN |
-| `gameinfo_load_more_posts()` | AJAX endpoint pro stránkování (wp_ajax) |
+| `gameinfo_get_post_tag_type()` | Klasifikace tagů: critical/normal |
+| `gameinfo_get_status_tags()` | Vrací všechny status tagy s výchozími hodnotami |
+| `gameinfo_language_switcher()` | Polylang přepínač jazyků |
+| `gameinfo_language_switcher_fallback()` | CZ/EN tlačítka bez Polylangu |
+| `gameinfo_load_more_posts()` | AJAX endpoint pro stránkování (6 postů/stránka) |
 | `gameinfo_include_subcategory_posts()` | Automaticky zahrnuje podkategorie v archivech |
+| `gameinfo_search_game_pages()` | AJAX endpoint pro vyhledávání herních stránek v meta boxu |
+| `gameinfo_get_category_colors()` | 10 předdefinovaných barev pro kategorie |
+| `gameinfo_get_type_color($type)` | Lookup barvy podle typu |
+| `gameinfo_get_option($option, $default)` | Helper pro Customizer hodnoty |
+| `gameinfo_get_facebook_button()` | Sociální odkaz pro header |
+| `gameinfo_get_rss_button()` | RSS odkaz s Polylang podporou |
+| `gameinfo_login_styles()` | Terminálový styl login stránky |
 | `GameInfo_Walker_Nav_Menu` | Custom walker pro dropdown navigaci |
 | `GameInfo_Walker_Category_Tabs` | Walker pro kategorie taby s ikonami |
 
 **3 menu lokace:** primary (hlavní + dropdown), category-tabs (herní kategorie), footer
-**2 widget areas:** primary-sidebar, footer-widget-area
+**2 widget areas:** sidebar-1 (Sidebar), footer-1 (Footer Widget Area)
+
+### Meta boxy (4 celkem)
+
+| Meta box | Popis |
+|----------|-------|
+| Source Information | Textové pole pro zdroj článku |
+| Audio Version | URL pole pro audio verzi |
+| Game Pages | Vyhledávání + multi-select herních stránek (AJAX) |
+| Status Tag | Select dropdown s barvami (ruční přepsání auto-detekce) |
 
 ### Vlastní pole (Custom Fields)
+
+**Pole pro příspěvky:**
 - `gameinfo_source` - zdroj článku (zobrazí se jako doména)
 - `gameinfo_audio_url` - URL na audio verzi článku
-- Obě pole registrována v REST API
+- `gameinfo_status_tag` - ruční status tag (fallback na auto-detect z kategorií/tagů)
+- `gameinfo_game_pages` - propojené herní stránky (pole ID)
+
+**Pole pro herní profily (page-about-game.php):**
+- `series` - herní série
+- `part` - díl série
+- `platforms` - platformy
+- `publisher` - vydavatel
+- `studio` - vývojářské studio
+- `game_status` - stav hry (released, development, announced, early_access, cancelled)
+- `timeline` - časová osa událostí (JSON)
+
+**REST API registrace:** `gameinfo_source`, `gameinfo_audio_url`, `gameinfo_status_tag`, `gameinfo_game_pages` — všechna v show_in_rest. Navíc REST field `status_data` (label, type, color) na postech a `color` na kategoriích.
+
+### Systém barev kategorií
+
+- Každá kategorie může mít vlastní barvu: `gameinfo_category_color` (hex color picker v admin)
+- 10 předdefinovaných barev v `gameinfo_get_category_colors()`
+- Barva dostupná přes REST API field `color` na category responses
+- Podpora EN + CZ názvů kategorií s fallback matchingem
 
 ### Customizer nastavení
 - **Terminal Title** (default: "game_info")
@@ -149,15 +197,33 @@ wp-theme-gameinfo/
 - **Build Version** (default: "2.4.0-stable")
 - **Facebook URL** (volitelné)
 
-### JavaScript (main.js)
-- Theme toggle (localStorage + prefers-color-scheme)
-- AJAX Load More s category filtrováním
-- Dropdown menu (hover desktop / click mobile)
-- Search focus: Ctrl/Cmd+K, Escape pro blur
-- Terminálové efekty (cursor animace)
+### JavaScript (main.js, 257 ř.)
+- Theme toggle (localStorage + prefers-color-scheme, rotační animace)
+- AJAX Load More s category filtrováním (FETCHING... stav, skrytí při max pages)
+- Dropdown menu (hover desktop / click mobile, auto-close)
+- Search focus: Ctrl/Cmd+K, Escape pro blur, placeholder management
+- Terminálové efekty (cursor animace při hover)
 
 ### Kategorie → ikony mapování
 indie→token, triple/aaa→rocket_launch, hardware/tech→memory, news/zprávy→newspaper, review/recenze→rate_review, default→database
+
+### MU-Plugins
+
+| Plugin | Popis |
+|--------|-------|
+| `gamefo-game-posts.php` (v2.0.0) | Shortcode `[game_posts]` — automaticky detekuje posty z aktuální stránky přes `gameinfo_game_pages` meta. Fallback: `[game_posts tag="slug" limit="10"]`. Polylang filtering. Template: content-news-item-compact.php |
+| `gamefo-game-import.php` | Admin stránka Pages > Import Game. JSON import herních profilů s preview tabulkou. Polylang integrace pro CZ/EN. Status labels: released, development, announced, early_access, cancelled |
+
+### Herní profil šablona (page-about-game.php)
+
+Dedikovaná šablona pro herní stránky:
+- **Game header:** série, díl, platformy
+- **Two-column layout:** hlavní obsah + sidebar
+- **System Summary:** přehledové informace
+- **Related Log Entries:** propojené články (přes `gameinfo_game_pages`)
+- **Game Info box:** publisher, studio, status
+- **System Archive:** timeline událostí
+- **Media Asset:** featured image
 
 ### Export ZIP souborů
 **DŮLEŽITÉ:** Při vytváření ZIP archivu šablony:
