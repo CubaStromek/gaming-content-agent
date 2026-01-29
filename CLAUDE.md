@@ -2,7 +2,7 @@
 
 ## PRAVIDLA
 
-- **NIKDY neprovádět `git commit`, `git push`, ani `eas build` bez výslovného souhlasu uživatele.**
+- **NIKDY neprovádět `git commit`, `git push`, `eas build`, ani `eas submit` bez výslovného souhlasu uživatele.** Platí i pro amend, force-push, tag push a jakýkoliv deploy na Expo/EAS. Vždy počkat na explicitní pokyn.
 
 ---
 
