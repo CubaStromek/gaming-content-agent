@@ -2,7 +2,7 @@
 /**
  * Plugin Name: GAMEfo App Views
  * Description: Anonymous article view counter from the GAMEfo mobile app.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: GAMEfo
  * License: GPL-2.0-or-later
  */
@@ -61,6 +61,14 @@ add_action('admin_menu', function () {
  */
 function gamefo_app_views_admin_page(): void {
     global $wpdb;
+
+    // Handle reset
+    if (isset($_POST['reset_views']) && wp_verify_nonce($_POST['_wpnonce'], 'gamefo_reset_views')) {
+        $deleted = $wpdb->query(
+            "DELETE FROM {$wpdb->postmeta} WHERE meta_key = 'gamefo_app_views'"
+        );
+        echo '<div class="notice notice-success"><p>All app view statistics have been reset (' . intval($deleted) . ' records deleted).</p></div>';
+    }
 
     // Query all posts that have at least 1 app view, ordered by views desc, top 50
     $results = $wpdb->get_results(
@@ -127,6 +135,13 @@ function gamefo_app_views_admin_page(): void {
                 <p style="margin: 0; color: #646970;">Avg Views / Article</p>
             </div>
         </div>
+
+        <form method="post" style="margin: 20px 0 0;">
+            <?php wp_nonce_field('gamefo_reset_views'); ?>
+            <button type="submit" name="reset_views" class="button button-secondary" onclick="return confirm('Are you sure? This will permanently delete all app view statistics.');">
+                Reset All View Statistics
+            </button>
+        </form>
 
         <?php if (empty($results)) : ?>
             <p>No app views recorded yet.</p>

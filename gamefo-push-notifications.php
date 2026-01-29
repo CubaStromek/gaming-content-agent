@@ -1,0 +1,513 @@
+<?php
+/**
+ * Plugin Name: GameFo Push Notifications
+ * Description: Handles device tokens and sends push notifications via Expo when new posts are published.
+ * Version: 1.1.0
+ * Author: GAMEfo Team
+ * Text Domain: gamefo-push
+ */
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+/**
+ * 1. Create DB Table for Tokens on plugin activation
+ */
+function gamefo_create_device_table() {
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'gamefo_devices';
+    $charset_collate = $wpdb->get_charset_collate();
+
+    $sql = "CREATE TABLE $table_name (
+        id mediumint(9) NOT NULL AUTO_INCREMENT,
+        token varchar(255) NOT NULL,
+        platform varchar(20) DEFAULT 'unknown',
+        language varchar(5) DEFAULT 'cs',
+        created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        last_used datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        PRIMARY KEY (id),
+        UNIQUE KEY token (token)
+    ) $charset_collate;";
+
+    require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+    dbDelta($sql);
+
+    add_option('gamefo_push_db_version', '1.1');
+}
+register_activation_hook(__FILE__, 'gamefo_create_device_table');
+
+// Also create table when theme is switched (for theme-bundled version)
+add_action('after_switch_theme', 'gamefo_create_device_table');
+
+// Migrate existing DB: add language column if missing
+add_action('init', function() {
+    $db_version = get_option('gamefo_push_db_version', '1.0');
+    if (version_compare($db_version, '1.1', '<')) {
+        gamefo_create_device_table(); // dbDelta handles ALTER TABLE
+        update_option('gamefo_push_db_version', '1.1');
+    }
+});
+
+/**
+ * 2. REST API Endpoint to Register Token
+ */
+add_action('rest_api_init', function () {
+    // Register device token
+    register_rest_route('gamefo/v1', '/devices', array(
+        'methods' => 'POST',
+        'callback' => 'gamefo_register_device',
+        'permission_callback' => '__return_true'
+    ));
+
+    // Unregister device token
+    register_rest_route('gamefo/v1', '/devices', array(
+        'methods' => 'DELETE',
+        'callback' => 'gamefo_unregister_device',
+        'permission_callback' => '__return_true'
+    ));
+
+    // Get device count (for admin)
+    register_rest_route('gamefo/v1', '/devices/count', array(
+        'methods' => 'GET',
+        'callback' => 'gamefo_get_device_count',
+        'permission_callback' => function() {
+            return current_user_can('manage_options');
+        }
+    ));
+});
+
+/**
+ * Register a device token
+ */
+function gamefo_register_device(WP_REST_Request $request) {
+    global $wpdb;
+    $token = sanitize_text_field($request->get_param('token'));
+    $platform = sanitize_text_field($request->get_param('platform') ?: 'unknown');
+    $language = sanitize_text_field($request->get_param('language') ?: 'cs');
+
+    // Validate language
+    if (!in_array($language, array('cs', 'en'), true)) {
+        $language = 'cs';
+    }
+
+    // Validate Expo token format (compatible with PHP 7.4+)
+    if (!$token || strpos($token, 'ExponentPushToken') !== 0) {
+        return new WP_Error(
+            'invalid_token',
+            'Valid Expo push token required (must start with ExponentPushToken)',
+            array('status' => 400)
+        );
+    }
+
+    $table_name = $wpdb->prefix . 'gamefo_devices';
+
+    $result = $wpdb->replace(
+        $table_name,
+        array(
+            'token' => $token,
+            'platform' => $platform,
+            'language' => $language,
+            'created_at' => current_time('mysql'),
+            'last_used' => current_time('mysql')
+        ),
+        array('%s', '%s', '%s', '%s', '%s')
+    );
+
+    if ($result === false) {
+        return new WP_Error(
+            'db_error',
+            'Failed to save token',
+            array('status' => 500)
+        );
+    }
+
+    return new WP_REST_Response(array(
+        'success' => true,
+        'message' => 'Device registered successfully'
+    ), 200);
+}
+
+/**
+ * Unregister a device token
+ */
+function gamefo_unregister_device(WP_REST_Request $request) {
+    global $wpdb;
+    $token = sanitize_text_field($request->get_param('token'));
+
+    if (!$token) {
+        return new WP_Error('invalid_token', 'Token required', array('status' => 400));
+    }
+
+    $table_name = $wpdb->prefix . 'gamefo_devices';
+    $wpdb->delete($table_name, array('token' => $token), array('%s'));
+
+    return new WP_REST_Response(array(
+        'success' => true,
+        'message' => 'Device unregistered'
+    ), 200);
+}
+
+/**
+ * Get registered device count
+ */
+function gamefo_get_device_count() {
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'gamefo_devices';
+    $count = $wpdb->get_var("SELECT COUNT(*) FROM $table_name");
+
+    return new WP_REST_Response(array(
+        'count' => (int) $count
+    ), 200);
+}
+
+/**
+ * 3. Send Notification on Post Publish
+ */
+add_action('transition_post_status', 'gamefo_send_push_on_publish', 10, 3);
+
+function gamefo_send_push_on_publish($new_status, $old_status, $post) {
+    // Only trigger when post transitions TO 'publish' FROM something else
+    if ($new_status !== 'publish' || $old_status === 'publish') {
+        return;
+    }
+
+    // Only for 'post' post type
+    if ($post->post_type !== 'post') {
+        return;
+    }
+
+    // Skip autosaves and revisions
+    if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) {
+        return;
+    }
+
+    if (wp_is_post_revision($post->ID)) {
+        return;
+    }
+
+    // Prevent duplicate sends using transient
+    $transient_key = 'gamefo_push_sent_' . $post->ID;
+    if (get_transient($transient_key)) {
+        return;
+    }
+    set_transient($transient_key, true, 60); // Prevent re-send for 60 seconds
+
+    // Send the notification
+    gamefo_send_push_notification($post);
+}
+
+/**
+ * Internal log — stores entries in wp_options (last 50)
+ */
+function gamefo_push_log($message) {
+    $log = get_option('gamefo_push_log', array());
+    $log[] = array(
+        'time' => current_time('Y-m-d H:i:s'),
+        'message' => $message,
+    );
+    // Keep last 50 entries
+    $log = array_slice($log, -50);
+    update_option('gamefo_push_log', $log, false);
+}
+
+/**
+ * Send push notification to all registered devices
+ */
+function gamefo_send_push_notification($post) {
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'gamefo_devices';
+
+    // Detect post language via Polylang
+    $post_lang = 'cs'; // default
+    if (function_exists('pll_get_post_language') && $post->ID > 0) {
+        $detected = pll_get_post_language($post->ID, 'slug');
+        if ($detected) {
+            $post_lang = $detected;
+        }
+    }
+
+    // Filter tokens by post language
+    $tokens = $wpdb->get_col($wpdb->prepare(
+        "SELECT token FROM $table_name WHERE language = %s",
+        $post_lang
+    ));
+
+    gamefo_push_log('Post language: ' . $post_lang . ', matching devices: ' . count($tokens));
+
+    if (empty($tokens)) {
+        gamefo_push_log('No devices for language "' . $post_lang . '", skipping.');
+        return;
+    }
+
+    $api_url = 'https://exp.host/--/api/v2/push/send';
+
+    // Prepare notification content — localized title
+    $title = ($post_lang === 'en') ? 'NEW LOG RECEIVED' : 'NOVY LOG PRIJAT';
+    $body = wp_strip_all_tags($post->post_title);
+    $data = array(
+        'postId' => $post->ID,
+        'url' => get_permalink($post->ID),
+        'type' => 'new_post'
+    );
+
+    // Get featured image if available
+    $image = null;
+    if ($post->ID && has_post_thumbnail($post->ID)) {
+        $image = get_the_post_thumbnail_url($post->ID, 'medium');
+    }
+
+    // Build headers — include Expo access token if configured
+    $headers = array(
+        'Content-Type' => 'application/json',
+        'Accept' => 'application/json',
+        'Accept-Encoding' => 'gzip, deflate',
+    );
+    $expo_token = get_option('gamefo_expo_access_token', '');
+    if (!empty($expo_token)) {
+        $headers['Authorization'] = 'Bearer ' . $expo_token;
+        gamefo_push_log('Using Expo access token: ' . substr($expo_token, 0, 8) . '...');
+    } else {
+        gamefo_push_log('WARNING: No Expo access token configured!');
+    }
+
+    // Chunking for Expo API (max 100 per request)
+    $chunks = array_chunk($tokens, 100);
+
+    foreach ($chunks as $chunk) {
+        $messages = array();
+
+        foreach ($chunk as $token) {
+            $message = array(
+                'to' => $token,
+                'title' => $title,
+                'body' => $body,
+                'data' => $data,
+                'sound' => 'default',
+                'priority' => 'high',
+                'channelId' => 'default',
+            );
+
+            if ($image) {
+                $message['image'] = $image;
+            }
+
+            $messages[] = $message;
+        }
+
+        if (!empty($messages)) {
+            gamefo_push_log('Sending ' . count($messages) . ' message(s) to Expo API...');
+            gamefo_push_log('Payload: ' . wp_json_encode($messages));
+
+            $response = wp_remote_post($api_url, array(
+                'headers' => $headers,
+                'body' => wp_json_encode($messages),
+                'timeout' => 30,
+                'blocking' => true
+            ));
+
+            if (is_wp_error($response)) {
+                gamefo_push_log('ERROR (network): ' . $response->get_error_message());
+            } else {
+                $status_code = wp_remote_retrieve_response_code($response);
+                $body_text = wp_remote_retrieve_body($response);
+                gamefo_push_log('Expo response: HTTP ' . $status_code);
+
+                // Parse response and remove invalid tokens
+                $result = json_decode($body_text, true);
+                if (isset($result['data']) && is_array($result['data'])) {
+                    $invalid_tokens = array();
+                    foreach ($result['data'] as $i => $ticket) {
+                        if (isset($ticket['status']) && $ticket['status'] === 'error'
+                            && isset($ticket['details']['error'])
+                            && $ticket['details']['error'] === 'DeviceNotRegistered'
+                            && isset($chunk[$i])) {
+                            $invalid_tokens[] = $chunk[$i];
+                        }
+                    }
+                    if (!empty($invalid_tokens)) {
+                        foreach ($invalid_tokens as $bad_token) {
+                            $wpdb->delete($table_name, array('token' => $bad_token), array('%s'));
+                        }
+                        gamefo_push_log('Cleanup: removed ' . count($invalid_tokens) . ' invalid token(s)');
+                    }
+                }
+            }
+        }
+    }
+
+    gamefo_push_log('Done — post ID ' . $post->ID . ', ' . count($tokens) . ' device(s)');
+}
+
+/**
+ * Register Expo access token setting
+ */
+add_action('admin_init', function() {
+    register_setting('gamefo_push_settings', 'gamefo_expo_access_token', array(
+        'type' => 'string',
+        'default' => '',
+        'sanitize_callback' => 'sanitize_text_field',
+    ));
+});
+
+/**
+ * Admin menu page for managing devices
+ */
+add_action('admin_menu', function() {
+    add_submenu_page(
+        'options-general.php',
+        'Push Notifications',
+        'Push Notifications',
+        'manage_options',
+        'gamefo-push',
+        'gamefo_push_admin_page'
+    );
+});
+
+function gamefo_push_admin_page() {
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'gamefo_devices';
+
+    // Handle token deletion
+    if (isset($_POST['delete_token']) && wp_verify_nonce($_POST['_wpnonce'], 'gamefo_delete_token')) {
+        $token_id = intval($_POST['token_id']);
+        $wpdb->delete($table_name, array('id' => $token_id), array('%d'));
+        echo '<div class="notice notice-success"><p>Token deleted.</p></div>';
+    }
+
+    // Handle test notification
+    if (isset($_POST['send_test']) && wp_verify_nonce($_POST['_wpnonce'], 'gamefo_send_test')) {
+        $test_post = (object) array(
+            'ID' => 0,
+            'post_title' => 'Test Notification',
+            'post_type' => 'post'
+        );
+        gamefo_push_log('--- TEST NOTIFICATION TRIGGERED ---');
+        gamefo_send_push_notification($test_post);
+        echo '<div class="notice notice-success"><p>Test notification sent! See log below.</p></div>';
+    }
+
+    // Handle log clear
+    if (isset($_POST['clear_log']) && wp_verify_nonce($_POST['_wpnonce'], 'gamefo_clear_log')) {
+        delete_option('gamefo_push_log');
+        echo '<div class="notice notice-success"><p>Log cleared.</p></div>';
+    }
+
+    $devices = $wpdb->get_results("SELECT * FROM $table_name ORDER BY last_used DESC LIMIT 100");
+    $total = $wpdb->get_var("SELECT COUNT(*) FROM $table_name");
+    ?>
+    <div class="wrap">
+        <h1>Push Notifications</h1>
+
+        <div class="card" style="max-width: 600px; padding: 20px; margin-bottom: 20px;">
+            <h2 style="margin-top: 0;">Expo Access Token</h2>
+            <form method="post" action="options.php">
+                <?php settings_fields('gamefo_push_settings'); ?>
+                <p>
+                    <input type="text" name="gamefo_expo_access_token"
+                        value="<?php echo esc_attr(get_option('gamefo_expo_access_token', '')); ?>"
+                        class="regular-text" placeholder="Expo access token" />
+                </p>
+                <p class="description">
+                    Get your token at <a href="https://expo.dev/accounts/[owner]/settings/access-tokens" target="_blank">expo.dev → Settings → Access Tokens</a>.
+                    Required for push delivery and expo.dev dashboard visibility.
+                </p>
+                <?php submit_button('Save Token', 'secondary'); ?>
+            </form>
+        </div>
+
+        <div class="card" style="max-width: 400px; padding: 20px; margin-bottom: 20px;">
+            <h2 style="margin-top: 0;">Statistics</h2>
+            <p><strong>Registered devices:</strong> <?php echo esc_html($total); ?></p>
+            <p><strong>Expo token:</strong> <?php echo get_option('gamefo_expo_access_token', '') ? '✅ Configured' : '❌ Not set'; ?></p>
+            <form method="post" style="margin-top: 15px;">
+                <?php wp_nonce_field('gamefo_send_test'); ?>
+                <button type="submit" name="send_test" class="button button-secondary">
+                    Send Test Notification
+                </button>
+                <p class="description">Check <code>wp-content/debug.log</code> for Expo API response.</p>
+            </form>
+        </div>
+
+        <h2>Registered Devices</h2>
+        <table class="wp-list-table widefat fixed striped">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Token</th>
+                    <th>Platform</th>
+                    <th>Lang</th>
+                    <th>Registered</th>
+                    <th>Last Used</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php if (empty($devices)) : ?>
+                    <tr><td colspan="7">No devices registered yet.</td></tr>
+                <?php else : ?>
+                    <?php foreach ($devices as $device) : ?>
+                        <tr>
+                            <td><?php echo esc_html($device->id); ?></td>
+                            <td><code style="font-size: 11px;"><?php echo esc_html(substr($device->token, 0, 40) . '...'); ?></code></td>
+                            <td><?php echo esc_html($device->platform); ?></td>
+                            <td><?php echo esc_html(isset($device->language) ? strtoupper($device->language) : '—'); ?></td>
+                            <td><?php echo esc_html($device->created_at); ?></td>
+                            <td><?php echo esc_html($device->last_used); ?></td>
+                            <td>
+                                <form method="post" style="display: inline;">
+                                    <?php wp_nonce_field('gamefo_delete_token'); ?>
+                                    <input type="hidden" name="token_id" value="<?php echo esc_attr($device->id); ?>">
+                                    <button type="submit" name="delete_token" class="button button-small" onclick="return confirm('Delete this token?');">
+                                        Delete
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </tbody>
+        </table>
+
+        <h2>Push Log</h2>
+        <form method="post" style="margin-bottom: 10px;">
+            <?php wp_nonce_field('gamefo_clear_log'); ?>
+            <button type="submit" name="clear_log" class="button button-small">Clear Log</button>
+        </form>
+        <?php
+        $log = get_option('gamefo_push_log', array());
+        if (empty($log)) {
+            echo '<p>No log entries yet. Click "Send Test Notification" to generate logs.</p>';
+        } else {
+            $log_reversed = array_reverse($log);
+            echo '<div style="background: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 4px; max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 12px; line-height: 1.6;">';
+            foreach ($log_reversed as $entry) {
+                $color = '#d4d4d4';
+                if (strpos($entry['message'], 'ERROR') !== false) {
+                    $color = '#f44747';
+                } elseif (strpos($entry['message'], 'WARNING') !== false) {
+                    $color = '#ffcc00';
+                } elseif (strpos($entry['message'], 'Done') === 0) {
+                    $color = '#4ec949';
+                } elseif (strpos($entry['message'], '--- TEST') !== false) {
+                    $color = '#569cd6';
+                }
+                echo '<div style="color:' . $color . ';">';
+                echo '<span style="color:#888;">[' . esc_html($entry['time']) . ']</span> ';
+                echo esc_html($entry['message']);
+                echo '</div>';
+            }
+            echo '</div>';
+        }
+        ?>
+
+        <div class="card" style="max-width: 600px; padding: 20px; margin-top: 20px;">
+            <h3 style="margin-top: 0;">API Endpoints</h3>
+            <p><code>POST /wp-json/gamefo/v1/devices</code> - Register token</p>
+            <pre style="background: #f1f1f1; padding: 10px;">{"token": "ExponentPushToken[xxx]", "platform": "android", "language": "cs"}</pre>
+            <p><code>DELETE /wp-json/gamefo/v1/devices</code> - Unregister token</p>
+            <pre style="background: #f1f1f1; padding: 10px;">{"token": "ExponentPushToken[xxx]"}</pre>
+        </div>
+    </div>
+    <?php
+}
