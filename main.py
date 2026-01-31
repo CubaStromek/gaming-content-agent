@@ -98,12 +98,8 @@ def main():
     # 6. Extrakce statistik
     stats = claude_analyzer.extract_key_insights(articles)
 
-    # 7. Zobrazení analýzy
-    print("\n" + "="*70)
-    print("📊 VÝSLEDKY ANALÝZY")
-    print("="*70 + "\n")
-    print(analysis)
-    print("\n" + "="*70)
+    # 7. Stručný log analýzy
+    print("\n✅ Analýza dokončena. Témata uložena do reportu.")
 
     # 8. Uložení reportu
     print("\n💾 Ukládám report...")

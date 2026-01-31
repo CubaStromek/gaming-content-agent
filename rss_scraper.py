@@ -10,6 +10,7 @@ from typing import List, Dict
 import json
 import csv
 import config
+import feed_manager
 
 def scrape_rss_feed(feed_info: Dict, skip_urls: set = None) -> List[Dict]:
     """
@@ -82,7 +83,7 @@ def scrape_all_feeds(skip_urls: set = None) -> List[Dict]:
 
     all_articles = []
 
-    for feed_info in config.RSS_FEEDS:
+    for feed_info in feed_manager.get_enabled_feeds():
         articles = scrape_rss_feed(feed_info, skip_urls)
         all_articles.extend(articles)
 

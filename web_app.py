@@ -12,6 +12,9 @@ import subprocess
 from flask import Flask, render_template_string, make_response, request
 
 from article_writer import parse_topics_from_report, scrape_full_article, write_article, generate_podcast_script
+import feed_manager
+import wp_publisher
+import publish_log
 
 app = Flask(__name__)
 
@@ -395,7 +398,6 @@ HTML_TEMPLATE = '''
             background: var(--console-bg);
             border-radius: 0.5rem;
             border: 1px solid rgba(255, 255, 255, 0.05);
-            margin-top: 1rem;
             overflow: hidden;
             display: none;
         }
@@ -674,6 +676,434 @@ HTML_TEMPLATE = '''
 
         @keyframes spin { to { transform: rotate(360deg); } }
 
+        /* WordPress publish panel */
+        .btn-wp {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            padding: 0.4rem 1rem;
+            background: transparent;
+            border: 1px solid var(--terminal-yellow);
+            color: var(--terminal-yellow);
+            border-radius: 0.2rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-right: 0.5rem;
+        }
+
+        .btn-wp:hover { background: var(--terminal-yellow); color: #000; }
+
+        .wp-publish-panel {
+            display: none;
+            background: var(--header-bg);
+            border-top: 1px solid rgba(251, 191, 36, 0.3);
+            border-bottom: 1px solid rgba(251, 191, 36, 0.3);
+            padding: 1rem 1.5rem;
+        }
+
+        .wp-publish-panel.visible { display: block; }
+
+        .wp-panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.75rem;
+        }
+
+        .wp-panel-title {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--terminal-yellow);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .wp-panel-close {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.65rem;
+            padding: 0.25rem 0.6rem;
+            background: transparent;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: #9ca3af;
+            border-radius: 0.2rem;
+            cursor: pointer;
+        }
+
+        .wp-panel-close:hover { color: white; border-color: rgba(255, 255, 255, 0.3); }
+
+        .wp-field {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .wp-field-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.65rem;
+            color: #6b7280;
+            text-transform: uppercase;
+            min-width: 75px;
+            flex-shrink: 0;
+        }
+
+        .wp-field > input, .wp-field > select {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            padding: 0.4rem 0.6rem;
+            background: var(--input-bg);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 0.25rem;
+            color: #d1d5db;
+            outline: none;
+            flex: 1;
+        }
+
+        .wp-field > input:focus, .wp-field > select:focus {
+            border-color: var(--terminal-yellow);
+        }
+
+        .wp-categories-list {
+            flex: 1;
+            max-height: 120px;
+            overflow-y: auto;
+            background: var(--input-bg);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 0.25rem;
+            padding: 0.3rem 0.5rem;
+        }
+
+        .wp-cat-item {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.2rem 0;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            color: #d1d5db;
+            cursor: pointer;
+        }
+
+        .wp-cat-item:hover { color: white; }
+
+        .wp-cat-item input[type="checkbox"] {
+            accent-color: var(--terminal-yellow);
+            cursor: pointer;
+        }
+
+        .wp-cat-item.child {
+            padding-left: 1.2rem;
+            font-size: 0.65rem;
+            color: #9ca3af;
+        }
+
+        .wp-lang-badge {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.65rem;
+            padding: 0.2rem 0.5rem;
+            border-radius: 0.2rem;
+            font-weight: 600;
+            background: rgba(251, 191, 36, 0.2);
+            color: #fbbf24;
+        }
+
+        .wp-actions {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+        }
+
+        .wp-btn-publish {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            padding: 0.4rem 1rem;
+            border: 1px solid var(--terminal-yellow);
+            background: transparent;
+            color: var(--terminal-yellow);
+            border-radius: 0.2rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .wp-btn-publish:hover { background: var(--terminal-yellow); color: #000; }
+        .wp-btn-publish:disabled { border-color: #374151; color: #6b7280; cursor: not-allowed; background: transparent; }
+
+        .wp-btn-publish-both {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            padding: 0.4rem 1rem;
+            border: 1px solid var(--primary);
+            background: transparent;
+            color: var(--primary);
+            border-radius: 0.2rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .wp-btn-publish-both:hover { background: var(--primary); color: white; }
+        .wp-btn-publish-both:disabled { border-color: #374151; color: #6b7280; cursor: not-allowed; background: transparent; }
+
+        .wp-btn-skip {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            padding: 0.4rem 1rem;
+            border: 1px solid var(--terminal-red);
+            background: transparent;
+            color: var(--terminal-red);
+            border-radius: 0.2rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-left: auto;
+        }
+
+        .wp-btn-skip:hover { background: var(--terminal-red); color: #000; }
+        .wp-btn-skip:disabled { border-color: #374151; color: #6b7280; cursor: not-allowed; background: transparent; }
+
+        .wp-result {
+            margin-top: 0.75rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            padding: 0.5rem 0.75rem;
+            border-radius: 0.25rem;
+            display: none;
+        }
+
+        .wp-result.visible { display: block; }
+        .wp-result.success { background: rgba(74, 222, 128, 0.1); color: var(--terminal-green); }
+        .wp-result.error { background: rgba(248, 113, 113, 0.1); color: var(--terminal-red); }
+
+        .wp-result a {
+            color: var(--primary);
+            text-decoration: none;
+            border-bottom: 1px dashed var(--primary);
+        }
+
+        .wp-result a:hover { color: white; border-bottom-color: white; }
+
+        /* Feed management modal */
+        .feeds-modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 1002;
+            padding: 2rem;
+        }
+
+        .feeds-modal.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .feeds-modal-content {
+            background: var(--console-bg);
+            border-radius: 0.5rem;
+            width: 100%;
+            max-width: 800px;
+            max-height: 90vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .feeds-modal-header {
+            background: var(--header-bg);
+            padding: 0.75rem 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .feeds-modal-title {
+            font-family: 'JetBrains Mono', monospace;
+            color: white;
+            font-size: 0.9rem;
+        }
+
+        .feeds-modal-close {
+            background: var(--terminal-red);
+            border: none;
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+
+        .feeds-add-form {
+            display: flex;
+            gap: 0.5rem;
+            padding: 0.75rem 1rem;
+            background: var(--header-bg);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .feeds-add-form input, .feeds-add-form select {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            padding: 0.4rem 0.6rem;
+            background: var(--input-bg);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 0.25rem;
+            color: #d1d5db;
+            outline: none;
+        }
+
+        .feeds-add-form input:focus, .feeds-add-form select:focus {
+            border-color: var(--primary);
+        }
+
+        .feeds-add-form input[name="feed-name"] { width: 140px; }
+        .feeds-add-form input[name="feed-url"] { flex: 1; min-width: 200px; }
+        .feeds-add-form select { width: 60px; }
+
+        .feeds-list {
+            overflow-y: auto;
+            flex: 1;
+            max-height: 60vh;
+        }
+
+        .feed-row {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.6rem 1rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            transition: background 0.15s;
+        }
+
+        .feed-row:hover { background: rgba(255, 255, 255, 0.02); }
+
+        .feed-toggle {
+            position: relative;
+            width: 32px;
+            height: 18px;
+            flex-shrink: 0;
+        }
+
+        .feed-toggle input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .feed-toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: #374151;
+            border-radius: 9px;
+            transition: 0.2s;
+        }
+
+        .feed-toggle-slider:before {
+            content: "";
+            position: absolute;
+            height: 14px;
+            width: 14px;
+            left: 2px;
+            bottom: 2px;
+            background: white;
+            border-radius: 50%;
+            transition: 0.2s;
+        }
+
+        .feed-toggle input:checked + .feed-toggle-slider {
+            background: var(--terminal-green);
+        }
+
+        .feed-toggle input:checked + .feed-toggle-slider:before {
+            transform: translateX(14px);
+        }
+
+        .feed-name {
+            color: white;
+            font-weight: 500;
+            min-width: 100px;
+        }
+
+        .feed-url {
+            color: #6b7280;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .feed-lang-badge {
+            font-size: 0.6rem;
+            padding: 0.1rem 0.35rem;
+            border-radius: 0.15rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            flex-shrink: 0;
+        }
+
+        .feed-lang-en { background: rgba(19, 164, 236, 0.2); color: var(--primary); }
+        .feed-lang-cs { background: rgba(251, 191, 36, 0.2); color: #fbbf24; }
+
+        .feed-actions {
+            display: flex;
+            gap: 0.35rem;
+            flex-shrink: 0;
+        }
+
+        .feed-btn {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.6rem;
+            padding: 0.2rem 0.5rem;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            background: transparent;
+            color: #9ca3af;
+            border-radius: 0.15rem;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .feed-btn:hover { background: var(--input-bg); color: white; }
+        .feed-btn-del:hover { border-color: var(--terminal-red); color: var(--terminal-red); }
+        .feed-btn-save { border-color: var(--terminal-green); color: var(--terminal-green); }
+        .feed-btn-save:hover { background: var(--terminal-green); color: #000; }
+        .feed-btn-cancel:hover { border-color: var(--terminal-yellow); color: var(--terminal-yellow); }
+
+        .feed-edit-input {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            padding: 0.2rem 0.4rem;
+            background: var(--input-bg);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 0.15rem;
+            color: #d1d5db;
+            outline: none;
+        }
+
+        .feed-edit-input:focus { border-color: var(--primary); }
+
+        .feeds-empty {
+            color: #6b7280;
+            font-size: 0.75rem;
+            text-align: center;
+            padding: 2rem;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .feeds-status {
+            background: var(--header-bg);
+            padding: 0.5rem 1rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.6rem;
+            color: #6b7280;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            display: flex;
+            justify-content: space-between;
+        }
+
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: var(--console-bg); }
         ::-webkit-scrollbar-thumb { background: #444; border-radius: 10px; }
@@ -684,6 +1114,11 @@ HTML_TEMPLATE = '''
     <div class="container">
         <div class="main-grid">
           <div class="main-column">
+            <div class="topics-panel" id="topicsPanel">
+                <div class="panel-header">TOP TEMATA - WRITE_ARTICLE</div>
+                <div class="topics-grid" id="topicsGrid"></div>
+            </div>
+
             <div class="console">
                 <div class="console-header">
                     <div class="window-controls">
@@ -695,9 +1130,15 @@ HTML_TEMPLATE = '''
                         <span>gaming_content_agent</span>
                         <span class="path">C:/AI/gaming-content-agent</span>
                     </div>
-                    <div class="status">
-                        <div class="status-dot" id="statusDot"></div>
-                        <span id="statusText">READY</span>
+                    <div style="display:flex;align-items:center;gap:1rem;">
+                        <div class="status">
+                            <div class="status-dot" id="statusDot"></div>
+                            <span id="statusText">READY</span>
+                        </div>
+                        <div class="actions">
+                            <button class="btn btn-secondary" onclick="clearOutput()">CLEAR</button>
+                            <button class="btn btn-primary" id="runBtn" onclick="runAgent()">RUN_AGENT</button>
+                        </div>
                     </div>
                 </div>
 
@@ -713,16 +1154,7 @@ HTML_TEMPLATE = '''
                         <span>$</span>
                         <span class="cursor">_</span>
                     </div>
-                    <div class="actions">
-                        <button class="btn btn-secondary" onclick="clearOutput()">CLEAR</button>
-                        <button class="btn btn-primary" id="runBtn" onclick="runAgent()">RUN_AGENT</button>
-                    </div>
                 </div>
-            </div>
-
-            <div class="topics-panel" id="topicsPanel">
-                <div class="panel-header">TOP TEMATA - WRITE_ARTICLE</div>
-                <div class="topics-grid" id="topicsGrid"></div>
             </div>
           </div>
 
@@ -748,6 +1180,14 @@ HTML_TEMPLATE = '''
                                 <div class="label">Behu</div>
                             </div>
                         </div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <div class="panel-header">RSS Feedy</div>
+                    <div class="panel-body" style="text-align:center;">
+                        <div style="font-family:'JetBrains Mono',monospace;font-size:0.7rem;color:#9ca3af;margin-bottom:0.5rem;" id="feedsSummary">-</div>
+                        <button class="btn btn-secondary" style="width:100%;font-size:0.7rem;" onclick="openFeedsModal()">MANAGE_FEEDS</button>
                     </div>
                 </div>
 
@@ -783,12 +1223,99 @@ HTML_TEMPLATE = '''
                 <button class="tab-btn" onclick="switchTab('podcast')" id="tabPodcast">PODCAST</button>
             </div>
             <div class="article-body" id="articleBody"></div>
+            <div class="wp-publish-panel" id="wpPublishPanel">
+                <div class="wp-panel-header">
+                    <div class="wp-panel-title">Publish to WordPress</div>
+                    <button class="wp-panel-close" onclick="toggleWpPanel()">CLOSE</button>
+                </div>
+                <div class="wp-field">
+                    <div class="wp-field-label">Title</div>
+                    <input type="text" id="wpTitle" placeholder="Article title...">
+                </div>
+                <div class="wp-field">
+                    <div class="wp-field-label">Cat CS</div>
+                    <div class="wp-categories-list" id="wpCategoriesCs">Loading...</div>
+                </div>
+                <div class="wp-field">
+                    <div class="wp-field-label">Cat EN</div>
+                    <div class="wp-categories-list" id="wpCategoriesEn">Loading...</div>
+                </div>
+                <div class="wp-field">
+                    <div class="wp-field-label">Tag CS</div>
+                    <select id="wpStatusTagCs" style="flex:1; background:var(--input-bg); color:var(--text-primary); border:1px solid rgba(255,255,255,0.1); border-radius:0.25rem; padding:0.3rem 0.5rem; font-family:'JetBrains Mono',monospace; font-size:0.75rem;">
+                        <option value="">-- none --</option>
+                    </select>
+                </div>
+                <div class="wp-field">
+                    <div class="wp-field-label">Tag EN</div>
+                    <select id="wpStatusTagEn" style="flex:1; background:var(--input-bg); color:var(--text-primary); border:1px solid rgba(255,255,255,0.1); border-radius:0.25rem; padding:0.3rem 0.5rem; font-family:'JetBrains Mono',monospace; font-size:0.75rem;">
+                        <option value="">-- none --</option>
+                    </select>
+                </div>
+                <div class="wp-field">
+                    <div class="wp-field-label">Score</div>
+                    <select id="wpScore" style="flex:1; max-width:80px; background:var(--input-bg); color:var(--text-primary); border:1px solid rgba(255,255,255,0.1); border-radius:0.25rem; padding:0.3rem 0.5rem; font-family:'JetBrains Mono',monospace; font-size:0.75rem;">
+                        <option value="3">3</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="4">4</option>
+                        <option value="5">5</option>
+                    </select>
+                    <span style="font-family:'JetBrains Mono',monospace;font-size:0.6rem;color:#6b7280;">1=low 5=top</span>
+                </div>
+                <div class="wp-field">
+                    <div class="wp-field-label">Tags</div>
+                    <input type="text" id="wpTags" placeholder="tag1, tag2, tag3">
+                </div>
+                <div class="wp-field">
+                    <div class="wp-field-label">Language</div>
+                    <span class="wp-lang-badge" id="wpLang">CS</span>
+                </div>
+                <div class="wp-field">
+                    <div class="wp-field-label">Image</div>
+                    <input type="file" id="wpImageFile" accept="image/*" style="flex:1; font-family:'JetBrains Mono',monospace; font-size:0.75rem; color:var(--text-primary);">
+                </div>
+                <div class="wp-field">
+                    <div class="wp-field-label">Caption</div>
+                    <input type="text" id="wpImageCaption" placeholder="Image caption (optional)">
+                </div>
+                <div class="wp-actions">
+                    <button class="wp-btn-publish" onclick="wpPublishDraft()" id="wpBtnPublish">PUBLISH DRAFT</button>
+                    <button class="wp-btn-publish-both" onclick="wpPublishBoth()" id="wpBtnPublishBoth" style="display:none;">PUBLISH CS+EN</button>
+                    <button class="wp-btn-skip" onclick="wpSkipArticle()" id="wpBtnSkip">SKIP</button>
+                </div>
+                <div class="wp-result" id="wpResult"></div>
+            </div>
             <div class="article-actions">
                 <div class="article-meta" id="articleMeta"></div>
                 <div>
                     <button class="btn-podcast" onclick="generatePodcast()" id="btnPodcast">PODCAST_SCRIPT</button>
+                    <button class="btn-wp" onclick="toggleWpPanel()" id="btnWp" style="display:none;">PUBLISH_TO_WP</button>
                     <button class="btn-copy" onclick="copyContent()">COPY</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="feeds-modal" id="feedsModal">
+        <div class="feeds-modal-content">
+            <div class="feeds-modal-header">
+                <div class="feeds-modal-title">RSS Feed Management</div>
+                <button class="feeds-modal-close" onclick="closeFeedsModal()">&times;</button>
+            </div>
+            <div class="feeds-add-form">
+                <input type="text" name="feed-name" placeholder="Name" id="feedAddName">
+                <input type="text" name="feed-url" placeholder="https://..." id="feedAddUrl">
+                <select id="feedAddLang">
+                    <option value="en">EN</option>
+                    <option value="cs">CS</option>
+                </select>
+                <button class="btn btn-primary" style="font-size:0.7rem;padding:0.4rem 0.8rem;" onclick="addFeed()">ADD</button>
+            </div>
+            <div class="feeds-list" id="feedsList"></div>
+            <div class="feeds-status">
+                <span id="feedsCount">-</span>
+                <span id="feedsMsg"></span>
             </div>
         </div>
     </div>
@@ -1164,6 +1691,11 @@ HTML_TEMPLATE = '''
             document.getElementById('articleModal').classList.remove('active');
             if (articlePolling) clearInterval(articlePolling);
             if (podcastPolling) clearInterval(podcastPolling);
+            // Reset WP publish panel
+            document.getElementById('wpPublishPanel').classList.remove('visible');
+            const wpResult = document.getElementById('wpResult');
+            wpResult.classList.remove('visible', 'success', 'error');
+            wpResult.innerHTML = '';
         }
 
         function copyContent() {
@@ -1186,10 +1718,34 @@ HTML_TEMPLATE = '''
         let currentRunIdForPodcast = null;
         let currentTopicIndexForPodcast = null;
         let podcastPolling = null;
+        let currentTopicData = null;
 
         function setArticleContext(runId, topicIndex) {
             currentRunIdForPodcast = runId;
             currentTopicIndexForPodcast = topicIndex;
+
+            // Load topic metadata for publish log
+            currentTopicData = null;
+            fetch('/topics/' + runId)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.topics) {
+                        const t = data.topics.find(x => x.index === topicIndex);
+                        if (t) {
+                            currentTopicData = {
+                                run_id: runId,
+                                topic_index: topicIndex,
+                                topic: t.topic || '',
+                                suggested_title: t.title || '',
+                                virality_score: t.virality_score || 0,
+                                seo_keywords: t.seo_keywords || '',
+                                sources: t.sources || [],
+                                source_count: (t.sources || []).length,
+                            };
+                        }
+                    }
+                })
+                .catch(() => {});
         }
 
         function generatePodcast() {
@@ -1266,14 +1822,539 @@ HTML_TEMPLATE = '''
             return '<div class="podcast-content">' + html + '</div>';
         }
 
+        /* ===== Feed Management ===== */
+
+        let feedsData = [];
+
+        function openFeedsModal() {
+            document.getElementById('feedsModal').classList.add('active');
+            loadFeeds();
+        }
+
+        function closeFeedsModal() {
+            document.getElementById('feedsModal').classList.remove('active');
+        }
+
+        function loadFeeds() {
+            fetch('/api/feeds')
+                .then(r => r.json())
+                .then(data => {
+                    feedsData = data.feeds || [];
+                    renderFeeds();
+                    updateFeedsSummary();
+                });
+        }
+
+        function updateFeedsSummary() {
+            const enabled = feedsData.filter(f => f.enabled).length;
+            const total = feedsData.length;
+            document.getElementById('feedsSummary').textContent = enabled + '/' + total + ' aktivnich';
+        }
+
+        function renderFeeds() {
+            const list = document.getElementById('feedsList');
+            const enabled = feedsData.filter(f => f.enabled).length;
+            document.getElementById('feedsCount').textContent = feedsData.length + ' feedu (' + enabled + ' aktivnich)';
+
+            if (feedsData.length === 0) {
+                list.innerHTML = '<div class="feeds-empty">Zadne feedy</div>';
+                return;
+            }
+
+            list.innerHTML = feedsData.map(f => {
+                const langClass = f.lang === 'cs' ? 'feed-lang-cs' : 'feed-lang-en';
+                return `
+                <div class="feed-row" id="feed-row-${f.id}">
+                    <label class="feed-toggle">
+                        <input type="checkbox" ${f.enabled ? 'checked' : ''} onchange="toggleFeed('${f.id}', this.checked)">
+                        <span class="feed-toggle-slider"></span>
+                    </label>
+                    <span class="feed-name">${escapeHtml(f.name)}</span>
+                    <span class="feed-url" title="${escapeHtml(f.url)}">${escapeHtml(f.url)}</span>
+                    <span class="feed-lang-badge ${langClass}">${f.lang}</span>
+                    <div class="feed-actions">
+                        <button class="feed-btn" onclick="editFeed('${f.id}')">EDIT</button>
+                        <button class="feed-btn feed-btn-del" onclick="deleteFeed('${f.id}', '${escapeHtml(f.name)}')">DEL</button>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        function toggleFeed(feedId, enabled) {
+            fetch('/api/feeds/' + feedId, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: enabled })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    showFeedsMsg(data.error, true);
+                    loadFeeds();
+                    return;
+                }
+                // Update local data
+                const f = feedsData.find(f => f.id === feedId);
+                if (f) f.enabled = enabled;
+                updateFeedsSummary();
+                const enabledCount = feedsData.filter(f => f.enabled).length;
+                document.getElementById('feedsCount').textContent = feedsData.length + ' feedu (' + enabledCount + ' aktivnich)';
+            });
+        }
+
+        function addFeed() {
+            const name = document.getElementById('feedAddName').value.trim();
+            const url = document.getElementById('feedAddUrl').value.trim();
+            const lang = document.getElementById('feedAddLang').value;
+
+            if (!name || !url) {
+                showFeedsMsg('Vyplnte Name a URL', true);
+                return;
+            }
+
+            fetch('/api/feeds', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, url, lang })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    showFeedsMsg(data.error, true);
+                    return;
+                }
+                document.getElementById('feedAddName').value = '';
+                document.getElementById('feedAddUrl').value = '';
+                showFeedsMsg('Feed pridan: ' + name, false);
+                loadFeeds();
+            });
+        }
+
+        function editFeed(feedId) {
+            const f = feedsData.find(f => f.id === feedId);
+            if (!f) return;
+
+            const row = document.getElementById('feed-row-' + feedId);
+            row.innerHTML = `
+                <label class="feed-toggle">
+                    <input type="checkbox" ${f.enabled ? 'checked' : ''} disabled>
+                    <span class="feed-toggle-slider"></span>
+                </label>
+                <input class="feed-edit-input" style="min-width:100px;width:120px;" value="${escapeHtml(f.name)}" id="edit-name-${feedId}">
+                <input class="feed-edit-input" style="flex:1;min-width:150px;" value="${escapeHtml(f.url)}" id="edit-url-${feedId}">
+                <select class="feed-edit-input" style="width:55px;" id="edit-lang-${feedId}">
+                    <option value="en" ${f.lang === 'en' ? 'selected' : ''}>EN</option>
+                    <option value="cs" ${f.lang === 'cs' ? 'selected' : ''}>CS</option>
+                </select>
+                <div class="feed-actions">
+                    <button class="feed-btn feed-btn-save" onclick="saveEdit('${feedId}')">SAVE</button>
+                    <button class="feed-btn feed-btn-cancel" onclick="renderFeeds()">CANCEL</button>
+                </div>`;
+        }
+
+        function saveEdit(feedId) {
+            const name = document.getElementById('edit-name-' + feedId).value.trim();
+            const url = document.getElementById('edit-url-' + feedId).value.trim();
+            const lang = document.getElementById('edit-lang-' + feedId).value;
+
+            if (!name || !url) {
+                showFeedsMsg('Vyplnte Name a URL', true);
+                return;
+            }
+
+            fetch('/api/feeds/' + feedId, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, url, lang })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    showFeedsMsg(data.error, true);
+                    return;
+                }
+                showFeedsMsg('Feed ulozen', false);
+                loadFeeds();
+            });
+        }
+
+        function deleteFeed(feedId, feedName) {
+            if (!confirm('Smazat feed "' + feedName + '"?')) return;
+
+            fetch('/api/feeds/' + feedId, { method: 'DELETE' })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    showFeedsMsg(data.error, true);
+                    return;
+                }
+                showFeedsMsg('Feed smazan', false);
+                loadFeeds();
+            });
+        }
+
+        function showFeedsMsg(text, isError) {
+            const el = document.getElementById('feedsMsg');
+            el.textContent = text;
+            el.style.color = isError ? 'var(--terminal-red)' : 'var(--terminal-green)';
+            setTimeout(() => { el.textContent = ''; }, 3000);
+        }
+
+        // Load feed summary on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            fetch('/api/feeds')
+                .then(r => r.json())
+                .then(data => {
+                    feedsData = data.feeds || [];
+                    updateFeedsSummary();
+                });
+        });
+
+        /* ===== WordPress Publishing ===== */
+
+        let wpConfigured = false;
+        let wpCategoriesCache = null;
+        let wpStatusTagsLoaded = false;
+
+        // Check WP status on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            fetch('/api/wp/status')
+                .then(r => r.json())
+                .then(data => {
+                    wpConfigured = data.configured;
+                    if (wpConfigured) {
+                        document.getElementById('btnWp').style.display = '';
+                    }
+                })
+                .catch(() => {});
+        });
+
+        function toggleWpPanel() {
+            const panel = document.getElementById('wpPublishPanel');
+            const isVisible = panel.classList.contains('visible');
+
+            if (isVisible) {
+                panel.classList.remove('visible');
+            } else {
+                panel.classList.add('visible');
+                wpLoadCategories();
+                wpLoadStatusTags();
+                wpPrefillFields();
+            }
+        }
+
+        function wpLoadCategories() {
+            wpLoadCategoriesForLang('cs', 'wpCategoriesCs');
+            wpLoadCategoriesForLang('en', 'wpCategoriesEn');
+        }
+
+        function wpLoadCategoriesForLang(lang, containerId) {
+            const cacheKey = 'cat_' + lang;
+            if (wpCategoriesCache && wpCategoriesCache[cacheKey]) {
+                wpRenderCategories(wpCategoriesCache[cacheKey], containerId);
+                return;
+            }
+
+            const container = document.getElementById(containerId);
+            container.innerHTML = 'Loading...';
+
+            fetch('/api/wp/categories?lang=' + lang)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.error) {
+                        container.innerHTML = 'Error: ' + escapeHtml(data.error);
+                        return;
+                    }
+                    if (!wpCategoriesCache) wpCategoriesCache = {};
+                    wpCategoriesCache[cacheKey] = data.categories;
+                    wpRenderCategories(data.categories, containerId);
+                })
+                .catch(err => {
+                    container.innerHTML = 'Error loading categories';
+                });
+        }
+
+        function wpLoadStatusTags() {
+            if (wpStatusTagsLoaded) return;
+
+            fetch('/api/wp/status-tags')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.error) return;
+                    wpStatusTagsLoaded = true;
+                    let html = '<option value="">-- none --</option>';
+                    for (const t of data.status_tags) {
+                        html += '<option value="' + escapeHtml(t.id) + '" style="color:' + escapeHtml(t.color) + ';">' + escapeHtml(t.label) + '</option>';
+                    }
+                    document.getElementById('wpStatusTagCs').innerHTML = html;
+                    document.getElementById('wpStatusTagEn').innerHTML = html;
+                })
+                .catch(() => {});
+        }
+
+        function wpRenderCategories(categories, containerId) {
+            const container = document.getElementById(containerId);
+            const parents = categories.filter(c => c.parent === 0);
+            const children = categories.filter(c => c.parent !== 0);
+
+            let html = '';
+            for (const p of parents) {
+                html += '<label class="wp-cat-item"><input type="checkbox" value="' + p.id + '"> ' + escapeHtml(p.name) + '</label>';
+                for (const ch of children) {
+                    if (ch.parent === p.id) {
+                        html += '<label class="wp-cat-item child"><input type="checkbox" value="' + ch.id + '"> ' + escapeHtml(ch.name) + '</label>';
+                    }
+                }
+            }
+            const parentIds = parents.map(p => p.id);
+            for (const ch of children) {
+                if (!parentIds.includes(ch.parent)) {
+                    html += '<label class="wp-cat-item"><input type="checkbox" value="' + ch.id + '"> ' + escapeHtml(ch.name) + '</label>';
+                }
+            }
+
+            container.innerHTML = html || '<span style="color:#6b7280;">No categories</span>';
+        }
+
+        function wpGetSelectedCategories(lang) {
+            const containerId = lang === 'en' ? 'wpCategoriesEn' : 'wpCategoriesCs';
+            return Array.from(document.querySelectorAll('#' + containerId + ' input[type=checkbox]:checked')).map(cb => parseInt(cb.value));
+        }
+
+        function wpPrefillFields() {
+            const ignoredTitles = ['Generovany clanek', 'Vygenerovany clanek', 'Ulozeny clanek', 'Generuji clanek...'];
+
+            // 1) topic suggested title from metadata
+            if (currentTopicData && currentTopicData.suggested_title) {
+                document.getElementById('wpTitle').value = currentTopicData.suggested_title;
+            } else {
+                // 2) modal title (if not a placeholder)
+                const titleEl = document.getElementById('articleModalTitle');
+                const title = titleEl ? titleEl.textContent : '';
+                if (title && !ignoredTitles.includes(title)) {
+                    document.getElementById('wpTitle').value = title;
+                } else {
+                    // 3) first h2 from article body
+                    const body = document.getElementById('articleBody');
+                    const h2 = body ? body.querySelector('h2') : null;
+                    document.getElementById('wpTitle').value = h2 ? h2.textContent : '';
+                }
+            }
+
+            // Language from current tab
+            const lang = currentArticleLang === 'podcast' ? 'cs' : currentArticleLang;
+            document.getElementById('wpLang').textContent = lang.toUpperCase();
+
+            // Show/hide publish both button
+            const hasBoth = articleResult && articleResult.cs && articleResult.en;
+            document.getElementById('wpBtnPublishBoth').style.display = hasBoth ? '' : 'none';
+
+            // Reset result area
+            const resultEl = document.getElementById('wpResult');
+            resultEl.classList.remove('visible', 'success', 'error');
+            resultEl.innerHTML = '';
+        }
+
+        async function wpUploadImage() {
+            const fileInput = document.getElementById('wpImageFile');
+            if (!fileInput.files || !fileInput.files[0]) return null;
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            const caption = document.getElementById('wpImageCaption').value.trim();
+            if (caption) {
+                formData.append('caption', caption);
+                formData.append('alt_text', caption);
+            }
+
+            const resp = await fetch('/api/wp/upload-media', { method: 'POST', body: formData });
+            const data = await resp.json();
+            if (data.error) throw new Error(data.error);
+            return data.media_id;
+        }
+
+        async function wpPublishDraft() {
+            const btn = document.getElementById('wpBtnPublish');
+            btn.disabled = true;
+            btn.textContent = 'PUBLISHING...';
+
+            const lang = currentArticleLang === 'podcast' ? 'cs' : currentArticleLang;
+            const content = articleResult ? (lang === 'cs' ? articleResult.cs : articleResult.en) : '';
+
+            if (!content) {
+                wpShowResult('No content for language: ' + lang.toUpperCase(), true);
+                btn.disabled = false;
+                btn.textContent = 'PUBLISH DRAFT';
+                return;
+            }
+
+            try {
+                let mediaId = null;
+                const fileInput = document.getElementById('wpImageFile');
+                if (fileInput.files && fileInput.files[0]) {
+                    btn.textContent = 'UPLOADING IMAGE...';
+                    mediaId = await wpUploadImage();
+                }
+
+                const selectedCats = wpGetSelectedCategories(lang);
+
+                const resp = await fetch('/api/wp/publish', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: document.getElementById('wpTitle').value,
+                        content: content,
+                        categories: selectedCats,
+                        tags: document.getElementById('wpTags').value,
+                        status_tag: document.getElementById(lang === 'en' ? 'wpStatusTagEn' : 'wpStatusTagCs').value,
+                        lang: lang,
+                        featured_media_id: mediaId,
+                        score: parseInt(document.getElementById('wpScore').value) || 3,
+                        topic_meta: currentTopicData,
+                    })
+                });
+                const data = await resp.json();
+                btn.disabled = false;
+                btn.textContent = 'PUBLISH DRAFT';
+
+                if (data.error) {
+                    wpShowResult(data.error, true);
+                    return;
+                }
+
+                wpShowResult(
+                    'Draft created! <a href="' + escapeHtml(data.post.edit_url) + '" target="_blank">Edit in WP Admin</a>' +
+                    ' | <a href="' + escapeHtml(data.post.view_url) + '" target="_blank">Preview</a>',
+                    false
+                );
+            } catch (err) {
+                btn.disabled = false;
+                btn.textContent = 'PUBLISH DRAFT';
+                wpShowResult('Error: ' + err.message, true);
+            }
+        }
+
+        async function wpPublishBoth() {
+            const btn = document.getElementById('wpBtnPublishBoth');
+            btn.disabled = true;
+            btn.textContent = 'PUBLISHING...';
+
+            if (!articleResult || !articleResult.cs || !articleResult.en) {
+                wpShowResult('Both CS and EN versions are required', true);
+                btn.disabled = false;
+                btn.textContent = 'PUBLISH CS+EN';
+                return;
+            }
+
+            try {
+                let mediaId = null;
+                const fileInput = document.getElementById('wpImageFile');
+                if (fileInput.files && fileInput.files[0]) {
+                    btn.textContent = 'UPLOADING IMAGE...';
+                    mediaId = await wpUploadImage();
+                }
+
+                // Extract title for EN — try to get from EN content h2
+                const titleCs = document.getElementById('wpTitle').value;
+                let titleEn = titleCs;
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = articleResult.en;
+                const enH2 = tempDiv.querySelector('h2');
+                if (enH2) titleEn = enH2.textContent;
+
+                const selectedCatsCs = wpGetSelectedCategories('cs');
+                const selectedCatsEn = wpGetSelectedCategories('en');
+
+                btn.textContent = 'PUBLISHING...';
+                const resp = await fetch('/api/wp/publish-both', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title_cs: titleCs,
+                        title_en: titleEn,
+                        content_cs: articleResult.cs,
+                        content_en: articleResult.en,
+                        categories_cs: selectedCatsCs,
+                        categories_en: selectedCatsEn,
+                        tags: document.getElementById('wpTags').value,
+                        status_tag_cs: document.getElementById('wpStatusTagCs').value,
+                        status_tag_en: document.getElementById('wpStatusTagEn').value,
+                        featured_media_id: mediaId,
+                        score: parseInt(document.getElementById('wpScore').value) || 3,
+                        topic_meta: currentTopicData,
+                    })
+                });
+                const data = await resp.json();
+                btn.disabled = false;
+                btn.textContent = 'PUBLISH CS+EN';
+
+                if (data.error) {
+                    wpShowResult(data.error, true);
+                    return;
+                }
+
+                let msg = 'CS draft: <a href="' + escapeHtml(data.post_cs.edit_url) + '" target="_blank">Edit</a>';
+                msg += ' | EN draft: <a href="' + escapeHtml(data.post_en.edit_url) + '" target="_blank">Edit</a>';
+                if (data.linked) {
+                    msg += ' | Polylang linked';
+                } else if (data.link_error) {
+                    msg += ' | <span style="color:var(--terminal-yellow);">Link warning: ' + escapeHtml(data.link_error) + '</span>';
+                }
+                wpShowResult(msg, false);
+            } catch (err) {
+                btn.disabled = false;
+                btn.textContent = 'PUBLISH CS+EN';
+                wpShowResult('Error: ' + err.message, true);
+            }
+        }
+
+        async function wpSkipArticle() {
+            const btn = document.getElementById('wpBtnSkip');
+            btn.disabled = true;
+            btn.textContent = 'SKIPPING...';
+
+            try {
+                const resp = await fetch('/api/wp/log-skip', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        topic_meta: currentTopicData,
+                    })
+                });
+                const data = await resp.json();
+                btn.disabled = false;
+                btn.textContent = 'SKIP';
+
+                if (data.error) {
+                    wpShowResult(data.error, true);
+                    return;
+                }
+
+                wpShowResult('Skipped — logged to publish_log.jsonl', false);
+            } catch (err) {
+                btn.disabled = false;
+                btn.textContent = 'SKIP';
+                wpShowResult('Error: ' + err.message, true);
+            }
+        }
+
+        function wpShowResult(html, isError) {
+            const el = document.getElementById('wpResult');
+            el.innerHTML = html;
+            el.classList.remove('success', 'error');
+            el.classList.add('visible', isError ? 'error' : 'success');
+        }
+
         document.addEventListener('keydown', e => {
             if (e.key === 'Escape') {
+                closeFeedsModal();
                 closeArticleModal();
                 closeModal();
             }
         });
         document.getElementById('modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
         document.getElementById('articleModal').addEventListener('click', e => { if (e.target.id === 'articleModal') closeArticleModal(); });
+        document.getElementById('feedsModal').addEventListener('click', e => { if (e.target.id === 'feedsModal') closeFeedsModal(); });
     </script>
 </body>
 </html>
@@ -1730,6 +2811,341 @@ def get_saved_podcast(run_id, topic_index, lang):
         script = f.read()
 
     return json_response({'script': script})
+
+
+## ===== Feed Management API =====
+
+@app.route('/api/feeds', methods=['GET'])
+def api_get_feeds():
+    feeds = feed_manager.load_feeds()
+    return json_response({'feeds': feeds})
+
+
+@app.route('/api/feeds', methods=['POST'])
+def api_add_feed():
+    data = request.get_json(force=True)
+    name = data.get('name', '')
+    url = data.get('url', '')
+    lang = data.get('lang', 'en')
+
+    feed, error = feed_manager.add_feed(name, url, lang)
+    if error:
+        return json_response({'error': error}), 400
+
+    return json_response({'feed': feed})
+
+
+@app.route('/api/feeds/<feed_id>', methods=['PUT'])
+def api_update_feed(feed_id):
+    data = request.get_json(force=True)
+    kwargs = {}
+    for key in ('name', 'url', 'lang', 'enabled'):
+        if key in data:
+            kwargs[key] = data[key]
+
+    feed, error = feed_manager.update_feed(feed_id, **kwargs)
+    if error:
+        return json_response({'error': error}), 400
+
+    return json_response({'feed': feed})
+
+
+@app.route('/api/feeds/<feed_id>', methods=['DELETE'])
+def api_delete_feed(feed_id):
+    deleted = feed_manager.delete_feed(feed_id)
+    if not deleted:
+        return json_response({'error': 'Feed not found'}), 404
+
+    return json_response({'ok': True})
+
+
+@app.route('/api/feeds/validate', methods=['POST'])
+def api_validate_feed():
+    import feedparser as fp
+    data = request.get_json(force=True)
+    url = data.get('url', '')
+
+    if not url or not re.match(r'^https?://', url):
+        return json_response({'valid': False, 'error': 'Invalid URL'})
+
+    try:
+        result = fp.parse(url)
+        if result.bozo and not result.entries:
+            return json_response({'valid': False, 'error': 'Not a valid RSS feed'})
+
+        return json_response({
+            'valid': True,
+            'title': result.feed.get('title', ''),
+            'entries': len(result.entries),
+        })
+    except Exception as e:
+        return json_response({'valid': False, 'error': str(e)})
+
+
+## ===== WordPress Publishing API =====
+
+@app.route('/api/wp/status')
+def api_wp_status():
+    import config
+    return json_response({
+        'configured': wp_publisher.is_configured(),
+        'url': config.WP_URL if wp_publisher.is_configured() else '',
+    })
+
+
+@app.route('/api/wp/categories')
+def api_wp_categories():
+    if not wp_publisher.is_configured():
+        return json_response({'error': 'WordPress not configured'}), 400
+
+    force_refresh = request.args.get('refresh') == '1'
+    lang = request.args.get('lang')  # 'cs', 'en', or None
+    categories, error = wp_publisher.get_categories(force_refresh=force_refresh, lang=lang)
+    if error:
+        return json_response({'error': error}), 500
+
+    return json_response({'categories': categories})
+
+
+@app.route('/api/wp/status-tags')
+def api_wp_status_tags():
+    if not wp_publisher.is_configured():
+        return json_response({'error': 'WordPress not configured'}), 400
+
+    force_refresh = request.args.get('refresh') == '1'
+    tags, error = wp_publisher.get_status_tags(force_refresh=force_refresh)
+    if error:
+        return json_response({'error': error}), 500
+
+    return json_response({'status_tags': tags})
+
+
+@app.route('/api/wp/upload-media', methods=['POST'])
+def api_wp_upload_media():
+    if not wp_publisher.is_configured():
+        return json_response({'error': 'WordPress not configured'}), 400
+
+    if 'file' not in request.files:
+        return json_response({'error': 'No file provided'}), 400
+
+    f = request.files['file']
+    if not f.filename:
+        return json_response({'error': 'Empty filename'}), 400
+
+    caption = request.form.get('caption', '').strip()
+    alt_text = request.form.get('alt_text', '').strip()
+
+    media_id, error = wp_publisher.upload_media_file(
+        file_data=f.read(),
+        filename=f.filename,
+        content_type=f.content_type or 'image/jpeg',
+        caption=caption,
+        alt_text=alt_text,
+    )
+
+    if error:
+        return json_response({'error': error}), 500
+
+    return json_response({'media_id': media_id})
+
+
+@app.route('/api/wp/publish', methods=['POST'])
+def api_wp_publish():
+    if not wp_publisher.is_configured():
+        return json_response({'error': 'WordPress not configured'}), 400
+
+    data = request.get_json(force=True)
+    title = data.get('title', '').strip()
+    content = data.get('content', '').strip()
+    categories = data.get('categories', [])
+    tags_str = data.get('tags', '')
+    status_tag = data.get('status_tag', '').strip()
+    lang = data.get('lang', '')
+    featured_media_id = data.get('featured_media_id')
+
+    if not title or not content:
+        return json_response({'error': 'Title and content are required'}), 400
+
+    # Parse tagy
+    tag_names = [t.strip() for t in tags_str.split(',') if t.strip()] if tags_str else []
+
+    # Odstraň první heading (WP zobrazuje title zvlášť)
+    content = wp_publisher.strip_first_heading(content)
+
+    score = data.get('score', 3)
+    topic_meta = data.get('topic_meta') or {}
+
+    # Vytvoř draft
+    result, error = wp_publisher.create_draft(
+        title=title,
+        content=content,
+        category_ids=categories if categories else None,
+        tag_names=tag_names if tag_names else None,
+        lang=lang if lang else None,
+        featured_image_id=featured_media_id,
+        status_tag=status_tag if status_tag else None,
+    )
+
+    if error:
+        return json_response({'error': error}), 500
+
+    # Log publish decision
+    try:
+        log_entry = {
+            'action': 'published',
+            'score': score,
+            'run_id': topic_meta.get('run_id', ''),
+            'topic_index': topic_meta.get('topic_index', 0),
+            'topic': topic_meta.get('topic', ''),
+            'suggested_title': topic_meta.get('suggested_title', ''),
+            'published_title': title,
+            'virality_score': topic_meta.get('virality_score', 0),
+            'seo_keywords': topic_meta.get('seo_keywords', ''),
+            'sources': topic_meta.get('sources', []),
+            'source_count': topic_meta.get('source_count', 0),
+            'categories_cs': categories if lang == 'cs' else [],
+            'categories_en': categories if lang == 'en' else [],
+            'status_tag': status_tag,
+            'tags': tags_str,
+            'lang': lang,
+            'has_image': featured_media_id is not None,
+            'wp_post_cs': result.get('id') if lang == 'cs' else None,
+            'wp_post_en': result.get('id') if lang == 'en' else None,
+        }
+        publish_log.log_decision(log_entry)
+    except Exception:
+        pass  # Don't fail the publish on logging error
+
+    return json_response({'post': result})
+
+
+@app.route('/api/wp/publish-both', methods=['POST'])
+def api_wp_publish_both():
+    if not wp_publisher.is_configured():
+        return json_response({'error': 'WordPress not configured'}), 400
+
+    data = request.get_json(force=True)
+    title_cs = data.get('title_cs', '').strip()
+    title_en = data.get('title_en', '').strip()
+    content_cs = data.get('content_cs', '').strip()
+    content_en = data.get('content_en', '').strip()
+    categories_cs = data.get('categories_cs', data.get('categories', []))
+    categories_en = data.get('categories_en', data.get('categories', []))
+    tags_str = data.get('tags', '')
+    status_tag_cs = data.get('status_tag_cs', data.get('status_tag', '')).strip()
+    status_tag_en = data.get('status_tag_en', data.get('status_tag', '')).strip()
+    featured_media_id = data.get('featured_media_id')
+    score = data.get('score', 3)
+    topic_meta = data.get('topic_meta') or {}
+
+    print(f"[publish-both] categories_cs={categories_cs}, categories_en={categories_en}, tags={tags_str}")
+
+    if not title_cs or not content_cs or not title_en or not content_en:
+        return json_response({'error': 'Both CS and EN title+content are required'}), 400
+
+    tag_names = [t.strip() for t in tags_str.split(',') if t.strip()] if tags_str else []
+
+    # Odstraň první heading z obou verzí
+    content_cs = wp_publisher.strip_first_heading(content_cs)
+    content_en = wp_publisher.strip_first_heading(content_en)
+
+    # Vytvoř CS draft
+    result_cs, error_cs = wp_publisher.create_draft(
+        title=title_cs,
+        content=content_cs,
+        category_ids=categories_cs if categories_cs else None,
+        tag_names=tag_names if tag_names else None,
+        lang='cs',
+        featured_image_id=featured_media_id,
+        status_tag=status_tag_cs if status_tag_cs else None,
+    )
+    if error_cs:
+        return json_response({'error': f'CS draft failed: {error_cs}'}), 500
+
+    # Vytvoř EN draft
+    result_en, error_en = wp_publisher.create_draft(
+        title=title_en,
+        content=content_en,
+        category_ids=categories_en if categories_en else None,
+        tag_names=tag_names if tag_names else None,
+        lang='en',
+        featured_image_id=featured_media_id,
+        status_tag=status_tag_en if status_tag_en else None,
+    )
+    if error_en:
+        return json_response({'error': f'EN draft failed: {error_en}. CS draft was created: {result_cs["edit_url"]}'}), 500
+
+    # Propoj překlady přes Polylang
+    link_result, link_error = wp_publisher.link_translations(result_cs['id'], result_en['id'])
+
+    # Log publish decision
+    try:
+        log_entry = {
+            'action': 'published',
+            'score': score,
+            'run_id': topic_meta.get('run_id', ''),
+            'topic_index': topic_meta.get('topic_index', 0),
+            'topic': topic_meta.get('topic', ''),
+            'suggested_title': topic_meta.get('suggested_title', ''),
+            'published_title': title_cs,
+            'virality_score': topic_meta.get('virality_score', 0),
+            'seo_keywords': topic_meta.get('seo_keywords', ''),
+            'sources': topic_meta.get('sources', []),
+            'source_count': topic_meta.get('source_count', 0),
+            'categories_cs': categories_cs if categories_cs else [],
+            'categories_en': categories_en if categories_en else [],
+            'status_tag_cs': status_tag_cs,
+            'status_tag_en': status_tag_en,
+            'tags': tags_str,
+            'lang': 'both',
+            'has_image': featured_media_id is not None,
+            'wp_post_cs': result_cs.get('id'),
+            'wp_post_en': result_en.get('id'),
+        }
+        publish_log.log_decision(log_entry)
+    except Exception:
+        pass
+
+    return json_response({
+        'post_cs': result_cs,
+        'post_en': result_en,
+        'linked': link_result is not None,
+        'link_error': link_error,
+    })
+
+
+@app.route('/api/wp/log-skip', methods=['POST'])
+def api_wp_log_skip():
+    data = request.get_json(force=True)
+    topic_meta = data.get('topic_meta') or {}
+
+    try:
+        log_entry = {
+            'action': 'skipped',
+            'score': 0,
+            'run_id': topic_meta.get('run_id', ''),
+            'topic_index': topic_meta.get('topic_index', 0),
+            'topic': topic_meta.get('topic', ''),
+            'suggested_title': topic_meta.get('suggested_title', ''),
+            'virality_score': topic_meta.get('virality_score', 0),
+            'seo_keywords': topic_meta.get('seo_keywords', ''),
+            'sources': topic_meta.get('sources', []),
+            'source_count': topic_meta.get('source_count', 0),
+        }
+        publish_log.log_decision(log_entry)
+    except Exception as e:
+        return json_response({'error': str(e)}), 500
+
+    return json_response({'ok': True})
+
+
+@app.route('/api/wp/publish-stats')
+def api_wp_publish_stats():
+    try:
+        stats = publish_log.get_stats()
+        return json_response(stats)
+    except Exception as e:
+        return json_response({'error': str(e)}), 500
 
 
 if __name__ == '__main__':

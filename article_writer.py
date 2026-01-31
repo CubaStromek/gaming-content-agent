@@ -10,6 +10,35 @@ from bs4 import BeautifulSoup
 from typing import List, Dict, Optional
 
 import config
+from urllib.parse import urlparse
+
+
+def _build_sources_html(source_urls: List[str], lang: str = 'cs') -> str:
+    """Sestaví HTML sekci zdrojů z reálných URL."""
+    if not source_urls:
+        return ''
+
+    heading = 'Zdroje' if lang == 'cs' else 'Sources'
+    items = []
+    for url in source_urls:
+        try:
+            domain = urlparse(url).netloc.replace('www.', '')
+        except Exception:
+            domain = url
+        items.append(f'<li><a href="{url}" target="_blank" rel="noopener">{domain}</a></li>')
+
+    return f'\n<h2>{heading}</h2>\n<ul>\n' + '\n'.join(items) + '\n</ul>'
+
+
+def _strip_generated_sources(html: str) -> str:
+    """Odstraní AI-generovanou sekci zdrojů (Zdroje/Sources) pokud existuje."""
+    # Odstraní <h2>Zdroje</h2> nebo <h2>Sources</h2> a následující <ul>...</ul>
+    return re.sub(
+        r'\s*<h2>\s*(?:Zdroje|Sources)\s*</h2>\s*<ul>[\s\S]*?</ul>\s*',
+        '',
+        html,
+        flags=re.IGNORECASE
+    )
 
 
 def scrape_full_article(url: str) -> str:
@@ -156,26 +185,22 @@ PRAVIDLA:
 - NEZMIŇUJ zdroje v textu článku (ne "podle IGN...")
 - NEPŘIDÁVEJ h1 nadpis - ten bude jako titulek článku
 - KRITICKÉ: V nadpisech (h2) NEPOUŽÍVEJ Title Case! Velké písmeno POUZE na začátku věty a u vlastních jmen. ŠPATNĚ: "Nová Éra Pro Herní Průmysl". SPRÁVNĚ: "Nová éra pro herní průmysl". ŠPATNĚ: "What This Means For Players". SPRÁVNĚ: "What this means for players".
-- Na konec článku VŽDY přidej sekci "Zdroje" (v EN "Sources") jako HTML seznam odkazů
-
-ZDROJOVÉ URL PRO SEKCI ZDROJE:
-{sources_list}
+- NEPŘIDÁVEJ sekci "Zdroje" ani "Sources" — odkazy na zdroje se přidají automaticky
 
 POSTUP:
-1. Nejdřív napiš článek v ČEŠTINĚ
-2. Na konec české verze přidej <h2>Zdroje</h2> s odkazy jako <ul><li><a href="URL">název webu</a></li></ul>
-3. Potom PŘELOŽ celý článek do angličtiny včetně sekce zdrojů (nadpis "Sources")
+1. Nejdřív napiš článek v ČEŠTINĚ (BEZ sekce zdrojů)
+2. Potom PŘELOŽ celý článek do angličtiny
 
 === ČESKY ===
-<článek v češtině jako HTML, na konci sekce Zdroje s odkazy>
+<článek v češtině jako HTML>
 
 === ENGLISH ===
-<přesný překlad českého článku výše, na konci sekce Sources s odkazy>"""
+<přesný překlad českého článku výše>"""
 
     try:
         message = client.messages.create(
             model=config.ARTICLE_MODEL,
-            max_tokens=8000,
+            max_tokens=4096,
             temperature=0.7,
             messages=[{
                 "role": "user",
@@ -189,8 +214,21 @@ POSTUP:
         cs_match = re.search(r'===\s*ČESKY\s*===\s*([\s\S]*?)(?====\s*ENGLISH\s*===|$)', result_text)
         en_match = re.search(r'===\s*ENGLISH\s*===\s*([\s\S]*?)$', result_text)
 
-        cs_html = cs_match.group(1).strip() if cs_match else result_text
+        if cs_match:
+            cs_html = cs_match.group(1).strip()
+        elif en_match:
+            cs_html = result_text[:en_match.start()].strip()
+        else:
+            cs_html = result_text
         en_html = en_match.group(1).strip() if en_match else ''
+
+        # Odstraň AI-generované zdroje a připoj reálné URL
+        cs_html = _strip_generated_sources(cs_html)
+        cs_html += _build_sources_html(source_urls, 'cs')
+
+        if en_html:
+            en_html = _strip_generated_sources(en_html)
+            en_html += _build_sources_html(source_urls, 'en')
 
         # Odhad ceny
         cost_input = (message.usage.input_tokens / 1_000_000) * 0.25

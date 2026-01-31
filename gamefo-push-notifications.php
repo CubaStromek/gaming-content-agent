@@ -2,7 +2,7 @@
 /**
  * Plugin Name: GameFo Push Notifications
  * Description: Handles device tokens and sends push notifications via Expo when new posts are published.
- * Version: 1.1.0
+ * Version: 1.2.0
  * Author: GAMEfo Team
  * Text Domain: gamefo-push
  */
@@ -86,6 +86,8 @@ function gamefo_register_device(WP_REST_Request $request) {
     $platform = sanitize_text_field($request->get_param('platform') ?: 'unknown');
     $language = sanitize_text_field($request->get_param('language') ?: 'cs');
 
+    gamefo_push_log('REGISTER request: platform=' . $platform . ', language=' . $language . ', token=' . substr($token ?: '(empty)', 0, 40) . '...');
+
     // Validate language
     if (!in_array($language, array('cs', 'en'), true)) {
         $language = 'cs';
@@ -93,6 +95,7 @@ function gamefo_register_device(WP_REST_Request $request) {
 
     // Validate Expo token format (compatible with PHP 7.4+)
     if (!$token || strpos($token, 'ExponentPushToken') !== 0) {
+        gamefo_push_log('REGISTER rejected: invalid token format');
         return new WP_Error(
             'invalid_token',
             'Valid Expo push token required (must start with ExponentPushToken)',
@@ -115,6 +118,7 @@ function gamefo_register_device(WP_REST_Request $request) {
     );
 
     if ($result === false) {
+        gamefo_push_log('REGISTER failed: DB error — ' . $wpdb->last_error);
         return new WP_Error(
             'db_error',
             'Failed to save token',
@@ -122,6 +126,7 @@ function gamefo_register_device(WP_REST_Request $request) {
         );
     }
 
+    gamefo_push_log('REGISTER OK: token saved, platform=' . $platform . ', lang=' . $language);
     return new WP_REST_Response(array(
         'success' => true,
         'message' => 'Device registered successfully'
@@ -135,13 +140,17 @@ function gamefo_unregister_device(WP_REST_Request $request) {
     global $wpdb;
     $token = sanitize_text_field($request->get_param('token'));
 
+    gamefo_push_log('UNREGISTER request: token=' . substr($token ?: '(empty)', 0, 40) . '...');
+
     if (!$token) {
+        gamefo_push_log('UNREGISTER rejected: empty token');
         return new WP_Error('invalid_token', 'Token required', array('status' => 400));
     }
 
     $table_name = $wpdb->prefix . 'gamefo_devices';
-    $wpdb->delete($table_name, array('token' => $token), array('%s'));
+    $deleted = $wpdb->delete($table_name, array('token' => $token), array('%s'));
 
+    gamefo_push_log('UNREGISTER OK: ' . ($deleted ? 'token removed' : 'token not found in DB'));
     return new WP_REST_Response(array(
         'success' => true,
         'message' => 'Device unregistered'
@@ -491,6 +500,8 @@ function gamefo_push_admin_page() {
                     $color = '#4ec949';
                 } elseif (strpos($entry['message'], '--- TEST') !== false) {
                     $color = '#569cd6';
+                } elseif (strpos($entry['message'], 'REGISTER') === 0 || strpos($entry['message'], 'UNREGISTER') === 0) {
+                    $color = '#c586c0';
                 }
                 echo '<div style="color:' . $color . ';">';
                 echo '<span style="color:#888;">[' . esc_html($entry['time']) . ']</span> ';
