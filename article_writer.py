@@ -41,6 +41,22 @@ def _strip_generated_sources(html: str) -> str:
     )
 
 
+def _strip_markdown_artifacts(html: str) -> str:
+    """Odstraní markdown artefakty, které Haiku občas přidá do HTML výstupu."""
+    # Odstraň ```html ... ``` code fences
+    html = re.sub(r'```html\s*\n?', '', html)
+    html = re.sub(r'```\s*$', '', html, flags=re.MULTILINE)
+    # Převeď markdown nadpisy (## Nadpis) na <h2>
+    html = re.sub(r'^#{3,}\s+(.+)$', r'<h3>\1</h3>', html, flags=re.MULTILINE)
+    html = re.sub(r'^#{2}\s+(.+)$', r'<h2>\1</h2>', html, flags=re.MULTILINE)
+    html = re.sub(r'^#\s+(.+)$', r'<h2>\1</h2>', html, flags=re.MULTILINE)
+    # Převeď markdown --- na <hr>
+    html = re.sub(r'^-{3,}\s*$', '<hr>', html, flags=re.MULTILINE)
+    # Převeď **bold** na <strong>
+    html = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', html)
+    return html.strip()
+
+
 def scrape_full_article(url: str) -> str:
     """
     Stahne plny text clanku z URL
@@ -98,39 +114,45 @@ def parse_topics_from_report(report_text: str) -> List[Dict]:
     """
     topics = []
 
-    # Rozdeleni na bloky podle 🎮 TÉMA:
-    blocks = re.split(r'(?=🎮 TÉMA:)', report_text)
+    # Rozdeleni na bloky podle 🎮 TÉMA (s volitelnym cislem, toleruje **bold**)
+    blocks = re.split(r'(?=🎮\s*\*{0,2}\s*TÉMA\s*\d*:\*{0,2})', report_text)
 
     for block in blocks:
         block = block.strip()
-        if not block.startswith('🎮 TÉMA:'):
+        if not re.match(r'.*🎮\s*\*{0,2}\s*TÉMA\s*\d*:\*{0,2}', block):
             continue
 
         topic = {}
 
         # Parsuj jednotlive sekce
+        # Patterny toleruji markdown bold (**) pred emoji i kolem labelu
+        # a obsah muze byt na stejnem radku nebo na nasledujicim
+        _val = r'\s*\n?\s*(.+)'
         patterns = {
-            'topic': r'🎮 TÉMA:\s*(.+)',
-            'title': r'📰 NAVRŽENÝ TITULEK:\s*(.+)',
-            'angle': r'🎯 ÚHEL POHLEDU:\s*(.+)',
-            'context': r'📝 KONTEXT:\s*(.+)',
-            'hook': r'💬 HLAVNÍ HOOK:\s*(.+)',
-            'visual': r'🖼️ VIZUÁLNÍ NÁVRH:\s*(.+)',
-            'virality': r'🔥 VIRALITA:\s*(.+)',
-            'why_now': r'💡 PROČ TEĎKA:\s*(.+)',
-            'seo_keywords': r'🏷️ SEO KLÍČOVÁ SLOVA:\s*(.+)',
+            'topic': r'\*{0,2}🎮\s*\*{0,2}\s*TÉMA\s*\d*:\*{0,2}' + _val,
+            'title': r'\*{0,2}📰\s*\*{0,2}\s*NAVRŽENÝ TITULEK:\*{0,2}' + _val,
+            'angle': r'\*{0,2}🎯\s*\*{0,2}\s*ÚHEL POHLEDU:\*{0,2}' + _val,
+            'context': r'\*{0,2}📝\s*\*{0,2}\s*KONTEXT:\*{0,2}' + _val,
+            'hook': r'\*{0,2}💬\s*\*{0,2}\s*HLAVNÍ HOOK:\*{0,2}' + _val,
+            'visual': r'\*{0,2}🖼️\s*\*{0,2}\s*VIZUÁLNÍ NÁVRH:\*{0,2}' + _val,
+            'virality': r'\*{0,2}🔥\s*\*{0,2}\s*VIRALITA:\*{0,2}' + _val,
+            'why_now': r'\*{0,2}💡\s*\*{0,2}\s*PROČ TEĎKA:\*{0,2}' + _val,
+            'seo_keywords': r'\*{0,2}🏷️\s*\*{0,2}\s*SEO KLÍČOVÁ SLOVA:\*{0,2}' + _val,
         }
 
         for key, pattern in patterns.items():
             match = re.search(pattern, block)
-            topic[key] = match.group(1).strip() if match else ''
+            value = match.group(1).strip() if match else ''
+            # Odstranit uvozovky a markdown bold z hodnoty
+            value = value.strip('"\'').strip('*')
+            topic[key] = value
 
         # Parsuj virality score jako cislo
         virality_match = re.search(r'(\d+)', topic.get('virality', ''))
         topic['virality_score'] = int(virality_match.group(1)) if virality_match else 0
 
         # Parsuj zdroje (URL na samostatnych radcich)
-        sources_section = re.search(r'🔗 ZDROJE:\s*\n?([\s\S]*?)(?=🏷️|$)', block)
+        sources_section = re.search(r'\*{0,2}🔗\s*\*{0,2}\s*ZDROJE:\*{0,2}\s*\n?([\s\S]*?)(?=\*{0,2}🏷️|$)', block)
         if sources_section:
             urls = re.findall(r'https?://[^\s<>"\')\]]+[^\s<>"\')\].,]', sources_section.group(1))
             topic['sources'] = urls
@@ -143,7 +165,7 @@ def parse_topics_from_report(report_text: str) -> List[Dict]:
     return topics
 
 
-def write_article(topic: Dict, source_texts: List[str]) -> Dict:
+def write_article(topic: Dict, source_texts: List[str], length: str = 'medium') -> Dict:
     """
     Vygeneruje clanek pomoci Claude API
 
@@ -165,6 +187,11 @@ def write_article(topic: Dict, source_texts: List[str]) -> Dict:
     source_urls = topic.get('sources', [])
     sources_list = "\n".join(source_urls)
 
+    if length == 'short':
+        length_instruction = "Článek musí mít 400-800 znaků (krátká zpráva, 2-3 odstavce)"
+    else:
+        length_instruction = "Článek musí mít 1000-2000 znaků (střední délka, 4-6 odstavců)"
+
     prompt = f"""Napíš originální herní článek na základě zdrojových textů.
 
 TÉMA: {topic.get('topic', '')}
@@ -178,8 +205,9 @@ ZDROJOVÉ TEXTY:
 
 PRAVIDLA:
 - Piš VLASTNÍMI SLOVY, ne kopíruj ze zdrojů
-- Článek musí mít 600-1000 slov
-- Formát: HTML (h2 nadpisy, p odstavce, strong pro důležité)
+- {length_instruction}
+- Formát: ČISTÉ HTML (h2 nadpisy, p odstavce, strong pro důležité)
+- NEPOUŽÍVEJ markdown! Žádné ```, ---, #, ** — POUZE HTML tagy
 - Styl: informativní, poutavý, pro české herní publikum
 - Zahrň konkrétní fakta a čísla ze zdrojů
 - NEZMIŇUJ zdroje v textu článku (ne "podle IGN...")
@@ -222,6 +250,11 @@ POSTUP:
             cs_html = result_text
         en_html = en_match.group(1).strip() if en_match else ''
 
+        # Vyčisti markdown artefakty (Haiku 3.5 je občas přidává)
+        cs_html = _strip_markdown_artifacts(cs_html)
+        if en_html:
+            en_html = _strip_markdown_artifacts(en_html)
+
         # Odstraň AI-generované zdroje a připoj reálné URL
         cs_html = _strip_generated_sources(cs_html)
         cs_html += _build_sources_html(source_urls, 'cs')
@@ -230,9 +263,9 @@ POSTUP:
             en_html = _strip_generated_sources(en_html)
             en_html += _build_sources_html(source_urls, 'en')
 
-        # Odhad ceny
-        cost_input = (message.usage.input_tokens / 1_000_000) * 0.25
-        cost_output = (message.usage.output_tokens / 1_000_000) * 1.25
+        # Odhad ceny (Claude Haiku 4.5 pricing: $1.00/MTok input, $5.00/MTok output)
+        cost_input = (message.usage.input_tokens / 1_000_000) * 1.00
+        cost_output = (message.usage.output_tokens / 1_000_000) * 5.00
         total_cost = cost_input + cost_output
 
         return {
@@ -330,9 +363,9 @@ Start directly with the script, no preamble."""
 
         script = message.content[0].text.strip()
 
-        # Odhad ceny (Haiku pricing)
-        cost_input = (message.usage.input_tokens / 1_000_000) * 0.25
-        cost_output = (message.usage.output_tokens / 1_000_000) * 1.25
+        # Odhad ceny (Claude Haiku 4.5 pricing: $1.00/MTok input, $5.00/MTok output)
+        cost_input = (message.usage.input_tokens / 1_000_000) * 1.00
+        cost_output = (message.usage.output_tokens / 1_000_000) * 5.00
         total_cost = cost_input + cost_output
 
         return {

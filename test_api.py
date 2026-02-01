@@ -18,7 +18,7 @@ try:
     print("\n📡 Zkouším základní volání...")
 
     message = client.messages.create(
-        model="claude-3-haiku-20240307",
+        model="claude-haiku-4-5-20251001",
         max_tokens=50,
         messages=[{
             "role": "user",
@@ -28,7 +28,7 @@ try:
 
     print(f"✅ API funguje!")
     print(f"Odpověď: {message.content[0].text}")
-    print(f"Model: claude-3-haiku-20240307")
+    print(f"Model: claude-haiku-4-5-20251001")
 
 except Exception as e:
     print(f"❌ Chyba: {e}")

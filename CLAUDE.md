@@ -18,7 +18,7 @@ RSS Feeds → rss_scraper.py → claude_analyzer.py → email_sender.py
 
 - **Spuštění:** `python main.py` (pipeline) nebo `python web_app.py` (web UI)
 - **Deduplikace:** `processed_articles.json` — filtruje nové články, čistí po 30 dnech
-- **Náklady:** ~$0.50/běh (Haiku model)
+- **Náklady:** ~$2.00/běh (Haiku 4.5 model)
 
 ---
 

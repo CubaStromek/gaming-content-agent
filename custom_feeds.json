@@ -1,0 +1,89 @@
+{
+  "last_updated": "2026-01-31T09:45:57.272547",
+  "feeds": [
+    {
+      "id": "ign",
+      "name": "IGN",
+      "url": "https://feeds.ign.com/ign/all",
+      "lang": "en",
+      "enabled": true
+    },
+    {
+      "id": "gamespot",
+      "name": "GameSpot",
+      "url": "https://www.gamespot.com/feeds/news/",
+      "lang": "en",
+      "enabled": true
+    },
+    {
+      "id": "pc-gamer",
+      "name": "PC Gamer",
+      "url": "https://www.pcgamer.com/rss/",
+      "lang": "en",
+      "enabled": true
+    },
+    {
+      "id": "rock-paper-shotgun",
+      "name": "Rock Paper Shotgun",
+      "url": "https://www.rockpapershotgun.com/feed",
+      "lang": "en",
+      "enabled": true
+    },
+    {
+      "id": "kotaku",
+      "name": "Kotaku",
+      "url": "https://kotaku.com/rss",
+      "lang": "en",
+      "enabled": true
+    },
+    {
+      "id": "polygon",
+      "name": "Polygon",
+      "url": "https://www.polygon.com/rss/index.xml",
+      "lang": "en",
+      "enabled": true
+    },
+    {
+      "id": "gamesradar",
+      "name": "GamesRadar",
+      "url": "https://www.gamesradar.com/rss/",
+      "lang": "en",
+      "enabled": true
+    },
+    {
+      "id": "pure-xbox",
+      "name": "Pure Xbox",
+      "url": "https://www.purexbox.com/feeds/latest",
+      "lang": "en",
+      "enabled": true
+    },
+    {
+      "id": "hrej-cz",
+      "name": "Hrej.cz",
+      "url": "https://hrej.cz/rss/all",
+      "lang": "cs",
+      "enabled": true
+    },
+    {
+      "id": "zing-cz",
+      "name": "Zing.cz",
+      "url": "https://zing.cz/rss/clanky",
+      "lang": "cs",
+      "enabled": true
+    },
+    {
+      "id": "ji-bigas",
+      "name": "Jiří Bigas",
+      "url": "https://jiribigas.substack.com/feed",
+      "lang": "cs",
+      "enabled": true
+    },
+    {
+      "id": "games-cz",
+      "name": "Games.cz",
+      "url": "https://games.tiscali.cz/rss.xml",
+      "lang": "cs",
+      "enabled": true
+    }
+  ]
+}

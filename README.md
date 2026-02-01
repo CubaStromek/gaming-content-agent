@@ -65,7 +65,7 @@ python main.py
 3. Vytvoř API klíč v sekci "API Keys"
 4. Zkopíruj klíč do `.env` souboru
 
-**Odhadované náklady:** ~$0.50 za běh (15-30 Kč/den)
+**Odhadované náklady:** ~$2.00 za běh (Haiku 4.5)
 
 ### Email nastavení (volitelné)
 
@@ -186,10 +186,10 @@ python email_sender.py
 
 ## 💰 Náklady
 
-- **Claude API:** ~$0.50/běh = ~$15/měsíc (denní běh)
+- **Claude API:** ~$2.00/běh = ~$60/měsíc (denní běh, Haiku 4.5)
 - **GitHub Actions:** Zdarma (2000 min/měsíc)
 - **Email (Gmail):** Zdarma
-- **Celkem:** ~$15/měsíc
+- **Celkem:** ~$60/měsíc
 
 **Tip:** Použij Claude 3.5 Haiku místo Sonnet pro úsporu (~$5/měsíc).
 

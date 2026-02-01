@@ -38,8 +38,16 @@ def is_configured():
 
 
 def strip_first_heading(html):
-    """Odstraní první h1/h2 z HTML obsahu (WP zobrazuje title zvlášť)."""
-    return re.sub(r'^\s*<h[12][^>]*>.*?</h[12]>\s*', '', html, count=1, flags=re.DOTALL)
+    """Odstraní první h1/h2 z HTML obsahu (WP zobrazuje title zvlášť).
+    Zvládne i markdown artefakty (```html, # heading) před/místo HTML tagu."""
+    # Nejdřív vyčisti markdown code fences a leading whitespace
+    cleaned = re.sub(r'^\s*```html\s*\n?', '', html)
+    cleaned = re.sub(r'```\s*$', '', cleaned, flags=re.MULTILINE)
+    # Odstraň markdown heading (# Title) na začátku
+    cleaned = re.sub(r'^\s*#{1,3}\s+.+\n?', '', cleaned, count=1)
+    # Odstraň HTML h1/h2 na začátku
+    cleaned = re.sub(r'^\s*<h[12][^>]*>.*?</h[12]>\s*', '', cleaned, count=1, flags=re.DOTALL)
+    return cleaned
 
 
 def get_categories(force_refresh=False, lang=None):
@@ -306,7 +314,7 @@ def _resolve_tag_ids(tag_names):
     return (tag_ids, None)
 
 
-def create_draft(title, content, category_ids=None, tag_names=None, lang=None, featured_image_id=None, status_tag=None):
+def create_draft(title, content, category_ids=None, tag_names=None, lang=None, featured_image_id=None, status_tag=None, source_info=None):
     """
     Vytvoří draft post na WP.
     Vrací ({id, edit_url, view_url}, None) nebo (None, error_string).
@@ -334,8 +342,13 @@ def create_draft(title, content, category_ids=None, tag_names=None, lang=None, f
         if featured_image_id:
             post_data['featured_media'] = featured_image_id
 
+        meta = {}
         if status_tag:
-            post_data['meta'] = {'gameinfo_status_tag': status_tag}
+            meta['gameinfo_status_tag'] = status_tag
+        if source_info:
+            meta['gameinfo_source'] = source_info
+        if meta:
+            post_data['meta'] = meta
 
         # Polylang language param
         if lang:

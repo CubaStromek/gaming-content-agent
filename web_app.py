@@ -812,21 +812,6 @@ HTML_TEMPLATE = '''
             margin-top: 0.75rem;
         }
 
-        .wp-btn-publish {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.7rem;
-            padding: 0.4rem 1rem;
-            border: 1px solid var(--terminal-yellow);
-            background: transparent;
-            color: var(--terminal-yellow);
-            border-radius: 0.2rem;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .wp-btn-publish:hover { background: var(--terminal-yellow); color: #000; }
-        .wp-btn-publish:disabled { border-color: #374151; color: #6b7280; cursor: not-allowed; background: transparent; }
-
         .wp-btn-publish-both {
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.7rem;
@@ -841,22 +826,6 @@ HTML_TEMPLATE = '''
 
         .wp-btn-publish-both:hover { background: var(--primary); color: white; }
         .wp-btn-publish-both:disabled { border-color: #374151; color: #6b7280; cursor: not-allowed; background: transparent; }
-
-        .wp-btn-skip {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.7rem;
-            padding: 0.4rem 1rem;
-            border: 1px solid var(--terminal-red);
-            background: transparent;
-            color: var(--terminal-red);
-            border-radius: 0.2rem;
-            cursor: pointer;
-            transition: all 0.2s;
-            margin-left: auto;
-        }
-
-        .wp-btn-skip:hover { background: var(--terminal-red); color: #000; }
-        .wp-btn-skip:disabled { border-color: #374151; color: #6b7280; cursor: not-allowed; background: transparent; }
 
         .wp-result {
             margin-top: 0.75rem;
@@ -1279,10 +1248,12 @@ HTML_TEMPLATE = '''
                     <div class="wp-field-label">Caption</div>
                     <input type="text" id="wpImageCaption" placeholder="Image caption (optional)">
                 </div>
+                <div class="wp-field">
+                    <div class="wp-field-label">Source</div>
+                    <textarea id="wpSourceInfo" rows="2" placeholder="One source per line&#10;https://... (source URL)" style="resize:vertical;"></textarea>
+                </div>
                 <div class="wp-actions">
-                    <button class="wp-btn-publish" onclick="wpPublishDraft()" id="wpBtnPublish">PUBLISH DRAFT</button>
-                    <button class="wp-btn-publish-both" onclick="wpPublishBoth()" id="wpBtnPublishBoth" style="display:none;">PUBLISH CS+EN</button>
-                    <button class="wp-btn-skip" onclick="wpSkipArticle()" id="wpBtnSkip">SKIP</button>
+                    <button class="wp-btn-publish-both" onclick="wpPublishBoth()" id="wpBtnPublishBoth">PUBLISH CS+EN</button>
                 </div>
                 <div class="wp-result" id="wpResult"></div>
             </div>
@@ -1542,7 +1513,7 @@ HTML_TEMPLATE = '''
                 const viewBtn = t.has_article
                     ? `<button class="btn-write" style="border-color:var(--terminal-green);color:var(--terminal-green);" onclick="viewSavedArticle('${runId}', ${t.index})">VIEW_ARTICLE</button>`
                     : '';
-                const writeBtn = `<button class="btn-write" onclick="startWriteArticle('${runId}', ${t.index})">WRITE_ARTICLE</button>`;
+                const writeBtn = `<button class="btn-write" data-label="SHORT" onclick="startWriteArticle('${runId}', ${t.index}, 'short')">SHORT</button><button class="btn-write" data-label="MEDIUM" onclick="startWriteArticle('${runId}', ${t.index}, 'medium')">MEDIUM</button>`;
 
                 return `
                 <div class="topic-card">
@@ -1561,7 +1532,7 @@ HTML_TEMPLATE = '''
             document.getElementById('topicsPanel').classList.add('visible');
         }
 
-        function startWriteArticle(runId, topicIndex) {
+        function startWriteArticle(runId, topicIndex, length) {
             // Set context for podcast generation
             setArticleContext(runId, topicIndex);
 
@@ -1582,7 +1553,7 @@ HTML_TEMPLATE = '''
             fetch('/write-article', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ run_id: runId, topic_index: topicIndex })
+                body: JSON.stringify({ run_id: runId, topic_index: topicIndex, length: length })
             })
             .then(r => r.json())
             .then(data => {
@@ -1632,7 +1603,7 @@ HTML_TEMPLATE = '''
         function enableWriteButtons() {
             document.querySelectorAll('.btn-write').forEach(btn => {
                 btn.disabled = false;
-                btn.textContent = 'WRITE_ARTICLE';
+                if (btn.dataset.label) btn.textContent = btn.dataset.label;
             });
         }
 
@@ -2149,6 +2120,14 @@ HTML_TEMPLATE = '''
             const hasBoth = articleResult && articleResult.cs && articleResult.en;
             document.getElementById('wpBtnPublishBoth').style.display = hasBoth ? '' : 'none';
 
+            // Auto-fill sources (all URLs, one per line)
+            const sourceInput = document.getElementById('wpSourceInfo');
+            if (currentTopicData && currentTopicData.sources && currentTopicData.sources.length > 0) {
+                sourceInput.value = currentTopicData.sources.join('\\n');
+            } else {
+                sourceInput.value = '';
+            }
+
             // Reset result area
             const resultEl = document.getElementById('wpResult');
             resultEl.classList.remove('visible', 'success', 'error');
@@ -2281,6 +2260,7 @@ HTML_TEMPLATE = '''
                         status_tag_en: document.getElementById('wpStatusTagEn').value,
                         featured_media_id: mediaId,
                         score: parseInt(document.getElementById('wpScore').value) || 3,
+                        source_info: document.getElementById('wpSourceInfo').value,
                         topic_meta: currentTopicData,
                     })
                 });
@@ -2616,6 +2596,7 @@ def write_article_endpoint():
     data = request.get_json(force=True)
     run_id = data.get('run_id', '')
     topic_index = data.get('topic_index', 0)
+    article_length = data.get('length', 'medium')
 
     if not re.match(r'^[\w\-]+$', run_id):
         return json_response({'error': 'Invalid run_id'}), 400
@@ -2658,7 +2639,7 @@ def write_article_endpoint():
                     source_texts.append(text)
 
             # Generuj clanek
-            result = write_article(topic, source_texts)
+            result = write_article(topic, source_texts, length=article_length)
 
             if 'error' in result:
                 with article_writer_lock:
@@ -2973,6 +2954,7 @@ def api_wp_publish():
     content = wp_publisher.strip_first_heading(content)
 
     score = data.get('score', 3)
+    source_info = data.get('source_info', '').strip()
     topic_meta = data.get('topic_meta') or {}
 
     # Vytvoř draft
@@ -2984,6 +2966,7 @@ def api_wp_publish():
         lang=lang if lang else None,
         featured_image_id=featured_media_id,
         status_tag=status_tag if status_tag else None,
+        source_info=source_info if source_info else None,
     )
 
     if error:
@@ -3036,6 +3019,7 @@ def api_wp_publish_both():
     status_tag_en = data.get('status_tag_en', data.get('status_tag', '')).strip()
     featured_media_id = data.get('featured_media_id')
     score = data.get('score', 3)
+    source_info = data.get('source_info', '').strip()
     topic_meta = data.get('topic_meta') or {}
 
     print(f"[publish-both] categories_cs={categories_cs}, categories_en={categories_en}, tags={tags_str}")
@@ -3058,6 +3042,7 @@ def api_wp_publish_both():
         lang='cs',
         featured_image_id=featured_media_id,
         status_tag=status_tag_cs if status_tag_cs else None,
+        source_info=source_info if source_info else None,
     )
     if error_cs:
         return json_response({'error': f'CS draft failed: {error_cs}'}), 500
@@ -3071,6 +3056,7 @@ def api_wp_publish_both():
         lang='en',
         featured_image_id=featured_media_id,
         status_tag=status_tag_en if status_tag_en else None,
+        source_info=source_info if source_info else None,
     )
     if error_en:
         return json_response({'error': f'EN draft failed: {error_en}. CS draft was created: {result_cs["edit_url"]}'}), 500

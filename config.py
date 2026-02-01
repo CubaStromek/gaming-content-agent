@@ -35,7 +35,7 @@ MAX_ARTICLES_PER_SOURCE = int(os.getenv("MAX_ARTICLES_PER_SOURCE", "10"))
 MIN_VIRALITY_SCORE = int(os.getenv("MIN_VIRALITY_SCORE", "50"))
 
 # Model pro generování článků
-ARTICLE_MODEL = "claude-3-haiku-20240307"
+ARTICLE_MODEL = "claude-haiku-4-5-20251001"
 
 # RSS Feedy herních webů
 RSS_FEEDS = [
