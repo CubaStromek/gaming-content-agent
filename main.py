@@ -3,6 +3,7 @@ Gaming Content Agent - Hlavní skript
 Automaticky analyzuje herní weby a navrhuje témata článků
 """
 
+import os
 import sys
 import io
 from datetime import datetime
@@ -63,8 +64,12 @@ def main():
         articles = rss_scraper.scrape_all_feeds(skip_urls=processed_urls)
 
         if not articles:
-            print("\n✅ Žádné nové články k analýze!")
-            print("   Všechny články v RSS feedech již byly zpracovány dříve.")
+            msg = "Žádné nové články k analýze.\nVšechny články v RSS feedech již byly zpracovány dříve."
+            print(f"\n✅ {msg}")
+            # Uložení info souboru, aby web UI zobrazil smysluplnou zprávu
+            info_path = os.path.join(run_dir, 'no_new_articles.txt')
+            with open(info_path, 'w', encoding='utf-8') as f:
+                f.write(f"{msg}\nDokončeno: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n")
             print(f"⏰ Dokončeno: {datetime.now().strftime('%H:%M:%S')}\n")
             sys.exit(0)
 

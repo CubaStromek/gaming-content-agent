@@ -2531,12 +2531,19 @@ def get_run(run_id):
     result = {'id': run_id, 'report': None, 'articles_count': 0}
 
     report_path = os.path.join(run_path, 'report.txt')
+    no_articles_path = os.path.join(run_path, 'no_new_articles.txt')
     if os.path.exists(report_path):
         try:
             with open(report_path, 'r', encoding='utf-8') as f:
                 result['report'] = f.read()
         except:
             result['report'] = 'Chyba pri cteni reportu'
+    elif os.path.exists(no_articles_path):
+        try:
+            with open(no_articles_path, 'r', encoding='utf-8') as f:
+                result['report'] = f.read()
+        except:
+            result['report'] = 'Chyba pri cteni info souboru'
 
     articles_path = os.path.join(run_path, 'articles.json')
     if os.path.exists(articles_path):
