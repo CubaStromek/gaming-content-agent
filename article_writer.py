@@ -212,6 +212,7 @@ PRAVIDLA:
 - Zahrň konkrétní fakta a čísla ze zdrojů
 - NEZMIŇUJ zdroje v textu článku (ne "podle IGN...")
 - NEPŘIDÁVEJ h1 nadpis - ten bude jako titulek článku
+- FAKTICKÁ PŘESNOST: Zkontroluj, že titulek odpovídá obsahu článku. Pokud navržený titulek obsahuje nepravdivé tvrzení (např. označuje hru jako "českou", i když studio je zahraniční), OPRAV titulek tak, aby byl fakticky správný. Výstupní titulek uveď na prvním řádku jako: TITULEK: [opravený titulek]
 - KRITICKÉ: V nadpisech (h2) NEPOUŽÍVEJ Title Case! Velké písmeno POUZE na začátku věty a u vlastních jmen. ŠPATNĚ: "Nová Éra Pro Herní Průmysl". SPRÁVNĚ: "Nová éra pro herní průmysl". ŠPATNĚ: "What This Means For Players". SPRÁVNĚ: "What this means for players".
 - NEPŘIDÁVEJ sekci "Zdroje" ani "Sources" — odkazy na zdroje se přidají automaticky
 
@@ -237,6 +238,15 @@ POSTUP:
         )
 
         result_text = message.content[0].text
+
+        # Extrahuj opravený titulek (pokud writer opravil faktickou chybu)
+        corrected_title = None
+        title_match = re.search(r'^TITULEK:\s*(.+)$', result_text, re.MULTILINE)
+        if title_match:
+            corrected_title = title_match.group(1).strip()
+            # Odstraň řádek s titulkem z textu, aby se nedostal do HTML
+            result_text = result_text[:title_match.start()] + result_text[title_match.end():]
+            result_text = result_text.strip()
 
         # Parsuj CZ a EN casti
         cs_match = re.search(r'===\s*ČESKY\s*===\s*([\s\S]*?)(?====\s*ENGLISH\s*===|$)', result_text)
@@ -268,13 +278,16 @@ POSTUP:
         cost_output = (message.usage.output_tokens / 1_000_000) * 15.00
         total_cost = cost_input + cost_output
 
-        return {
+        result = {
             'cs': cs_html,
             'en': en_html,
             'tokens_in': message.usage.input_tokens,
             'tokens_out': message.usage.output_tokens,
             'cost': f"${total_cost:.4f}"
         }
+        if corrected_title:
+            result['corrected_title'] = corrected_title
+        return result
 
     except Exception as e:
         return {'error': str(e)}

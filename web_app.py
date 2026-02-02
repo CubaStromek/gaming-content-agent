@@ -2095,8 +2095,11 @@ HTML_TEMPLATE = '''
         function wpPrefillFields() {
             const ignoredTitles = ['Generovany clanek', 'Vygenerovany clanek', 'Ulozeny clanek', 'Generuji clanek...'];
 
+            // 0) corrected title from article writer (factual accuracy fix)
+            if (articleResult && articleResult.corrected_title) {
+                document.getElementById('wpTitle').value = articleResult.corrected_title;
             // 1) topic suggested title from metadata
-            if (currentTopicData && currentTopicData.suggested_title) {
+            } else if (currentTopicData && currentTopicData.suggested_title) {
                 document.getElementById('wpTitle').value = currentTopicData.suggested_title;
             } else {
                 // 2) modal title (if not a placeholder)

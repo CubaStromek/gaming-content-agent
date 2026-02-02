@@ -57,6 +57,7 @@ DŮLEŽITÉ:
 - V sekci ZDROJE musíš uvést PLNÉ URL adresy (začínající https://), ne čísla článků!
 - KONTEXT musí obsahovat konkrétní fakta a čísla, ne obecné fráze
 - NIKDY nevytvářej prázdná témata! Každé téma musí mít kompletní obsah všech sekcí
+- FAKTICKÁ PŘESNOST: NIKDY nepřipisuj hře českou/slovenskou origin, pokud to není faktem. Neoznačuj hry jako "český", "česká hra", "od českých tvůrců" apod., pokud vývojářské studio skutečně není z ČR/SR. Psaní pro české publikum NEZNAMENÁ, že máš hry falešně vydávat za české!
 - Počet témat musí odpovídat počtu dostupných článků (max {max_topics})
 
 ČLÁNKY K ANALÝZE:
