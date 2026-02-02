@@ -2,7 +2,7 @@
 /**
  * Plugin Name: GameFo Push Notifications
  * Description: Handles device tokens and sends push notifications via Expo when new posts are published.
- * Version: 1.2.0
+ * Version: 1.3.0
  * Author: GAMEfo Team
  * Text Domain: gamefo-push
  */
@@ -322,18 +322,27 @@ function gamefo_send_push_notification($post) {
                 $body_text = wp_remote_retrieve_body($response);
                 gamefo_push_log('Expo response: HTTP ' . $status_code);
 
-                // Parse response and remove invalid tokens
+                // Parse response and remove invalid tokens + save ticket IDs for receipt checking
                 $result = json_decode($body_text, true);
                 if (isset($result['data']) && is_array($result['data'])) {
                     $invalid_tokens = array();
+                    $pending_receipts = get_option('gamefo_pending_receipts', array());
                     foreach ($result['data'] as $i => $ticket) {
                         if (isset($ticket['status']) && $ticket['status'] === 'error'
                             && isset($ticket['details']['error'])
                             && $ticket['details']['error'] === 'DeviceNotRegistered'
                             && isset($chunk[$i])) {
                             $invalid_tokens[] = $chunk[$i];
+                        } elseif (isset($ticket['id']) && isset($chunk[$i])) {
+                            // Save ticket ID → token mapping for later receipt check
+                            $pending_receipts[$ticket['id']] = $chunk[$i];
                         }
                     }
+                    // Keep only last 500 receipts to prevent unbounded growth
+                    if (count($pending_receipts) > 500) {
+                        $pending_receipts = array_slice($pending_receipts, -500, 500, true);
+                    }
+                    update_option('gamefo_pending_receipts', $pending_receipts, false);
                     if (!empty($invalid_tokens)) {
                         foreach ($invalid_tokens as $bad_token) {
                             $wpdb->delete($table_name, array('token' => $bad_token), array('%s'));
@@ -377,6 +386,14 @@ function gamefo_push_admin_page() {
     global $wpdb;
     $table_name = $wpdb->prefix . 'gamefo_devices';
 
+    // Handle reset all devices
+    if (isset($_POST['reset_devices']) && wp_verify_nonce($_POST['_wpnonce'], 'gamefo_reset_devices')) {
+        $wpdb->query("TRUNCATE TABLE $table_name");
+        delete_option('gamefo_pending_receipts');
+        gamefo_push_log('--- ALL DEVICES RESET (table truncated, ID counter reset to 1) ---');
+        echo '<div class="notice notice-success"><p>All devices removed, ID counter reset to 1.</p></div>';
+    }
+
     // Handle token deletion
     if (isset($_POST['delete_token']) && wp_verify_nonce($_POST['_wpnonce'], 'gamefo_delete_token')) {
         $token_id = intval($_POST['token_id']);
@@ -394,6 +411,18 @@ function gamefo_push_admin_page() {
         gamefo_push_log('--- TEST NOTIFICATION TRIGGERED ---');
         gamefo_send_push_notification($test_post);
         echo '<div class="notice notice-success"><p>Test notification sent! See log below.</p></div>';
+    }
+
+    // Handle manual receipt check
+    if (isset($_POST['check_receipts']) && wp_verify_nonce($_POST['_wpnonce'], 'gamefo_check_receipts')) {
+        $pending_count = count(get_option('gamefo_pending_receipts', array()));
+        if ($pending_count > 0) {
+            gamefo_push_log('--- MANUAL RECEIPT CHECK TRIGGERED ---');
+            gamefo_check_push_receipts();
+            echo '<div class="notice notice-success"><p>Receipt check done (' . $pending_count . ' ticket(s) checked). See log below.</p></div>';
+        } else {
+            echo '<div class="notice notice-warning"><p>No pending receipts to check. Send a notification first.</p></div>';
+        }
     }
 
     // Handle log clear
@@ -429,16 +458,29 @@ function gamefo_push_admin_page() {
             <h2 style="margin-top: 0;">Statistics</h2>
             <p><strong>Registered devices:</strong> <?php echo esc_html($total); ?></p>
             <p><strong>Expo token:</strong> <?php echo get_option('gamefo_expo_access_token', '') ? '✅ Configured' : '❌ Not set'; ?></p>
-            <form method="post" style="margin-top: 15px;">
+            <form method="post" style="margin-top: 15px; display: flex; gap: 8px; align-items: flex-start;">
                 <?php wp_nonce_field('gamefo_send_test'); ?>
                 <button type="submit" name="send_test" class="button button-secondary">
                     Send Test Notification
                 </button>
-                <p class="description">Check <code>wp-content/debug.log</code> for Expo API response.</p>
+            </form>
+            <?php $pending_count = count(get_option('gamefo_pending_receipts', array())); ?>
+            <form method="post" style="margin-top: 8px;">
+                <?php wp_nonce_field('gamefo_check_receipts'); ?>
+                <button type="submit" name="check_receipts" class="button button-secondary">
+                    Check Receipts Now
+                </button>
+                <span class="description" style="margin-left: 8px;"><?php echo $pending_count; ?> pending</span>
             </form>
         </div>
 
         <h2>Registered Devices</h2>
+        <form method="post" style="margin-bottom: 10px;">
+            <?php wp_nonce_field('gamefo_reset_devices'); ?>
+            <button type="submit" name="reset_devices" class="button button-link-delete" onclick="return confirm('Remove ALL devices and reset ID counter to 1? This cannot be undone.');">
+                Reset All Devices
+            </button>
+        </form>
         <table class="wp-list-table widefat fixed striped">
             <thead>
                 <tr>
@@ -521,4 +563,87 @@ function gamefo_push_admin_page() {
         </div>
     </div>
     <?php
+}
+
+/**
+ * 5. Daily receipt check — cleans up tokens from uninstalled apps
+ */
+add_action('gamefo_daily_receipt_check', 'gamefo_check_push_receipts');
+
+// Schedule daily event on plugin load (if not already scheduled)
+add_action('init', function() {
+    if (!wp_next_scheduled('gamefo_daily_receipt_check')) {
+        wp_schedule_event(time(), 'daily', 'gamefo_daily_receipt_check');
+    }
+});
+
+// Clean up cron on plugin deactivation
+register_deactivation_hook(__FILE__, function() {
+    wp_clear_scheduled_hook('gamefo_daily_receipt_check');
+});
+
+function gamefo_check_push_receipts() {
+    global $wpdb;
+
+    $pending = get_option('gamefo_pending_receipts', array());
+    if (empty($pending)) {
+        return;
+    }
+
+    gamefo_push_log('--- DAILY RECEIPT CHECK: ' . count($pending) . ' ticket(s) ---');
+
+    $expo_token = get_option('gamefo_expo_access_token', '');
+    $headers = array(
+        'Content-Type' => 'application/json',
+        'Accept' => 'application/json',
+    );
+    if (!empty($expo_token)) {
+        $headers['Authorization'] = 'Bearer ' . $expo_token;
+    }
+
+    $ticket_ids = array_keys($pending);
+    $table_name = $wpdb->prefix . 'gamefo_devices';
+    $removed = 0;
+
+    // Expo receipts API accepts max 1000 IDs per request
+    foreach (array_chunk($ticket_ids, 300) as $chunk) {
+        $response = wp_remote_post('https://exp.host/--/api/v2/push/getReceipts', array(
+            'headers' => $headers,
+            'body' => wp_json_encode(array('ids' => $chunk)),
+            'timeout' => 30,
+        ));
+
+        if (is_wp_error($response)) {
+            gamefo_push_log('Receipt check ERROR: ' . $response->get_error_message());
+            continue;
+        }
+
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+        if (!isset($body['data']) || !is_array($body['data'])) {
+            gamefo_push_log('Receipt check: unexpected response format');
+            continue;
+        }
+
+        foreach ($body['data'] as $ticket_id => $receipt) {
+            if (isset($receipt['status']) && $receipt['status'] === 'error'
+                && isset($receipt['details']['error'])
+                && $receipt['details']['error'] === 'DeviceNotRegistered'
+                && isset($pending[$ticket_id])) {
+                $bad_token = $pending[$ticket_id];
+                $wpdb->delete($table_name, array('token' => $bad_token), array('%s'));
+                $removed++;
+            }
+            // Remove processed ticket regardless of result
+            unset($pending[$ticket_id]);
+        }
+    }
+
+    // Clear all processed receipts
+    update_option('gamefo_pending_receipts', $pending, false);
+
+    if ($removed > 0) {
+        gamefo_push_log('Receipt cleanup: removed ' . $removed . ' invalid token(s)');
+    } else {
+        gamefo_push_log('Receipt check done: all tokens valid');
+    }
 }
