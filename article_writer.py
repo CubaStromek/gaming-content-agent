@@ -263,9 +263,9 @@ POSTUP:
             en_html = _strip_generated_sources(en_html)
             en_html += _build_sources_html(source_urls, 'en')
 
-        # Odhad ceny (Claude Haiku 4.5 pricing: $1.00/MTok input, $5.00/MTok output)
-        cost_input = (message.usage.input_tokens / 1_000_000) * 1.00
-        cost_output = (message.usage.output_tokens / 1_000_000) * 5.00
+        # Odhad ceny (Claude Sonnet 4 pricing: $3.00/MTok input, $15.00/MTok output)
+        cost_input = (message.usage.input_tokens / 1_000_000) * 3.00
+        cost_output = (message.usage.output_tokens / 1_000_000) * 15.00
         total_cost = cost_input + cost_output
 
         return {
@@ -363,9 +363,9 @@ Start directly with the script, no preamble."""
 
         script = message.content[0].text.strip()
 
-        # Odhad ceny (Claude Haiku 4.5 pricing: $1.00/MTok input, $5.00/MTok output)
-        cost_input = (message.usage.input_tokens / 1_000_000) * 1.00
-        cost_output = (message.usage.output_tokens / 1_000_000) * 5.00
+        # Odhad ceny (Claude Sonnet 4 pricing: $3.00/MTok input, $15.00/MTok output)
+        cost_input = (message.usage.input_tokens / 1_000_000) * 3.00
+        cost_output = (message.usage.output_tokens / 1_000_000) * 15.00
         total_cost = cost_input + cost_output
 
         return {

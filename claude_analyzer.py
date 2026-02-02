@@ -68,7 +68,7 @@ VÝSTUP (seřaď od nejdůležitějšího, vytvoř PŘESNĚ {max_topics} témat 
 
     try:
         message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model="claude-sonnet-4-20250514",
             max_tokens=4000,
             temperature=0.7,
             messages=[{
@@ -84,9 +84,9 @@ VÝSTUP (seřaď od nejdůležitějšího, vytvoř PŘESNĚ {max_topics} témat 
         print(f"   📊 Input tokeny: {message.usage.input_tokens}")
         print(f"   📊 Output tokeny: {message.usage.output_tokens}")
 
-        # Odhad ceny (Claude Haiku 4.5 pricing: $1.00/MTok input, $5.00/MTok output)
-        cost_input = (message.usage.input_tokens / 1_000_000) * 1.00
-        cost_output = (message.usage.output_tokens / 1_000_000) * 5.00
+        # Odhad ceny (Claude Sonnet 4 pricing: $3.00/MTok input, $15.00/MTok output)
+        cost_input = (message.usage.input_tokens / 1_000_000) * 3.00
+        cost_output = (message.usage.output_tokens / 1_000_000) * 15.00
         total_cost = cost_input + cost_output
 
         print(f"   💰 Odhadovaná cena: ${total_cost:.4f}")
