@@ -10,6 +10,7 @@ import json
 import time
 import threading
 import subprocess
+import requests
 from functools import wraps
 from flask import Flask, render_template_string, make_response, request
 from werkzeug.utils import secure_filename
@@ -631,6 +632,7 @@ HTML_TEMPLATE = '''
             padding: 1.5rem;
             overflow-y: auto;
             flex: 1;
+            min-height: 0;
             font-family: 'Inter', sans-serif;
             font-size: 0.9rem;
             line-height: 1.7;
@@ -648,6 +650,7 @@ HTML_TEMPLATE = '''
             align-items: center;
             justify-content: space-between;
             border-top: 1px solid rgba(255, 255, 255, 0.05);
+            flex-shrink: 0;
         }
 
         .article-meta {
@@ -743,21 +746,55 @@ HTML_TEMPLATE = '''
 
         .btn-wp:hover { background: var(--terminal-yellow); color: #000; }
 
-        .wp-publish-panel {
+        .wp-publish-modal {
             display: none;
-            background: var(--header-bg);
-            border-top: 1px solid rgba(251, 191, 36, 0.3);
-            border-bottom: 1px solid rgba(251, 191, 36, 0.3);
-            padding: 1rem 1.5rem;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 1002;
+            padding: 2rem;
         }
 
-        .wp-publish-panel.visible { display: block; }
+        .wp-publish-modal.visible {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .wp-publish-modal-content {
+            background: var(--console-bg);
+            border: 1px solid rgba(251, 191, 36, 0.3);
+            border-radius: 0.5rem;
+            width: 100%;
+            max-width: 960px;
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .wp-publish-body {
+            padding: 1rem 1.5rem;
+            overflow-y: auto;
+            flex: 1;
+            min-height: 0;
+        }
+
+        .wp-publish-columns {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+            margin-top: 0.5rem;
+        }
 
         .wp-panel-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 0.75rem;
+            padding: 0.75rem 1.5rem;
+            background: var(--header-bg);
+            border-bottom: 1px solid rgba(251, 191, 36, 0.3);
+            flex-shrink: 0;
         }
 
         .wp-panel-title {
@@ -898,6 +935,53 @@ HTML_TEMPLATE = '''
         }
 
         .wp-result a:hover { color: white; border-bottom-color: white; }
+
+        .wp-image-controls {
+            display: flex; gap: 0.5rem; flex: 1; align-items: center;
+        }
+        .wp-image-controls input[type="text"] {
+            flex: 1;
+        }
+        .wp-btn-search, .wp-btn-upload-file {
+            font-family: 'JetBrains Mono', monospace; font-size: 0.65rem;
+            padding: 0.4rem 0.6rem; background: transparent;
+            border: 1px solid rgba(255,255,255,0.15); color: #9ca3af;
+            border-radius: 0.2rem; cursor: pointer; white-space: nowrap;
+        }
+        .wp-btn-search:hover, .wp-btn-upload-file:hover {
+            color: white; border-color: rgba(255,255,255,0.3);
+        }
+        .wp-rawg-results {
+            margin: 0.5rem 0; max-height: 350px; overflow-y: auto;
+        }
+        .wp-rawg-game {
+            margin-bottom: 0.5rem;
+        }
+        .wp-rawg-game-name {
+            font-family: 'JetBrains Mono', monospace; font-size: 0.65rem;
+            color: #9ca3af; margin-bottom: 0.25rem;
+        }
+        .wp-rawg-screenshots {
+            display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.3rem;
+        }
+        .wp-rawg-screenshots img {
+            width: 100%; height: 70px; object-fit: cover; border-radius: 0.25rem;
+            cursor: pointer; border: 2px solid transparent; opacity: 0.8;
+            transition: all 0.15s;
+        }
+        .wp-rawg-screenshots img:hover { opacity: 1; border-color: rgba(255,255,255,0.3); }
+        .wp-rawg-screenshots img.selected { border-color: var(--terminal-yellow); opacity: 1; }
+        .wp-selected-image {
+            margin: 0.4rem 0; font-family: 'JetBrains Mono', monospace;
+            font-size: 0.65rem; color: #6b7280;
+        }
+        .wp-selected-image img {
+            max-height: 100px; border-radius: 0.25rem; margin-right: 0.5rem;
+            vertical-align: middle;
+        }
+        .wp-selected-image .wp-img-remove {
+            color: var(--terminal-red); cursor: pointer; margin-left: 0.5rem;
+        }
 
         /* Feed management modal */
         .feeds-modal {
@@ -1243,71 +1327,6 @@ HTML_TEMPLATE = '''
                 <button class="tab-btn" onclick="switchTab('podcast')" id="tabPodcast">PODCAST</button>
             </div>
             <div class="article-body" id="articleBody"></div>
-            <div class="wp-publish-panel" id="wpPublishPanel">
-                <div class="wp-panel-header">
-                    <div class="wp-panel-title">Publish to WordPress</div>
-                    <button class="wp-panel-close" onclick="toggleWpPanel()">CLOSE</button>
-                </div>
-                <div class="wp-field">
-                    <div class="wp-field-label">Title</div>
-                    <input type="text" id="wpTitle" placeholder="Article title...">
-                </div>
-                <div class="wp-field">
-                    <div class="wp-field-label">Cat CS</div>
-                    <div class="wp-categories-list" id="wpCategoriesCs">Loading...</div>
-                </div>
-                <div class="wp-field">
-                    <div class="wp-field-label">Cat EN</div>
-                    <div class="wp-categories-list" id="wpCategoriesEn">Loading...</div>
-                </div>
-                <div class="wp-field">
-                    <div class="wp-field-label">Tag CS</div>
-                    <select id="wpStatusTagCs" style="flex:1; background:var(--input-bg); color:var(--text-primary); border:1px solid rgba(255,255,255,0.1); border-radius:0.25rem; padding:0.3rem 0.5rem; font-family:'JetBrains Mono',monospace; font-size:0.75rem;">
-                        <option value="">-- none --</option>
-                    </select>
-                </div>
-                <div class="wp-field">
-                    <div class="wp-field-label">Tag EN</div>
-                    <select id="wpStatusTagEn" style="flex:1; background:var(--input-bg); color:var(--text-primary); border:1px solid rgba(255,255,255,0.1); border-radius:0.25rem; padding:0.3rem 0.5rem; font-family:'JetBrains Mono',monospace; font-size:0.75rem;">
-                        <option value="">-- none --</option>
-                    </select>
-                </div>
-                <div class="wp-field">
-                    <div class="wp-field-label">Score</div>
-                    <select id="wpScore" style="flex:1; max-width:80px; background:var(--input-bg); color:var(--text-primary); border:1px solid rgba(255,255,255,0.1); border-radius:0.25rem; padding:0.3rem 0.5rem; font-family:'JetBrains Mono',monospace; font-size:0.75rem;">
-                        <option value="3">3</option>
-                        <option value="1">1</option>
-                        <option value="2">2</option>
-                        <option value="4">4</option>
-                        <option value="5">5</option>
-                    </select>
-                    <span style="font-family:'JetBrains Mono',monospace;font-size:0.6rem;color:#6b7280;">1=low 5=top</span>
-                </div>
-                <div class="wp-field">
-                    <div class="wp-field-label">Tags</div>
-                    <input type="text" id="wpTags" placeholder="tag1, tag2, tag3">
-                </div>
-                <div class="wp-field">
-                    <div class="wp-field-label">Language</div>
-                    <span class="wp-lang-badge" id="wpLang">CS</span>
-                </div>
-                <div class="wp-field">
-                    <div class="wp-field-label">Image</div>
-                    <input type="file" id="wpImageFile" accept="image/*" style="flex:1; font-family:'JetBrains Mono',monospace; font-size:0.75rem; color:var(--text-primary);">
-                </div>
-                <div class="wp-field">
-                    <div class="wp-field-label">Caption</div>
-                    <input type="text" id="wpImageCaption" placeholder="Image caption (optional)">
-                </div>
-                <div class="wp-field">
-                    <div class="wp-field-label">Source</div>
-                    <textarea id="wpSourceInfo" rows="2" placeholder="One source per line&#10;https://... (source URL)" style="resize:vertical;"></textarea>
-                </div>
-                <div class="wp-actions">
-                    <button class="wp-btn-publish-both" onclick="wpPublishBoth()" id="wpBtnPublishBoth">PUBLISH CS+EN</button>
-                </div>
-                <div class="wp-result" id="wpResult"></div>
-            </div>
             <div class="article-actions">
                 <div class="article-meta" id="articleMeta"></div>
                 <div>
@@ -1315,6 +1334,93 @@ HTML_TEMPLATE = '''
                     <button class="btn-wp" onclick="toggleWpPanel()" id="btnWp" style="display:none;">PUBLISH_TO_WP</button>
                     <button class="btn-copy" onclick="copyContent()">COPY</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="wp-publish-modal" id="wpPublishPanel">
+        <div class="wp-publish-modal-content">
+            <div class="wp-panel-header">
+                <div class="wp-panel-title">Publish to WordPress</div>
+                <button class="wp-panel-close" onclick="toggleWpPanel()">CLOSE</button>
+            </div>
+            <div class="wp-publish-body">
+                <div class="wp-field">
+                    <div class="wp-field-label">Title</div>
+                    <input type="text" id="wpTitle" placeholder="Article title...">
+                </div>
+                <div class="wp-publish-columns">
+                    <div class="wp-publish-col">
+                        <div class="wp-field">
+                            <div class="wp-field-label">Cat CS</div>
+                            <div class="wp-categories-list" id="wpCategoriesCs">Loading...</div>
+                        </div>
+                        <div class="wp-field">
+                            <div class="wp-field-label">Cat EN</div>
+                            <div class="wp-categories-list" id="wpCategoriesEn">Loading...</div>
+                        </div>
+                        <div class="wp-field">
+                            <div class="wp-field-label">Tag CS</div>
+                            <select id="wpStatusTagCs" style="flex:1; background:var(--input-bg); color:var(--text-primary); border:1px solid rgba(255,255,255,0.1); border-radius:0.25rem; padding:0.3rem 0.5rem; font-family:'JetBrains Mono',monospace; font-size:0.75rem;">
+                                <option value="">-- none --</option>
+                            </select>
+                        </div>
+                        <div class="wp-field">
+                            <div class="wp-field-label">Tag EN</div>
+                            <select id="wpStatusTagEn" style="flex:1; background:var(--input-bg); color:var(--text-primary); border:1px solid rgba(255,255,255,0.1); border-radius:0.25rem; padding:0.3rem 0.5rem; font-family:'JetBrains Mono',monospace; font-size:0.75rem;">
+                                <option value="">-- none --</option>
+                            </select>
+                        </div>
+                        <div class="wp-field">
+                            <div class="wp-field-label">Score</div>
+                            <select id="wpScore" style="flex:1; max-width:80px; background:var(--input-bg); color:var(--text-primary); border:1px solid rgba(255,255,255,0.1); border-radius:0.25rem; padding:0.3rem 0.5rem; font-family:'JetBrains Mono',monospace; font-size:0.75rem;">
+                                <option value="3">3</option>
+                                <option value="1">1</option>
+                                <option value="2">2</option>
+                                <option value="4">4</option>
+                                <option value="5">5</option>
+                            </select>
+                            <span style="font-family:'JetBrains Mono',monospace;font-size:0.6rem;color:#6b7280;">1=low 5=top</span>
+                        </div>
+                        <div class="wp-field">
+                            <div class="wp-field-label">Tags</div>
+                            <input type="text" id="wpTags" placeholder="tag1, tag2, tag3">
+                        </div>
+                        <div class="wp-field">
+                            <div class="wp-field-label">Language</div>
+                            <span class="wp-lang-badge" id="wpLang">CS</span>
+                        </div>
+                        <div class="wp-field">
+                            <div class="wp-field-label">Source</div>
+                            <textarea id="wpSourceInfo" rows="2" placeholder="One source per line&#10;https://... (source URL)" style="resize:vertical;"></textarea>
+                        </div>
+                    </div>
+                    <div class="wp-publish-col">
+                        <div class="wp-image-section">
+                            <div class="wp-field">
+                                <div class="wp-field-label">Image</div>
+                                <div class="wp-image-controls">
+                                    <input type="text" id="wpRawgQuery" placeholder="Search game images...">
+                                    <button class="wp-btn-search" onclick="wpSearchRawg()">SEARCH</button>
+                                    <label class="wp-btn-upload-file">
+                                        UPLOAD FILE
+                                        <input type="file" id="wpImageFile" accept="image/*" onchange="wpShowLocalFile()" style="display:none;">
+                                    </label>
+                                </div>
+                            </div>
+                            <div id="wpRawgResults" class="wp-rawg-results"></div>
+                            <div id="wpSelectedImage" class="wp-selected-image"></div>
+                            <div class="wp-field">
+                                <div class="wp-field-label">Caption</div>
+                                <input type="text" id="wpImageCaption" placeholder="Image caption (optional)">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="wp-actions">
+                    <button class="wp-btn-publish-both" onclick="wpPublishBoth()" id="wpBtnPublishBoth">PUBLISH CS+EN</button>
+                </div>
+                <div class="wp-result" id="wpResult"></div>
             </div>
         </div>
     </div>
@@ -2052,16 +2158,18 @@ HTML_TEMPLATE = '''
         });
 
         function toggleWpPanel() {
-            const panel = document.getElementById('wpPublishPanel');
-            const isVisible = panel.classList.contains('visible');
+            const modal = document.getElementById('wpPublishPanel');
+            const isVisible = modal.classList.contains('visible');
 
             if (isVisible) {
-                panel.classList.remove('visible');
+                modal.classList.remove('visible');
             } else {
-                panel.classList.add('visible');
+                modal.classList.add('visible');
                 wpLoadCategories();
                 wpLoadStatusTags();
                 wpPrefillFields();
+                wpClearImage();
+                wpAutoSearchImage();
             }
         }
 
@@ -2188,13 +2296,135 @@ HTML_TEMPLATE = '''
             resultEl.innerHTML = '';
         }
 
+        let wpSelectedImageUrl = null;
+        let wpSelectedImageAlt = '';
+
+        async function wpAutoSearchImage() {
+            if (!currentTopicData) return;
+            const query = currentTopicData.seo_keywords
+                || currentTopicData.topic
+                || currentTopicData.suggested_title;
+            if (!query) return;
+            document.getElementById('wpRawgQuery').value = query;
+            await wpSearchRawg();
+        }
+
+        async function wpSearchRawg() {
+            const query = document.getElementById('wpRawgQuery').value.trim();
+            if (!query) return;
+            const container = document.getElementById('wpRawgResults');
+            container.innerHTML = '<div style="color:#6b7280;font-size:0.65rem;">Searching...</div>';
+
+            try {
+                const resp = await fetch('/api/rawg/search?q=' + encodeURIComponent(query));
+                const data = await resp.json();
+                if (data.error) { container.innerHTML = '<div style="color:var(--terminal-red);font-size:0.65rem;">' + escapeHtml(data.error) + '</div>'; return; }
+
+                if (!data.games || data.games.length === 0) {
+                    container.innerHTML = '<div style="color:#6b7280;font-size:0.65rem;">No results</div>';
+                    return;
+                }
+
+                container.innerHTML = '';
+                let firstImg = null;
+                data.games.forEach(game => {
+                    const gameDiv = document.createElement('div');
+                    gameDiv.className = 'wp-rawg-game';
+
+                    const nameDiv = document.createElement('div');
+                    nameDiv.className = 'wp-rawg-game-name';
+                    nameDiv.textContent = game.name;
+                    gameDiv.appendChild(nameDiv);
+
+                    const grid = document.createElement('div');
+                    grid.className = 'wp-rawg-screenshots';
+                    game.screenshots.forEach(url => {
+                        const img = document.createElement('img');
+                        img.src = url;
+                        img.alt = game.name;
+                        img.dataset.url = url;
+                        img.dataset.gameName = game.name;
+                        img.onclick = () => wpSelectImage(img);
+                        grid.appendChild(img);
+                        if (!firstImg) firstImg = img;
+                    });
+                    gameDiv.appendChild(grid);
+                    container.appendChild(gameDiv);
+                });
+
+                if (firstImg && !wpSelectedImageUrl) {
+                    wpSelectImage(firstImg);
+                }
+            } catch (err) {
+                container.innerHTML = '<div style="color:var(--terminal-red);font-size:0.65rem;">Error: ' + escapeHtml(err.message) + '</div>';
+            }
+        }
+
+        function wpSelectImage(img) {
+            document.querySelectorAll('.wp-rawg-screenshots img').forEach(i => i.classList.remove('selected'));
+            img.classList.add('selected');
+
+            wpSelectedImageUrl = img.dataset.url;
+            wpSelectedImageAlt = img.dataset.gameName || '';
+
+            document.getElementById('wpImageFile').value = '';
+
+            const preview = document.getElementById('wpSelectedImage');
+            preview.innerHTML = '<img src="' + escapeHtml(img.src) + '"> '
+                + escapeHtml(img.dataset.gameName || '')
+                + ' <span class="wp-img-remove" onclick="wpClearImage()">[x]</span>';
+
+            if (!document.getElementById('wpImageCaption').value.trim()) {
+                document.getElementById('wpImageCaption').value = img.dataset.gameName || '';
+            }
+        }
+
+        function wpShowLocalFile() {
+            const fileInput = document.getElementById('wpImageFile');
+            if (!fileInput.files || !fileInput.files[0]) return;
+
+            wpSelectedImageUrl = null;
+            wpSelectedImageAlt = '';
+            document.querySelectorAll('.wp-rawg-screenshots img').forEach(i => i.classList.remove('selected'));
+
+            const preview = document.getElementById('wpSelectedImage');
+            const url = URL.createObjectURL(fileInput.files[0]);
+            preview.innerHTML = '<img src="' + url + '"> '
+                + escapeHtml(fileInput.files[0].name)
+                + ' <span class="wp-img-remove" onclick="wpClearImage()">[x]</span>';
+        }
+
+        function wpClearImage() {
+            wpSelectedImageUrl = null;
+            wpSelectedImageAlt = '';
+            document.getElementById('wpImageFile').value = '';
+            document.getElementById('wpSelectedImage').innerHTML = '';
+            document.querySelectorAll('.wp-rawg-screenshots img').forEach(i => i.classList.remove('selected'));
+        }
+
         async function wpUploadImage() {
+            const caption = document.getElementById('wpImageCaption').value.trim();
+
+            if (wpSelectedImageUrl) {
+                const resp = await fetch('/api/wp/upload-from-url', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        url: wpSelectedImageUrl,
+                        caption: caption,
+                        alt_text: caption || wpSelectedImageAlt,
+                    })
+                });
+                const data = await resp.json();
+                if (data.error) throw new Error(data.error);
+                return data.media_id;
+            }
+
             const fileInput = document.getElementById('wpImageFile');
             if (!fileInput.files || !fileInput.files[0]) return null;
 
             const formData = new FormData();
             formData.append('file', fileInput.files[0]);
-            const caption = document.getElementById('wpImageCaption').value.trim();
             if (caption) {
                 formData.append('caption', caption);
                 formData.append('alt_text', caption);
@@ -2223,8 +2453,7 @@ HTML_TEMPLATE = '''
 
             try {
                 let mediaId = null;
-                const fileInput = document.getElementById('wpImageFile');
-                if (fileInput.files && fileInput.files[0]) {
+                if (wpSelectedImageUrl || (document.getElementById('wpImageFile').files && document.getElementById('wpImageFile').files[0])) {
                     btn.textContent = 'UPLOADING IMAGE...';
                     mediaId = await wpUploadImage();
                 }
@@ -2281,8 +2510,7 @@ HTML_TEMPLATE = '''
 
             try {
                 let mediaId = null;
-                const fileInput = document.getElementById('wpImageFile');
-                if (fileInput.files && fileInput.files[0]) {
+                if (wpSelectedImageUrl || (document.getElementById('wpImageFile').files && document.getElementById('wpImageFile').files[0])) {
                     btn.textContent = 'UPLOADING IMAGE...';
                     mediaId = await wpUploadImage();
                 }
@@ -2994,6 +3222,81 @@ def api_wp_status_tags():
         return json_response({'error': error}), 500
 
     return json_response({'status_tags': tags})
+
+
+@app.route('/api/rawg/search', methods=['GET'])
+@require_auth
+@rate_limit("15/minute")
+def api_rawg_search():
+    query = request.args.get('q', '').strip()
+    if not query:
+        return json_response({'error': 'Missing query'}), 400
+    if not config.RAWG_API_KEY:
+        return json_response({'error': 'RAWG API not configured'}), 400
+
+    # Hledej hry podle názvu
+    resp = requests.get(
+        'https://api.rawg.io/api/games',
+        params={'key': config.RAWG_API_KEY, 'search': query, 'page_size': 6},
+        timeout=10,
+    )
+    if resp.status_code != 200:
+        return json_response({'error': f'RAWG API error {resp.status_code}'}), 502
+
+    data = resp.json()
+    results = []
+    for game in data.get('results', []):
+        screenshots = [s['image'] for s in (game.get('short_screenshots') or []) if s.get('image')]
+        if not screenshots and game.get('background_image'):
+            screenshots = [game['background_image']]
+        if not screenshots:
+            continue
+        results.append({
+            'id': game['id'],
+            'name': game.get('name', ''),
+            'background': game.get('background_image', ''),
+            'screenshots': screenshots[:6],
+        })
+
+    return json_response({'games': results})
+
+
+@app.route('/api/wp/upload-from-url', methods=['POST'])
+@require_auth
+@rate_limit("5/minute")
+def api_wp_upload_from_url():
+    if not wp_publisher.is_configured():
+        return json_response({'error': 'WordPress not configured'}), 400
+
+    data = request.get_json()
+    image_url = (data.get('url') or '').strip()
+    caption = (data.get('caption') or '').strip()
+    alt_text = (data.get('alt_text') or '').strip()
+
+    if not image_url:
+        return json_response({'error': 'Missing URL'}), 400
+
+    img_resp = requests.get(image_url, timeout=15)
+    if img_resp.status_code != 200:
+        return json_response({'error': f'Cannot download image: HTTP {img_resp.status_code}'}), 502
+
+    content_type = img_resp.headers.get('Content-Type', 'image/jpeg')
+    filename = image_url.split('/')[-1].split('?')[0] or 'rawg-image.jpg'
+    if '.' not in filename:
+        filename = 'rawg-image.jpg'
+
+    media_id, error = wp_publisher.upload_media_file(
+        file_data=img_resp.content,
+        filename=secure_filename(filename),
+        content_type=content_type,
+        caption=caption,
+        alt_text=alt_text,
+    )
+
+    if error:
+        return json_response({'error': error}), 500
+
+    return json_response({'media_id': media_id})
 
 
 ALLOWED_MEDIA_TYPES = {'image/jpeg', 'image/png', 'image/gif', 'image/webp'}

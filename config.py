@@ -30,6 +30,9 @@ WP_URL = os.getenv("WP_URL", "")
 WP_USER = os.getenv("WP_USER", "")
 WP_APP_PASSWORD = os.getenv("WP_APP_PASSWORD", "")
 
+# RAWG.io API (herní databáze - obrázky)
+RAWG_API_KEY = os.getenv("RAWG_API_KEY", "")
+
 def is_wp_configured():
     return bool(WP_URL and WP_USER and WP_APP_PASSWORD)
 
