@@ -8,6 +8,44 @@ import anthropic
 import json
 from typing import List, Dict
 import config
+from logger import setup_logger
+
+log = setup_logger(__name__)
+
+try:
+    from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+    _HAS_TENACITY = True
+except ImportError:
+    _HAS_TENACITY = False
+
+
+def _call_analysis_api(client, prompt):
+    """Volání Claude API."""
+    message = client.messages.create(
+        model=config.ANALYSIS_MODEL,
+        max_tokens=4000,
+        temperature=0.7,
+        messages=[{
+            "role": "user",
+            "content": prompt
+        }]
+    )
+    return message
+
+
+if _HAS_TENACITY:
+    _call_analysis_api = retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2, min=2, max=8),
+        retry=retry_if_exception_type((
+            anthropic.APIConnectionError,
+            anthropic.RateLimitError,
+        )),
+        before_sleep=lambda retry_state: log.warning(
+            "⚠️  API volání selhalo, pokus %d/3, čekám...", retry_state.attempt_number
+        ),
+    )(_call_analysis_api)
+
 
 def analyze_gaming_articles(articles_text: str) -> str:
     """
@@ -19,7 +57,7 @@ def analyze_gaming_articles(articles_text: str) -> str:
     Returns:
         Analýza a nápady od Claude
     """
-    print("\n🧠 Analyzuji články pomocí Claude AI...")
+    log.info("🧠 Analyzuji články pomocí Claude AI...")
 
     client = anthropic.Anthropic(api_key=config.CLAUDE_API_KEY)
 
@@ -68,34 +106,26 @@ DŮLEŽITÉ:
 VÝSTUP (seřaď od nejdůležitějšího, vytvoř PŘESNĚ {max_topics} témat s kompletním obsahem):"""
 
     try:
-        message = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=4000,
-            temperature=0.7,
-            messages=[{
-                "role": "user",
-                "content": prompt
-            }]
-        )
+        message = _call_analysis_api(client, prompt)
 
         result = message.content[0].text
 
         # Statistiky použití
-        print(f"✅ Analýza dokončena")
-        print(f"   📊 Input tokeny: {message.usage.input_tokens}")
-        print(f"   📊 Output tokeny: {message.usage.output_tokens}")
+        log.info("✅ Analýza dokončena")
+        log.info("   📊 Input tokeny: %d", message.usage.input_tokens)
+        log.info("   📊 Output tokeny: %d", message.usage.output_tokens)
 
         # Odhad ceny (Claude Sonnet 4 pricing: $3.00/MTok input, $15.00/MTok output)
         cost_input = (message.usage.input_tokens / 1_000_000) * 3.00
         cost_output = (message.usage.output_tokens / 1_000_000) * 15.00
         total_cost = cost_input + cost_output
 
-        print(f"   💰 Odhadovaná cena: ${total_cost:.4f}")
+        log.info("   💰 Odhadovaná cena: $%.4f", total_cost)
 
         return result
 
     except Exception as e:
-        print(f"❌ Chyba při volání Claude API: {e}")
+        log.error("❌ Chyba při volání Claude API: %s", e)
         return None
 
 
@@ -146,8 +176,8 @@ def extract_used_urls_from_analysis(analysis: str) -> set:
 
 if __name__ == "__main__":
     # Test analyzeru
-    print("🧪 Test Claude Analyzeru")
-    print("Poznámka: Toto spotřebuje API tokeny!\n")
+    log.info("🧪 Test Claude Analyzeru")
+    log.info("Poznámka: Toto spotřebuje API tokeny!")
 
     test_articles = """ČLÁNEK 1:
 Zdroj: IGN (en)
@@ -163,5 +193,5 @@ Link: https://pcgamer.com/palworld"""
 
     result = analyze_gaming_articles(test_articles)
     if result:
-        print("\n" + "="*60)
-        print(result)
+        log.info("=" * 60)
+        log.info(result)

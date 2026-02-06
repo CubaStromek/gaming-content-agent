@@ -4,6 +4,7 @@ Stahuje nejnovější články z RSS feedů
 """
 
 import os
+import requests
 import feedparser
 from datetime import datetime
 from typing import List, Dict
@@ -11,6 +12,10 @@ import json
 import csv
 import config
 import feed_manager
+from logger import setup_logger
+
+log = setup_logger(__name__)
+
 
 def scrape_rss_feed(feed_info: Dict, skip_urls: set = None) -> List[Dict]:
     """
@@ -28,12 +33,15 @@ def scrape_rss_feed(feed_info: Dict, skip_urls: set = None) -> List[Dict]:
     skip_urls = skip_urls or set()
 
     try:
-        print(f"  📡 Stahuji {feed_info['name']}...")
-        feed = feedparser.parse(feed_info['url'])
+        log.info("  📡 Stahuji %s...", feed_info['name'])
+
+        # Timeout přes requests, pak parsuj obsah feedparserem
+        resp = requests.get(feed_info['url'], timeout=15)
+        feed = feedparser.parse(resp.content)
 
         # Ošetření chyby při parsování
         if feed.bozo and not feed.entries:
-            print(f"  ⚠️  Chyba při parsování {feed_info['name']}: {feed.bozo_exception}")
+            log.warning("  ⚠️  Chyba při parsování %s: %s", feed_info['name'], feed.bozo_exception)
 
         # Zpracuj články (max MAX_ARTICLES_PER_SOURCE)
         for entry in feed.entries[:config.MAX_ARTICLES_PER_SOURCE]:
@@ -52,19 +60,19 @@ def scrape_rss_feed(feed_info: Dict, skip_urls: set = None) -> List[Dict]:
                 'published': entry.get('published', '')
             }
 
-            # Zkrácení summary (max 300 znaků pro analýzu)
-            if len(article['summary']) > 300:
-                article['summary'] = article['summary'][:300] + '...'
+            # Zkrácení summary (konfigurovatelný limit)
+            if len(article['summary']) > config.SUMMARY_MAX_LENGTH:
+                article['summary'] = article['summary'][:config.SUMMARY_MAX_LENGTH] + '...'
 
             articles.append(article)
 
         if skipped > 0:
-            print(f"  ✅ {feed_info['name']}: {len(articles)} nových (⏭️ {skipped} přeskočeno)")
+            log.info("  ✅ %s: %d nových (⏭️ %d přeskočeno)", feed_info['name'], len(articles), skipped)
         else:
-            print(f"  ✅ {feed_info['name']}: {len(articles)} článků")
+            log.info("  ✅ %s: %d článků", feed_info['name'], len(articles))
 
     except Exception as e:
-        print(f"  ❌ Chyba při stahování {feed_info['name']}: {e}")
+        log.error("  ❌ Chyba při stahování %s: %s", feed_info['name'], e)
 
     return articles
 
@@ -79,7 +87,7 @@ def scrape_all_feeds(skip_urls: set = None) -> List[Dict]:
     Returns:
         Seznam všech článků ze všech zdrojů
     """
-    print("🌐 Stahuji články z herních webů...\n")
+    log.info("🌐 Stahuji články z herních webů...")
 
     all_articles = []
 
@@ -87,7 +95,7 @@ def scrape_all_feeds(skip_urls: set = None) -> List[Dict]:
         articles = scrape_rss_feed(feed_info, skip_urls)
         all_articles.extend(articles)
 
-    print(f"\n✅ Celkem staženo: {len(all_articles)} nových článků")
+    log.info("✅ Celkem staženo: %d nových článků", len(all_articles))
     return all_articles
 
 
@@ -139,11 +147,11 @@ def save_articles_to_json(articles: List[Dict], run_dir: str = ".") -> str:
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
-        print(f"💾 Články uloženy do: {filename}")
+        log.info("💾 Články uloženy do: %s", filename)
         return filename
 
     except Exception as e:
-        print(f"❌ Chyba při ukládání článků: {e}")
+        log.error("❌ Chyba při ukládání článků: %s", e)
         return None
 
 
@@ -179,20 +187,20 @@ def save_articles_to_csv(articles: List[Dict], run_dir: str = ".") -> str:
                     article['published']
                 ])
 
-        print(f"📊 Články uloženy do: {filename}")
+        log.info("📊 Články uloženy do: %s", filename)
         return filename
 
     except Exception as e:
-        print(f"❌ Chyba při ukládání CSV: {e}")
+        log.error("❌ Chyba při ukládání CSV: %s", e)
         return None
 
 
 if __name__ == "__main__":
     # Test scraperu
-    print("🧪 Test RSS scraperu\n")
+    log.info("🧪 Test RSS scraperu")
     articles = scrape_all_feeds()
 
     if articles:
-        print("\n📄 Ukázka prvního článku:")
-        print(f"   {articles[0]['title']}")
-        print(f"   Zdroj: {articles[0]['source']}")
+        log.info("📄 Ukázka prvního článku:")
+        log.info("   %s", articles[0]['title'])
+        log.info("   Zdroj: %s", articles[0]['source'])

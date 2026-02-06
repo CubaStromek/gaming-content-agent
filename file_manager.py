@@ -6,6 +6,9 @@ Spravuje ukládání souborů do strukturovaných složek
 import os
 from datetime import datetime
 from pathlib import Path
+from logger import setup_logger
+
+log = setup_logger(__name__)
 
 
 def create_run_directory() -> str:
@@ -114,8 +117,8 @@ Zdroje: {', '.join(stats.get('sources', {}).keys())}
     try:
         with open(filename, 'w', encoding='utf-8') as f:
             f.write(content)
-        print(f"💾 Report uložen do: {filename}")
+        log.info("💾 Report uložen do: %s", filename)
         return filename
     except Exception as e:
-        print(f"❌ Chyba při ukládání reportu: {e}")
+        log.error("❌ Chyba při ukládání reportu: %s", e)
         return None

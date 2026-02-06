@@ -10,7 +10,43 @@ from bs4 import BeautifulSoup
 from typing import List, Dict, Optional
 
 import config
+from logger import setup_logger
 from urllib.parse import urlparse
+
+log = setup_logger(__name__)
+
+try:
+    from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+    _HAS_TENACITY = True
+except ImportError:
+    _HAS_TENACITY = False
+
+
+def _call_api(client, model, max_tokens, temperature, prompt):
+    """Volání Claude API."""
+    return client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        messages=[{
+            "role": "user",
+            "content": prompt
+        }]
+    )
+
+
+if _HAS_TENACITY:
+    _call_api = retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2, min=2, max=8),
+        retry=retry_if_exception_type((
+            anthropic.APIConnectionError,
+            anthropic.RateLimitError,
+        )),
+        before_sleep=lambda retry_state: log.warning(
+            "⚠️  API volání selhalo, pokus %d/3, čekám...", retry_state.attempt_number
+        ),
+    )(_call_api)
 
 
 def _build_sources_html(source_urls: List[str], lang: str = 'cs') -> str:
@@ -227,15 +263,7 @@ POSTUP:
 <přesný překlad českého článku výše>"""
 
     try:
-        message = client.messages.create(
-            model=config.ARTICLE_MODEL,
-            max_tokens=4096,
-            temperature=0.7,
-            messages=[{
-                "role": "user",
-                "content": prompt
-            }]
-        )
+        message = _call_api(client, config.ARTICLE_MODEL, 4096, 0.7, prompt)
 
         result_text = message.content[0].text
 
@@ -364,15 +392,7 @@ ALEX: [text]
 Start directly with the script, no preamble."""
 
     try:
-        message = client.messages.create(
-            model=config.ARTICLE_MODEL,
-            max_tokens=4000,
-            temperature=0.8,
-            messages=[{
-                "role": "user",
-                "content": prompt
-            }]
-        )
+        message = _call_api(client, config.ARTICLE_MODEL, 4000, 0.8, prompt)
 
         script = message.content[0].text.strip()
 

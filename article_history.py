@@ -5,11 +5,37 @@ Zajišťuje, že se stejné články neanalyzují opakovaně
 
 import json
 import os
+import sys
 from datetime import datetime, timedelta
 from typing import List, Dict, Set
+from logger import setup_logger
+
+log = setup_logger(__name__)
 
 HISTORY_FILE = "processed_articles.json"
 DEFAULT_EXPIRY_DAYS = 30
+
+# File locking — fcntl na Linuxu, msvcrt na Windows
+if sys.platform == 'win32':
+    import msvcrt
+
+    def _lock_file(f):
+        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+
+    def _unlock_file(f):
+        try:
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+        except Exception:
+            pass
+else:
+    import fcntl
+
+    def _lock_file(f):
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+
+    def _unlock_file(f):
+        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
 def load_history() -> Dict:
@@ -27,9 +53,14 @@ def load_history() -> Dict:
 
     try:
         with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            _lock_file(f)
+            try:
+                data = json.load(f)
+            finally:
+                _unlock_file(f)
+            return data
     except (json.JSONDecodeError, Exception) as e:
-        print(f"⚠️  Chyba při načítání historie: {e}")
+        log.warning("⚠️  Chyba při načítání historie: %s", e)
         return {
             "last_updated": None,
             "articles": {}
@@ -50,11 +81,15 @@ def save_history(history: Dict) -> bool:
         history["last_updated"] = datetime.now().isoformat()
 
         with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
-            json.dump(history, f, ensure_ascii=False, indent=2)
+            _lock_file(f)
+            try:
+                json.dump(history, f, ensure_ascii=False, indent=2)
+            finally:
+                _unlock_file(f)
 
         return True
     except Exception as e:
-        print(f"❌ Chyba při ukládání historie: {e}")
+        log.error("❌ Chyba při ukládání historie: %s", e)
         return False
 
 
@@ -95,7 +130,7 @@ def filter_new_articles(articles: List[Dict], history: Dict) -> List[Dict]:
             skipped_count += 1
 
     if skipped_count > 0:
-        print(f"⏭️  Přeskočeno {skipped_count} již zpracovaných článků")
+        log.info("⏭️  Přeskočeno %d již zpracovaných článků", skipped_count)
 
     return new_articles
 
@@ -147,7 +182,7 @@ def cleanup_old_entries(history: Dict, expiry_days: int = DEFAULT_EXPIRY_DAYS) -
 
     removed_count = original_count - len(history["articles"])
     if removed_count > 0:
-        print(f"🧹 Vyčištěno {removed_count} starých záznamů z historie")
+        log.info("🧹 Vyčištěno %d starých záznamů z historie", removed_count)
 
     return history
 
@@ -172,10 +207,10 @@ def get_stats(history: Dict) -> Dict:
 
 if __name__ == "__main__":
     # Test modulu
-    print("🧪 Test article_history modulu\n")
+    log.info("🧪 Test article_history modulu")
 
     history = load_history()
     stats = get_stats(history)
 
-    print(f"📊 Celkem zpracováno: {stats['total_processed']} článků")
-    print(f"🕐 Poslední aktualizace: {stats['last_updated'] or 'nikdy'}")
+    log.info("📊 Celkem zpracováno: %d článků", stats['total_processed'])
+    log.info("🕐 Poslední aktualizace: %s", stats['last_updated'] or 'nikdy')

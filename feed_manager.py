@@ -9,6 +9,9 @@ import re
 from datetime import datetime
 
 import config
+from logger import setup_logger
+
+log = setup_logger(__name__)
 
 FEEDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "custom_feeds.json")
 
@@ -37,7 +40,7 @@ def load_feeds():
                 data = json.load(f)
             return data.get("feeds", [])
         except (json.JSONDecodeError, Exception) as e:
-            print(f"Chyba pri nacitani feedu: {e}")
+            log.error("Chyba pri nacitani feedu: %s", e)
 
     # Seed z configu
     feeds = []
@@ -69,7 +72,7 @@ def save_feeds(feeds):
             json.dump(data, f, ensure_ascii=False, indent=2)
         return True
     except Exception as e:
-        print(f"Chyba pri ukladani feedu: {e}")
+        log.error("Chyba pri ukladani feedu: %s", e)
         return False
 
 

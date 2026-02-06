@@ -7,16 +7,67 @@ import os
 import re
 import sys
 import json
+import time
 import threading
 import subprocess
+from functools import wraps
 from flask import Flask, render_template_string, make_response, request
+from werkzeug.utils import secure_filename
 
 from article_writer import parse_topics_from_report, scrape_full_article, write_article, generate_podcast_script
 import feed_manager
 import wp_publisher
 import publish_log
+import config
+from logger import setup_logger
+
+log = setup_logger(__name__)
 
 app = Flask(__name__)
+
+# --- Rate limiting ---
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+    limiter = Limiter(
+        get_remote_address,
+        app=app,
+        default_limits=[],
+        storage_uri="memory://",
+    )
+except ImportError:
+    limiter = None
+
+# --- Auth decorator ---
+def require_auth(f):
+    """Vyžaduje Bearer token pokud je DASHBOARD_TOKEN nastaven."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = config.DASHBOARD_TOKEN
+        if not token:
+            return f(*args, **kwargs)
+
+        # Check Authorization header
+        auth_header = request.headers.get('Authorization', '')
+        if auth_header.startswith('Bearer ') and auth_header[7:] == token:
+            return f(*args, **kwargs)
+
+        # Check query param
+        if request.args.get('token') == token:
+            return f(*args, **kwargs)
+
+        return json_response({'error': 'Unauthorized'}), 401
+    return decorated
+
+# --- Rate limit helpers ---
+def rate_limit(limit_string):
+    """Vrátí rate limit dekorátor pokud je flask-limiter dostupný, jinak no-op."""
+    if limiter:
+        return limiter.limit(limit_string)
+    return lambda f: f
+
+# --- Startup time for healthcheck ---
+_start_time = time.time()
 
 agent_running = False
 agent_thread = None
@@ -2465,7 +2516,18 @@ def index():
     return render_template_string(HTML_TEMPLATE)
 
 
+@app.route('/health')
+def healthcheck():
+    return json_response({
+        'status': 'ok',
+        'uptime': round(time.time() - _start_time, 1),
+        'version': '1.0',
+    })
+
+
 @app.route('/start')
+@require_auth
+@rate_limit("1/minute")
 def start():
     global agent_thread, sent_line_index
 
@@ -2600,10 +2662,15 @@ def get_topics(run_id):
 
 
 @app.route('/write-article', methods=['POST'])
+@require_auth
+@rate_limit("3/minute")
 def write_article_endpoint():
     global article_writer_state
 
-    data = request.get_json(force=True)
+    try:
+        data = request.get_json(force=True)
+    except Exception:
+        return json_response({'error': 'Invalid JSON'}), 400
     run_id = data.get('run_id', '')
     topic_index = data.get('topic_index', 0)
     article_length = data.get('length', 'medium')
@@ -2709,10 +2776,15 @@ def get_saved_article(run_id, topic_index):
 
 
 @app.route('/generate-podcast', methods=['POST'])
+@require_auth
+@rate_limit("3/minute")
 def generate_podcast_endpoint():
     global podcast_writer_state
 
-    data = request.get_json(force=True)
+    try:
+        data = request.get_json(force=True)
+    except Exception:
+        return json_response({'error': 'Invalid JSON'}), 400
     run_id = data.get('run_id', '')
     topic_index = data.get('topic_index', 0)
     lang = data.get('lang', 'cs')
@@ -2813,8 +2885,12 @@ def api_get_feeds():
 
 
 @app.route('/api/feeds', methods=['POST'])
+@require_auth
 def api_add_feed():
-    data = request.get_json(force=True)
+    try:
+        data = request.get_json(force=True)
+    except Exception:
+        return json_response({'error': 'Invalid JSON'}), 400
     name = data.get('name', '')
     url = data.get('url', '')
     lang = data.get('lang', 'en')
@@ -2827,8 +2903,12 @@ def api_add_feed():
 
 
 @app.route('/api/feeds/<feed_id>', methods=['PUT'])
+@require_auth
 def api_update_feed(feed_id):
-    data = request.get_json(force=True)
+    try:
+        data = request.get_json(force=True)
+    except Exception:
+        return json_response({'error': 'Invalid JSON'}), 400
     kwargs = {}
     for key in ('name', 'url', 'lang', 'enabled'):
         if key in data:
@@ -2842,6 +2922,7 @@ def api_update_feed(feed_id):
 
 
 @app.route('/api/feeds/<feed_id>', methods=['DELETE'])
+@require_auth
 def api_delete_feed(feed_id):
     deleted = feed_manager.delete_feed(feed_id)
     if not deleted:
@@ -2851,9 +2932,13 @@ def api_delete_feed(feed_id):
 
 
 @app.route('/api/feeds/validate', methods=['POST'])
+@require_auth
 def api_validate_feed():
     import feedparser as fp
-    data = request.get_json(force=True)
+    try:
+        data = request.get_json(force=True)
+    except Exception:
+        return json_response({'error': 'Invalid JSON'}), 400
     url = data.get('url', '')
 
     if not url or not re.match(r'^https?://', url):
@@ -2911,7 +2996,13 @@ def api_wp_status_tags():
     return json_response({'status_tags': tags})
 
 
+ALLOWED_MEDIA_TYPES = {'image/jpeg', 'image/png', 'image/gif', 'image/webp'}
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
+
+
 @app.route('/api/wp/upload-media', methods=['POST'])
+@require_auth
+@rate_limit("5/minute")
 def api_wp_upload_media():
     if not wp_publisher.is_configured():
         return json_response({'error': 'WordPress not configured'}), 400
@@ -2923,13 +3014,28 @@ def api_wp_upload_media():
     if not f.filename:
         return json_response({'error': 'Empty filename'}), 400
 
+    # Validace MIME typu
+    content_type = f.content_type or 'application/octet-stream'
+    if content_type not in ALLOWED_MEDIA_TYPES:
+        return json_response({'error': f'Unsupported file type: {content_type}. Allowed: {", ".join(ALLOWED_MEDIA_TYPES)}'}), 400
+
+    # Sanitizace filename
+    safe_filename = secure_filename(f.filename)
+    if not safe_filename:
+        return json_response({'error': 'Invalid filename'}), 400
+
+    # Čtení a validace velikosti
+    file_data = f.read()
+    if len(file_data) > MAX_UPLOAD_SIZE:
+        return json_response({'error': f'File too large. Maximum: {MAX_UPLOAD_SIZE // (1024*1024)} MB'}), 400
+
     caption = request.form.get('caption', '').strip()
     alt_text = request.form.get('alt_text', '').strip()
 
     media_id, error = wp_publisher.upload_media_file(
-        file_data=f.read(),
-        filename=f.filename,
-        content_type=f.content_type or 'image/jpeg',
+        file_data=file_data,
+        filename=safe_filename,
+        content_type=content_type,
         caption=caption,
         alt_text=alt_text,
     )
@@ -2941,11 +3047,16 @@ def api_wp_upload_media():
 
 
 @app.route('/api/wp/publish', methods=['POST'])
+@require_auth
+@rate_limit("5/minute")
 def api_wp_publish():
     if not wp_publisher.is_configured():
         return json_response({'error': 'WordPress not configured'}), 400
 
-    data = request.get_json(force=True)
+    try:
+        data = request.get_json(force=True)
+    except Exception:
+        return json_response({'error': 'Invalid JSON'}), 400
     title = data.get('title', '').strip()
     content = data.get('content', '').strip()
     categories = data.get('categories', [])
@@ -3013,11 +3124,16 @@ def api_wp_publish():
 
 
 @app.route('/api/wp/publish-both', methods=['POST'])
+@require_auth
+@rate_limit("5/minute")
 def api_wp_publish_both():
     if not wp_publisher.is_configured():
         return json_response({'error': 'WordPress not configured'}), 400
 
-    data = request.get_json(force=True)
+    try:
+        data = request.get_json(force=True)
+    except Exception:
+        return json_response({'error': 'Invalid JSON'}), 400
     title_cs = data.get('title_cs', '').strip()
     title_en = data.get('title_en', '').strip()
     content_cs = data.get('content_cs', '').strip()
@@ -3032,7 +3148,7 @@ def api_wp_publish_both():
     source_info = data.get('source_info', '').strip()
     topic_meta = data.get('topic_meta') or {}
 
-    print(f"[publish-both] categories_cs={categories_cs}, categories_en={categories_en}, tags={tags_str}")
+    log.debug("[publish-both] categories_cs=%s, categories_en=%s, tags=%s", categories_cs, categories_en, tags_str)
 
     if not title_cs or not content_cs or not title_en or not content_en:
         return json_response({'error': 'Both CS and EN title+content are required'}), 400
@@ -3111,8 +3227,12 @@ def api_wp_publish_both():
 
 
 @app.route('/api/wp/log-skip', methods=['POST'])
+@require_auth
 def api_wp_log_skip():
-    data = request.get_json(force=True)
+    try:
+        data = request.get_json(force=True)
+    except Exception:
+        return json_response({'error': 'Invalid JSON'}), 400
     topic_meta = data.get('topic_meta') or {}
 
     try:
@@ -3145,13 +3265,13 @@ def api_wp_publish_stats():
 
 
 if __name__ == '__main__':
-    print("")
-    print("=" * 70)
-    print("          GAMING CONTENT AGENT - Web Frontend")
-    print("=" * 70)
-    print("")
-    print("  Server bezi na: http://localhost:5000")
-    print("")
-    print("=" * 70)
+    log.info("")
+    log.info("=" * 70)
+    log.info("          GAMING CONTENT AGENT - Web Frontend")
+    log.info("=" * 70)
+    log.info("")
+    log.info("  Server bezi na: http://localhost:5000")
+    log.info("")
+    log.info("=" * 70)
 
     app.run(debug=False, host='127.0.0.1', port=5000, threaded=True)

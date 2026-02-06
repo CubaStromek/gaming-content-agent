@@ -5,6 +5,9 @@ Načítá nastavení z .env souboru
 
 import os
 from dotenv import load_dotenv
+from logger import setup_logger
+
+log = setup_logger(__name__)
 
 # Načti .env soubor
 load_dotenv()
@@ -35,7 +38,16 @@ MAX_ARTICLES_PER_SOURCE = int(os.getenv("MAX_ARTICLES_PER_SOURCE", "10"))
 MIN_VIRALITY_SCORE = int(os.getenv("MIN_VIRALITY_SCORE", "50"))
 
 # Model pro generování článků
-ARTICLE_MODEL = "claude-haiku-4-5-20251001"
+ARTICLE_MODEL = "claude-sonnet-4-20250514"
+
+# Model pro analýzu (přepisovatelný přes .env)
+ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "claude-sonnet-4-20250514")
+
+# Maximální délka summary při scrapování RSS (znaky)
+SUMMARY_MAX_LENGTH = int(os.getenv("SUMMARY_MAX_LENGTH", "500"))
+
+# Dashboard autentizace (volitelný bearer token)
+DASHBOARD_TOKEN = os.getenv("DASHBOARD_TOKEN", "")
 
 # RSS Feedy herních webů
 RSS_FEEDS = [
@@ -64,9 +76,9 @@ def validate_config():
         errors.append("CLAUDE_API_KEY")
 
     if errors:
-        print("⚠️  Chybí následující nastavení v .env:")
+        log.warning("⚠️  Chybí následující nastavení v .env:")
         for err in errors:
-            print(f"   - {err}")
+            log.warning("   - %s", err)
         return False
 
     return True
