@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-01-31T09:45:57.272547",
+  "last_updated": "2026-02-07T14:13:24.515570",
   "feeds": [
     {
       "id": "ign",
@@ -82,6 +82,13 @@
       "id": "games-cz",
       "name": "Games.cz",
       "url": "https://games.tiscali.cz/rss.xml",
+      "lang": "cs",
+      "enabled": true
+    },
+    {
+      "id": "spite-cz",
+      "name": "Spite.cz",
+      "url": "https://spite.cz/rss/all",
       "lang": "cs",
       "enabled": true
     }

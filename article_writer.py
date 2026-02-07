@@ -224,9 +224,9 @@ def write_article(topic: Dict, source_texts: List[str], length: str = 'medium') 
     sources_list = "\n".join(source_urls)
 
     if length == 'short':
-        length_instruction = "Článek musí mít 400-800 znaků (krátká zpráva, 2-3 odstavce)"
+        length_instruction = "Článek musí mít 800-1500 znaků (krátká zpráva, 3-4 odstavce)"
     else:
-        length_instruction = "Článek musí mít 1000-2000 znaků (střední délka, 4-6 odstavců)"
+        length_instruction = "Článek musí mít 2000-3500 znaků (střední délka, 5-8 odstavců)"
 
     prompt = f"""Napíš originální herní článek na základě zdrojových textů.
 

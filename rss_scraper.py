@@ -36,7 +36,8 @@ def scrape_rss_feed(feed_info: Dict, skip_urls: set = None) -> List[Dict]:
         log.info("  📡 Stahuji %s...", feed_info['name'])
 
         # Timeout přes requests, pak parsuj obsah feedparserem
-        resp = requests.get(feed_info['url'], timeout=15)
+        headers = {'User-Agent': 'Mozilla/5.0 (compatible; GamefoBot/1.0)'}
+        resp = requests.get(feed_info['url'], timeout=15, headers=headers)
         feed = feedparser.parse(resp.content)
 
         # Ošetření chyby při parsování
