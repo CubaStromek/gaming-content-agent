@@ -63,12 +63,24 @@ RSS_FEEDS = [
     {"name": "Polygon", "url": "https://www.polygon.com/rss/index.xml", "lang": "en"},
     {"name": "GamesRadar", "url": "https://www.gamesradar.com/rss/", "lang": "en"},
     {"name": "Pure Xbox", "url": "https://www.purexbox.com/feeds/latest", "lang": "en"},
+    {"name": "TheGamer", "url": "https://www.thegamer.com/feed/", "lang": "en"},
+    {"name": "VG247", "url": "https://www.vg247.com/feed", "lang": "en"},
+    # {"name": "VideoGamer", "url": "https://www.videogamer.com/rss", "lang": "en"},  # broken XML
+    {"name": "Game Developer", "url": "https://www.gamedeveloper.com/rss.xml", "lang": "en"},
 
-    # České weby
+    # Oficiální zdroje (platformy)
+    {"name": "PlayStation Blog", "url": "https://blog.playstation.com/feed/", "lang": "en"},
+    {"name": "Xbox Wire", "url": "https://news.xbox.com/en-us/feed/", "lang": "en"},
+    {"name": "Steam News", "url": "https://store.steampowered.com/feeds/news.xml", "lang": "en"},
+
+    # České a slovenské weby
     {"name": "Hrej.cz", "url": "https://hrej.cz/rss/all", "lang": "cs"},
     {"name": "Zing.cz", "url": "https://zing.cz/rss/clanky", "lang": "cs"},
     {"name": "Jiří Bigas", "url": "https://jiribigas.substack.com/feed", "lang": "cs"},
     {"name": "Games.cz", "url": "https://games.tiscali.cz/rss.xml", "lang": "cs"},
+    {"name": "HernýWeb.sk", "url": "https://hernyweb.sk/feed/", "lang": "cs"},
+    {"name": "Vortex.cz", "url": "https://www.vortex.cz/feed/", "lang": "cs"},
+    {"name": "PLAYzone.cz", "url": "https://playzone.cz/rss.xml", "lang": "cs"},
 ]
 
 def validate_config():

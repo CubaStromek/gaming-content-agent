@@ -91,6 +91,76 @@
       "url": "https://spite.cz/rss/all",
       "lang": "cs",
       "enabled": true
+    },
+    {
+      "id": "hernyweb-sk",
+      "name": "HernýWeb.sk",
+      "url": "https://hernyweb.sk/feed/",
+      "lang": "cs",
+      "enabled": true
+    },
+    {
+      "id": "thegamer",
+      "name": "TheGamer",
+      "url": "https://www.thegamer.com/feed/",
+      "lang": "en",
+      "enabled": true
+    },
+    {
+      "id": "vg247",
+      "name": "VG247",
+      "url": "https://www.vg247.com/feed",
+      "lang": "en",
+      "enabled": true
+    },
+    {
+      "id": "videogamer",
+      "name": "VideoGamer",
+      "url": "https://www.videogamer.com/rss",
+      "lang": "en",
+      "enabled": false
+    },
+    {
+      "id": "game-developer",
+      "name": "Game Developer",
+      "url": "https://www.gamedeveloper.com/rss.xml",
+      "lang": "en",
+      "enabled": true
+    },
+    {
+      "id": "vortex-cz",
+      "name": "Vortex.cz",
+      "url": "https://www.vortex.cz/feed/",
+      "lang": "cs",
+      "enabled": true
+    },
+    {
+      "id": "playzone-cz",
+      "name": "PLAYzone.cz",
+      "url": "https://playzone.cz/rss.xml",
+      "lang": "cs",
+      "enabled": true
+    },
+    {
+      "id": "playstation-blog",
+      "name": "PlayStation Blog",
+      "url": "https://blog.playstation.com/feed/",
+      "lang": "en",
+      "enabled": true
+    },
+    {
+      "id": "xbox-wire",
+      "name": "Xbox Wire",
+      "url": "https://news.xbox.com/en-us/feed/",
+      "lang": "en",
+      "enabled": true
+    },
+    {
+      "id": "steam-news",
+      "name": "Steam News",
+      "url": "https://store.steampowered.com/feeds/news.xml",
+      "lang": "en",
+      "enabled": true
     }
   ]
 }
