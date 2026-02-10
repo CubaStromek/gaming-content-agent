@@ -93,6 +93,21 @@ def _strip_markdown_artifacts(html: str) -> str:
     return html.strip()
 
 
+def _insert_separators_before_h2(html: str) -> str:
+    """Vloží WP blokový oddělovač (<hr>) před každý <h2> kromě prvního."""
+    separator = '\n<hr class="wp-block-separator has-alpha-channel-opacity"/>\n'
+    parts = re.split(r'(?=<h2)', html)
+    if len(parts) <= 1:
+        return html
+    # parts[0] = text před prvním h2 (může být prázdný)
+    # parts[1] = první h2 + obsah (přeskočíme separator)
+    # parts[2+] = další h2 + obsah (přidáme separator)
+    result = parts[0] + parts[1]
+    for part in parts[2:]:
+        result += separator + part
+    return result
+
+
 def scrape_full_article(url: str) -> str:
     """
     Stahne plny text clanku z URL
@@ -151,29 +166,33 @@ def parse_topics_from_report(report_text: str) -> List[Dict]:
     topics = []
 
     # Rozdeleni na bloky podle 🎮 TÉMA (s volitelnym cislem, toleruje **bold**)
-    blocks = re.split(r'(?=🎮\s*\*{0,2}\s*TÉMA\s*\d*:\*{0,2})', report_text)
+    # Format muze byt: "TÉMA 1:", "**TÉMA 1**:", "**TÉMA 1:**" atd.
+    _tema_pat = r'🎮\s*\*{0,2}\s*TÉMA\s*\d*\s*\*{0,2}\s*:\s*\*{0,2}'
+    blocks = re.split(r'(?=' + _tema_pat + r')', report_text)
 
     for block in blocks:
         block = block.strip()
-        if not re.match(r'.*🎮\s*\*{0,2}\s*TÉMA\s*\d*:\*{0,2}', block):
+        if not re.match(r'.*' + _tema_pat, block):
             continue
 
         topic = {}
 
         # Parsuj jednotlive sekce
         # Patterny toleruji markdown bold (**) pred emoji i kolem labelu
-        # a obsah muze byt na stejnem radku nebo na nasledujicim
+        # Format muze byt: "**LABEL**:" nebo "**LABEL:**" nebo "LABEL:"
+        # Proto: LABEL\*{0,2}\s*:\s*\*{0,2} pokryva vsechny varianty
         _val = r'\s*\n?\s*(.+)'
+        _b = r'\*{0,2}'  # optional bold markers
         patterns = {
-            'topic': r'\*{0,2}🎮\s*\*{0,2}\s*TÉMA\s*\d*:\*{0,2}' + _val,
-            'title': r'\*{0,2}📰\s*\*{0,2}\s*NAVRŽENÝ TITULEK:\*{0,2}' + _val,
-            'angle': r'\*{0,2}🎯\s*\*{0,2}\s*ÚHEL POHLEDU:\*{0,2}' + _val,
-            'context': r'\*{0,2}📝\s*\*{0,2}\s*KONTEXT:\*{0,2}' + _val,
-            'hook': r'\*{0,2}💬\s*\*{0,2}\s*HLAVNÍ HOOK:\*{0,2}' + _val,
-            'visual': r'\*{0,2}🖼️\s*\*{0,2}\s*VIZUÁLNÍ NÁVRH:\*{0,2}' + _val,
-            'virality': r'\*{0,2}🔥\s*\*{0,2}\s*VIRALITA:\*{0,2}' + _val,
-            'why_now': r'\*{0,2}💡\s*\*{0,2}\s*PROČ TEĎKA:\*{0,2}' + _val,
-            'seo_keywords': r'\*{0,2}🏷️\s*\*{0,2}\s*SEO KLÍČOVÁ SLOVA:\*{0,2}' + _val,
+            'topic': _b + r'🎮\s*' + _b + r'\s*TÉMA\s*\d*\s*' + _b + r'\s*:\s*' + _b + _val,
+            'title': _b + r'📰\s*' + _b + r'\s*NAVRŽENÝ TITULEK' + _b + r'\s*:\s*' + _b + _val,
+            'angle': _b + r'🎯\s*' + _b + r'\s*ÚHEL POHLEDU' + _b + r'\s*:\s*' + _b + _val,
+            'context': _b + r'📝\s*' + _b + r'\s*KONTEXT' + _b + r'\s*:\s*' + _b + _val,
+            'hook': _b + r'💬\s*' + _b + r'\s*HLAVNÍ HOOK' + _b + r'\s*:\s*' + _b + _val,
+            'visual': _b + r'🖼️\s*' + _b + r'\s*VIZUÁLNÍ NÁVRH' + _b + r'\s*:\s*' + _b + _val,
+            'virality': _b + r'🔥\s*' + _b + r'\s*VIRALITA' + _b + r'\s*:\s*' + _b + _val,
+            'why_now': _b + r'💡\s*' + _b + r'\s*PROČ TEĎKA' + _b + r'\s*:\s*' + _b + _val,
+            'seo_keywords': _b + r'🏷️\s*' + _b + r'\s*SEO KLÍČOVÁ SLOVA' + _b + r'\s*:\s*' + _b + _val,
         }
 
         for key, pattern in patterns.items():
@@ -188,7 +207,7 @@ def parse_topics_from_report(report_text: str) -> List[Dict]:
         topic['virality_score'] = int(virality_match.group(1)) if virality_match else 0
 
         # Parsuj zdroje (URL na samostatnych radcich)
-        sources_section = re.search(r'\*{0,2}🔗\s*\*{0,2}\s*ZDROJE:\*{0,2}\s*\n?([\s\S]*?)(?=\*{0,2}🏷️|$)', block)
+        sources_section = re.search(r'\*{0,2}🔗\s*\*{0,2}\s*ZDROJE\*{0,2}\s*:\s*\*{0,2}\s*\n?([\s\S]*?)(?=\*{0,2}🏷️|$)', block)
         if sources_section:
             urls = re.findall(r'https?://[^\s<>"\')\]]+[^\s<>"\')\].,]', sources_section.group(1))
             topic['sources'] = urls
@@ -290,8 +309,10 @@ POSTUP:
 
         # Vyčisti markdown artefakty (Haiku 3.5 je občas přidává)
         cs_html = _strip_markdown_artifacts(cs_html)
+        cs_html = _insert_separators_before_h2(cs_html)
         if en_html:
             en_html = _strip_markdown_artifacts(en_html)
+            en_html = _insert_separators_before_h2(en_html)
 
         # Odstraň AI-generované zdroje a připoj reálné URL
         cs_html = _strip_generated_sources(cs_html)
