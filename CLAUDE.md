@@ -3,6 +3,7 @@
 ## PRAVIDLA
 
 - **NIKDY neprovádět `git commit`, `git push`, `eas build`, ani `eas submit` bez výslovného souhlasu uživatele.** Platí i pro amend, force-push, tag push a jakýkoliv deploy na Expo/EAS. Vždy počkat na explicitní pokyn.
+- **Verzování:** Při každé změně kódu (WP šablona, appka, skripty) vždy zvýšit číslo verze a zapsat changelog. U WP šablony: `Version` v `style.css` + záznam v `readme.txt` sekci Changelog. U appky: `version` v `app.config.ts`. Nikdy nevytvářet build/ZIP bez aktualizace verze.
 
 ---
 
@@ -26,7 +27,7 @@ RSS Feeds → rss_scraper.py → claude_analyzer.py → email_sender.py
 
 - **Repo:** https://github.com/CubaStromek/gamefo-wordpress-theme (private)
 - **Lokální složka:** `wp-theme-gameinfo/`
-- **Verze:** 1.13.8 | WP 5.0+, PHP 7.4+
+- **Verze:** 1.15.6 | WP 5.0+, PHP 7.4+
 - **Text Domain:** gamefo | Textdomain soubor: gameinfo-terminal
 - **Terminálový design:** dark/light mode, Inter + Fira Code fonty, Material Symbols ikony
 

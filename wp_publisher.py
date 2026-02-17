@@ -37,6 +37,52 @@ def is_configured():
     return config.is_wp_configured()
 
 
+def _to_gutenberg_blocks(html: str) -> str:
+    """Převede surové HTML na Gutenberg block markup, aby WP nevyžadoval 'Převést na bloky'."""
+    # Seznamy (před <p>, aby se nechytly <p> uvnitř <li>)
+    html = re.sub(
+        r'(<ul[^>]*>[\s\S]*?</ul>)',
+        r'<!-- wp:list -->\n\1\n<!-- /wp:list -->',
+        html
+    )
+    html = re.sub(
+        r'(<ol[^>]*>[\s\S]*?</ol>)',
+        r'<!-- wp:list {"ordered":true} -->\n\1\n<!-- /wp:list -->',
+        html
+    )
+    # Blockquotes
+    html = re.sub(
+        r'(<blockquote[^>]*>[\s\S]*?</blockquote>)',
+        r'<!-- wp:quote -->\n\1\n<!-- /wp:quote -->',
+        html
+    )
+    # Nadpisy
+    html = re.sub(
+        r'(<h2[^>]*>.*?</h2>)',
+        r'<!-- wp:heading -->\n\1\n<!-- /wp:heading -->',
+        html
+    )
+    html = re.sub(
+        r'(<h3[^>]*>.*?</h3>)',
+        r'<!-- wp:heading {"level":3} -->\n\1\n<!-- /wp:heading -->',
+        html
+    )
+    # Oddělovače
+    html = re.sub(
+        r'(<hr[^>]*/>)',
+        r'<!-- wp:separator -->\n\1\n<!-- /wp:separator -->',
+        html
+    )
+    # Odstavce (poslední — nejčastější element)
+    html = re.sub(
+        r'(<p[^>]*>.*?</p>)',
+        r'<!-- wp:paragraph -->\n\1\n<!-- /wp:paragraph -->',
+        html,
+        flags=re.DOTALL
+    )
+    return html
+
+
 def strip_first_heading(html):
     """Odstraní první h1/h2 z HTML obsahu (WP zobrazuje title zvlášť).
     Zvládne i markdown artefakty (```html, # heading) před/místo HTML tagu."""
@@ -326,6 +372,9 @@ def create_draft(title, content, category_ids=None, tag_names=None, lang=None, f
             tag_ids, tag_error = _resolve_tag_ids(tag_names)
             if tag_error:
                 return (None, tag_error)
+
+        # Převeď HTML na Gutenberg bloky (aby WP nevyžadoval "Převést na bloky")
+        content = _to_gutenberg_blocks(content)
 
         post_data = {
             'title': title,
