@@ -360,7 +360,7 @@ def _resolve_tag_ids(tag_names):
     return (tag_ids, None)
 
 
-def create_draft(title, content, category_ids=None, tag_names=None, lang=None, featured_image_id=None, status_tag=None, source_info=None):
+def create_draft(title, content, category_ids=None, tag_names=None, lang=None, featured_image_id=None, status_tag=None, source_info=None, status='draft'):
     """
     Vytvoří draft post na WP.
     Vrací ({id, edit_url, view_url}, None) nebo (None, error_string).
@@ -379,7 +379,7 @@ def create_draft(title, content, category_ids=None, tag_names=None, lang=None, f
         post_data = {
             'title': title,
             'content': content,
-            'status': 'draft',
+            'status': status,
         }
 
         if category_ids:

@@ -26,6 +26,7 @@ wheels/
 # DŮLEŽITÉ: Ochrana tajných údajů
 .env
 .env.local
+env
 *.key
 secrets/
 

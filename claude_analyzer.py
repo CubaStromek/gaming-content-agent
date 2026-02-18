@@ -63,7 +63,7 @@ def analyze_gaming_articles(articles_text: str) -> str:
 
     # Spočítej počet článků pro dynamický prompt
     article_count = articles_text.count("ČLÁNEK ")
-    max_topics = min(5, max(1, article_count))
+    max_topics = min(2, max(1, article_count))
 
     prompt = f"""Analyzuj tyto herní články z dnešního dne a vytvoř report pro českého herního blogera.
 
@@ -85,6 +85,7 @@ Pro každé téma napiš:
 - 💡 PROČ TEĎKA: [proč je to aktuální, proč to napsat teď]
 - 🔗 ZDROJE: [PŘESNÉ URL adresy relevantních článků - zkopíruj celé URL z Link: polí výše]
 - 🏷️ SEO KLÍČOVÁ SLOVA: [3-5 klíčových slov pro SEO]
+- 🕹️ NÁZEV HRY: [přesný anglický název hlavní hry v tématu, např. "The Elder Scrolls V: Skyrim" nebo "Grand Theft Auto VI". Pokud téma není o konkrétní hře, napiš "N/A"]
 
 DŮLEŽITÉ:
 - Zaměř se na témata zajímavá pro ČESKÉ publikum

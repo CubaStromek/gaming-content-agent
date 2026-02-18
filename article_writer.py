@@ -93,6 +93,17 @@ def _strip_markdown_artifacts(html: str) -> str:
     return html.strip()
 
 
+def _make_first_paragraph_quote(html: str) -> str:
+    """Zabalí první <p>...</p> do <blockquote> jako vizuálně odlišený úvod."""
+    return re.sub(
+        r'(<p[^>]*>.*?</p>)',
+        r'<blockquote class="wp-block-quote">\1</blockquote>',
+        html,
+        count=1,
+        flags=re.DOTALL,
+    )
+
+
 def _insert_separators_before_h2(html: str) -> str:
     """Vloží WP blokový oddělovač (<hr>) před každý <h2> kromě prvního."""
     separator = '\n<hr class="wp-block-separator has-alpha-channel-opacity"/>\n'
@@ -193,6 +204,7 @@ def parse_topics_from_report(report_text: str) -> List[Dict]:
             'virality': _b + r'🔥\s*' + _b + r'\s*VIRALITA' + _b + r'\s*:\s*' + _b + _val,
             'why_now': _b + r'💡\s*' + _b + r'\s*PROČ TEĎKA' + _b + r'\s*:\s*' + _b + _val,
             'seo_keywords': _b + r'🏷️\s*' + _b + r'\s*SEO KLÍČOVÁ SLOVA' + _b + r'\s*:\s*' + _b + _val,
+            'game_name': _b + r'🕹️\s*' + _b + r'\s*NÁZEV HRY' + _b + r'\s*:\s*' + _b + _val,
         }
 
         for key, pattern in patterns.items():
@@ -267,7 +279,10 @@ PRAVIDLA:
 - Zahrň konkrétní fakta a čísla ze zdrojů
 - NEZMIŇUJ zdroje v textu článku (ne "podle IGN...")
 - NEPŘIDÁVEJ h1 nadpis - ten bude jako titulek článku
-- FAKTICKÁ PŘESNOST: Zkontroluj, že titulek odpovídá obsahu článku. Pokud navržený titulek obsahuje nepravdivé tvrzení (např. označuje hru jako "českou", i když studio je zahraniční), OPRAV titulek tak, aby byl fakticky správný. Výstupní titulek uveď na prvním řádku jako: TITULEK: [opravený titulek]
+- FAKTICKÁ PŘESNOST: Zkontroluj, že titulek odpovídá obsahu článku. Pokud navržený titulek obsahuje nepravdivé tvrzení (např. označuje hru jako "českou", i když studio je zahraniční), OPRAV titulek tak, aby byl fakticky správný.
+- NA ZAČÁTEK výstupu VŽDY uveď oba titulky na samostatných řádcích:
+  TITULEK CZ: [český titulek]
+  TITULEK EN: [anglický titulek]
 - KRITICKÉ: V nadpisech (h2) NEPOUŽÍVEJ Title Case! Velké písmeno POUZE na začátku věty a u vlastních jmen. ŠPATNĚ: "Nová Éra Pro Herní Průmysl". SPRÁVNĚ: "Nová éra pro herní průmysl". ŠPATNĚ: "What This Means For Players". SPRÁVNĚ: "What this means for players".
 - NEPŘIDÁVEJ sekci "Zdroje" ani "Sources" — odkazy na zdroje se přidají automaticky
 
@@ -286,14 +301,26 @@ POSTUP:
 
         result_text = message.content[0].text
 
-        # Extrahuj opravený titulek (pokud writer opravil faktickou chybu)
+        # Extrahuj titulky CZ a EN
         corrected_title = None
-        title_match = re.search(r'^TITULEK:\s*(.+)$', result_text, re.MULTILINE)
-        if title_match:
-            corrected_title = title_match.group(1).strip()
-            # Odstraň řádek s titulkem z textu, aby se nedostal do HTML
-            result_text = result_text[:title_match.start()] + result_text[title_match.end():]
-            result_text = result_text.strip()
+        en_title = None
+
+        title_cs_match = re.search(r'^TITULEK\s*CZ:\s*(.+)$', result_text, re.MULTILINE)
+        title_en_match = re.search(r'^TITULEK\s*EN:\s*(.+)$', result_text, re.MULTILINE)
+        # Fallback na starý formát
+        title_old_match = re.search(r'^TITULEK:\s*(.+)$', result_text, re.MULTILINE)
+
+        if title_cs_match:
+            corrected_title = title_cs_match.group(1).strip()
+        elif title_old_match:
+            corrected_title = title_old_match.group(1).strip()
+
+        if title_en_match:
+            en_title = title_en_match.group(1).strip()
+
+        # Odstraň řádky s titulky z textu, aby se nedostaly do HTML
+        result_text = re.sub(r'^TITULEK\s*(?:CZ|EN)?:\s*.+$', '', result_text, flags=re.MULTILINE)
+        result_text = result_text.strip()
 
         # Parsuj CZ a EN casti
         cs_match = re.search(r'===\s*ČESKY\s*===\s*([\s\S]*?)(?====\s*ENGLISH\s*===|$)', result_text)
@@ -310,17 +337,17 @@ POSTUP:
         # Vyčisti markdown artefakty (Haiku 3.5 je občas přidává)
         cs_html = _strip_markdown_artifacts(cs_html)
         cs_html = _insert_separators_before_h2(cs_html)
+        cs_html = _make_first_paragraph_quote(cs_html)
         if en_html:
             en_html = _strip_markdown_artifacts(en_html)
             en_html = _insert_separators_before_h2(en_html)
+            en_html = _make_first_paragraph_quote(en_html)
 
-        # Odstraň AI-generované zdroje a připoj reálné URL
+        # Odstraň AI-generované zdroje (nepřidáváme žádné)
         cs_html = _strip_generated_sources(cs_html)
-        cs_html += _build_sources_html(source_urls, 'cs')
 
         if en_html:
             en_html = _strip_generated_sources(en_html)
-            en_html += _build_sources_html(source_urls, 'en')
 
         # Odhad ceny (Claude Sonnet 4 pricing: $3.00/MTok input, $15.00/MTok output)
         cost_input = (message.usage.input_tokens / 1_000_000) * 3.00
@@ -336,6 +363,8 @@ POSTUP:
         }
         if corrected_title:
             result['corrected_title'] = corrected_title
+        if en_title:
+            result['en_title'] = en_title
         return result
 
     except Exception as e:
