@@ -173,6 +173,9 @@ def run():
         seo_keywords = topic.get('seo_keywords', '')
         tag_names = [kw.strip() for kw in seo_keywords.split(',') if kw.strip()] if seo_keywords else None
 
+        # Informace o zdroji pro WP meta pole
+        source_info = '\n'.join(source_urls) if source_urls else None
+
         # Publikace CZ verze
         log.info("Publikuji CZ verzi...")
         cs_content = wp_publisher.strip_first_heading(article['cs'])
@@ -184,6 +187,7 @@ def run():
             lang='cs',
             featured_image_id=featured_image_id,
             status_tag='news',
+            source_info=source_info,
             status='publish',
         )
 
@@ -215,6 +219,7 @@ def run():
                 lang='en',
                 featured_image_id=featured_image_id,
                 status_tag='news',
+                source_info=source_info,
                 status='publish',
             )
 
