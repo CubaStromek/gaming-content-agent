@@ -33,8 +33,34 @@ WP_APP_PASSWORD = os.getenv("WP_APP_PASSWORD", "")
 # RAWG.io API (herní databáze - obrázky)
 RAWG_API_KEY = os.getenv("RAWG_API_KEY", "")
 
+# X.com (Twitter) API
+TWITTER_API_KEY = os.getenv("TWITTER_API_KEY", "")
+TWITTER_API_SECRET = os.getenv("TWITTER_API_SECRET", "")
+TWITTER_ACCESS_TOKEN = os.getenv("TWITTER_ACCESS_TOKEN", "")
+TWITTER_ACCESS_TOKEN_SECRET = os.getenv("TWITTER_ACCESS_TOKEN_SECRET", "")
+
+# Facebook Page API (CZ + EN stránky)
+FACEBOOK_PAGE_ID_CS = os.getenv("FACEBOOK_PAGE_ID_CS", "")
+FACEBOOK_PAGE_TOKEN_CS = os.getenv("FACEBOOK_PAGE_TOKEN_CS", "")
+FACEBOOK_PAGE_ID_EN = os.getenv("FACEBOOK_PAGE_ID_EN", "")
+FACEBOOK_PAGE_TOKEN_EN = os.getenv("FACEBOOK_PAGE_TOKEN_EN", "")
+
+# Social media dry-run (loguje, ale nepostuje)
+SOCIAL_DRY_RUN = os.getenv("SOCIAL_DRY_RUN", "").lower() in ("1", "true", "yes")
+
 def is_wp_configured():
     return bool(WP_URL and WP_USER and WP_APP_PASSWORD)
+
+def is_twitter_configured():
+    return bool(TWITTER_API_KEY and TWITTER_API_SECRET and TWITTER_ACCESS_TOKEN and TWITTER_ACCESS_TOKEN_SECRET)
+
+def is_facebook_configured(lang='cs'):
+    if lang == 'en':
+        return bool(FACEBOOK_PAGE_ID_EN and FACEBOOK_PAGE_TOKEN_EN)
+    return bool(FACEBOOK_PAGE_ID_CS and FACEBOOK_PAGE_TOKEN_CS)
+
+# SQLite databáze
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'gamefo.db')
 
 # Nastavení agenta
 MAX_ARTICLES_PER_SOURCE = int(os.getenv("MAX_ARTICLES_PER_SOURCE", "10"))
@@ -49,8 +75,16 @@ ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "claude-sonnet-4-20250514")
 # Maximální délka summary při scrapování RSS (znaky)
 SUMMARY_MAX_LENGTH = int(os.getenv("SUMMARY_MAX_LENGTH", "500"))
 
-# Dashboard autentizace (volitelný bearer token)
+# Async RSS scraping
+FEED_TIMEOUT = int(os.getenv("FEED_TIMEOUT", "15"))
+MAX_CONCURRENT_FEEDS = int(os.getenv("MAX_CONCURRENT_FEEDS", "8"))
+MAX_CONCURRENT_PER_DOMAIN = int(os.getenv("MAX_CONCURRENT_PER_DOMAIN", "2"))
+
+# Dashboard autentizace (volitelný bearer token, POVINNÝ v produkci)
 DASHBOARD_TOKEN = os.getenv("DASHBOARD_TOKEN", "")
+
+# Produkční režim — vyžaduje DASHBOARD_TOKEN a zpřísňuje bezpečnost
+PRODUCTION_MODE = os.getenv("PRODUCTION_MODE", "").lower() in ("1", "true", "yes")
 
 # RSS Feedy herních webů
 RSS_FEEDS = [
@@ -95,5 +129,10 @@ def validate_config():
         for err in errors:
             log.warning("   - %s", err)
         return False
+
+    # Produkční varování
+    if PRODUCTION_MODE and not DASHBOARD_TOKEN:
+        log.warning("⚠️  PRODUCTION_MODE je aktivní, ale DASHBOARD_TOKEN není nastaven!")
+        log.warning("   Dashboard nebude přístupný bez DASHBOARD_TOKEN v produkci.")
 
     return True

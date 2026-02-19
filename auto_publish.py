@@ -22,6 +22,7 @@ import file_manager
 import wp_publisher
 import publish_log
 import youtube_embed
+import social_poster
 from logger import setup_logger
 from fb_generator.generate_fb_post import generate_fb_post
 
@@ -49,6 +50,25 @@ def search_rawg_image(game_name):
         log.warning("RAWG search error for '%s': %s", game_name, e)
 
     return None
+
+
+def _extract_excerpt(html_content, max_len=200):
+    """Vyextrahuje první odstavec z HTML a ořízne na max délku."""
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html_content, 'html.parser')
+    # Najdi první <p> s textem
+    for p in soup.find_all('p'):
+        text = p.get_text(strip=True)
+        if len(text) > 30:  # přeskoč krátké úvodní řádky
+            if len(text) > max_len:
+                # Ořízni na celé slovo
+                truncated = text[:max_len]
+                last_space = truncated.rfind(' ')
+                if last_space > max_len // 2:
+                    truncated = truncated[:last_space]
+                return truncated + '…'
+            return text
+    return ''
 
 
 def run():
@@ -85,17 +105,24 @@ def run():
     # 4. Ulozeni clanku
     rss_scraper.save_articles_to_json(articles, run_dir)
 
-    # 5. Claude analyza -> TOP 2 temata
+    # 5. Claude analyza -> TOP 2 temata (strukturovaný výstup s fallbackem)
     articles_text = rss_scraper.format_articles_for_analysis(articles)
-    analysis = claude_analyzer.analyze_gaming_articles(articles_text)
-    if not analysis:
-        log.error("Claude analyza selhala")
-        return
+
+    structured = claude_analyzer.analyze_articles_structured(articles_text)
+    if structured:
+        analysis = structured["text"]
+        topics = structured["topics"]
+        log.info("Strukturovaná analýza: %d témat", len(topics))
+    else:
+        log.info("Fallback na textovou analýzu + regex parsování")
+        analysis = claude_analyzer.analyze_gaming_articles(articles_text)
+        if not analysis:
+            log.error("Claude analyza selhala")
+            return
+        topics = article_writer.parse_topics_from_report(analysis)
 
     file_manager.save_report(analysis, claude_analyzer.extract_key_insights(articles), run_dir, articles)
 
-    # 6. Parsovani temat
-    topics = article_writer.parse_topics_from_report(analysis)
     if not topics:
         log.error("Zadna temata k publikaci")
         return
@@ -324,6 +351,46 @@ def run():
             except Exception as e:
                 log.warning("FB post generovani selhalo: %s", e)
 
+        # Social media posting
+        social_results = {}
+        try:
+            excerpt = _extract_excerpt(article.get('cs', ''), max_len=200)
+            hashtags = [f"#{tag.strip().replace(' ', '')}" for tag in topic.get('seo_keywords', '').split(',') if tag.strip()]
+            hashtags.append("#GAMEfo")
+
+            # CZ FB obrázek
+            safe_name = "".join(c if c.isalnum() or c in '-_ ' else '' for c in game_name).strip().replace(' ', '_')
+            date_str = datetime.now().strftime('%Y-%m-%d')
+            social_image_cs = None
+            social_image_en = None
+            if image_url:
+                candidate_cs = os.path.join(os.path.dirname(__file__), 'output', 'fb-posts', f'{date_str}_{safe_name}_CZ.png')
+                if os.path.exists(candidate_cs):
+                    social_image_cs = candidate_cs
+                candidate_en = os.path.join(os.path.dirname(__file__), 'output', 'fb-posts', f'{date_str}_{safe_name}_EN.png')
+                if os.path.exists(candidate_en):
+                    social_image_en = candidate_en
+
+            # EN data pro Facebook EN stránku
+            en_title_social = article.get('en_title') or topic.get('topic') if en_result else None
+            en_excerpt = _extract_excerpt(article.get('en', ''), max_len=200) if en_result else None
+            en_url_social = en_result['view_url'] if en_result else None
+
+            social_results = social_poster.post_to_all(
+                title=title,
+                excerpt=excerpt,
+                image_path=social_image_cs,
+                url=cs_result['view_url'],
+                hashtags=hashtags[:5],
+                en_title=en_title_social,
+                en_excerpt=en_excerpt,
+                en_image_path=social_image_en,
+                en_url=en_url_social,
+            )
+            log.info("Social posting: %s", social_results)
+        except Exception as e:
+            log.warning("Social posting selhalo: %s", e)
+
         # Log
         publish_log.log_decision({
             'action': 'published',
@@ -336,6 +403,7 @@ def run():
             'en_url': en_result['view_url'] if en_result else None,
             'sources': source_urls,
             'cost': article.get('cost', '?'),
+            'social': social_results,
         })
 
         published_count += 1
