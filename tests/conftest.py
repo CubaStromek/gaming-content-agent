@@ -7,6 +7,7 @@ import sys
 import json
 import pytest
 import tempfile
+from unittest.mock import patch
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -129,9 +130,13 @@ https://pcgamer.com/palworld
 
 
 @pytest.fixture
-def app_client():
-    """Flask test client."""
-    from web_app import app
-    app.config['TESTING'] = True
-    with app.test_client() as client:
-        yield client
+def app_client(tmp_path):
+    """Flask test client with temp DB."""
+    import database
+    db_path = str(tmp_path / 'test_web.db')
+    database.init_db(db_path)
+    with patch.object(database, 'DB_PATH', db_path):
+        from web_app import app
+        app.config['TESTING'] = True
+        with app.test_client() as client:
+            yield client

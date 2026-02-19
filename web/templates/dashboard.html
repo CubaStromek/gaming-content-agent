@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gaming Content Agent</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+</head>
+<body>
+    <div class="container">
+        <div class="main-grid">
+          <div class="main-column">
+            <div class="topics-panel" id="topicsPanel">
+                <div class="panel-header">TOP TEMATA - WRITE_ARTICLE</div>
+                <div class="topics-grid" id="topicsGrid"></div>
+            </div>
+
+            <div class="console">
+                <div class="console-header">
+                    <div class="window-controls">
+                        <div class="dot red"></div>
+                        <div class="dot yellow"></div>
+                        <div class="dot green"></div>
+                    </div>
+                    <div class="console-title">
+                        <span>gaming_content_agent</span>
+                        <span class="path">C:/AI/gaming-content-agent</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:1rem;">
+                        <div class="status">
+                            <div class="status-dot" id="statusDot"></div>
+                            <span id="statusText">READY</span>
+                        </div>
+                        <div class="actions">
+                            <button class="btn btn-secondary" onclick="clearOutput()">CLEAR</button>
+                            <button class="btn btn-primary" id="runBtn" onclick="runAgent()">RUN_AGENT</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="console-body" id="output"><span class="dim">================================================================================
+                      GAMING CONTENT AGENT - Web Frontend
+================================================================================</span>
+
+<span class="info">Pripraveno ke spusteni. Klikni na RUN_AGENT nebo vyber zaznam z historie.</span>
+</div>
+
+                <div class="console-footer">
+                    <div class="prompt">
+                        <span>$</span>
+                        <span class="cursor">_</span>
+                    </div>
+                </div>
+            </div>
+          </div>
+
+            <div class="sidebar">
+                <div class="panel">
+                    <div class="panel-header">Statistiky</div>
+                    <div class="panel-body">
+                        <div class="stats-grid">
+                            <div class="stat-item">
+                                <div class="value" id="statArticles">0</div>
+                                <div class="label">Clanky</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="value" id="statSources">0</div>
+                                <div class="label">Zdroje</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="value" id="statTime">0s</div>
+                                <div class="label">Cas</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="value" id="statRuns">-</div>
+                                <div class="label">Behu</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <div class="panel-header">RSS Feedy</div>
+                    <div class="panel-body" style="text-align:center;">
+                        <div style="font-family:'JetBrains Mono',monospace;font-size:0.7rem;color:#9ca3af;margin-bottom:0.5rem;" id="feedsSummary">-</div>
+                        <button class="btn btn-secondary" style="width:100%;font-size:0.7rem;" onclick="openFeedsModal()">MANAGE_FEEDS</button>
+                    </div>
+                </div>
+
+                <div class="panel" style="flex: 1; display: flex; flex-direction: column;">
+                    <div class="panel-header">Historie behu</div>
+                    <div class="history-list" id="historyList">
+                        <div class="no-history">Nacitam...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal" id="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-title" id="modalTitle">Report</div>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="modalBody"></div>
+        </div>
+    </div>
+
+    <div class="article-modal" id="articleModal">
+        <div class="article-modal-content">
+            <div class="article-modal-header">
+                <div class="article-modal-title" id="articleModalTitle">Generovany clanek</div>
+                <button class="article-modal-close" onclick="closeArticleModal()">&times;</button>
+            </div>
+            <div class="tab-switcher">
+                <button class="tab-btn active" onclick="switchTab('cs')" id="tabCs">CESKY</button>
+                <button class="tab-btn" onclick="switchTab('en')" id="tabEn">ENGLISH</button>
+                <button class="tab-btn" onclick="switchTab('podcast')" id="tabPodcast">PODCAST</button>
+            </div>
+            <div class="article-body" id="articleBody"></div>
+            <div class="article-actions">
+                <div class="article-meta" id="articleMeta"></div>
+                <div>
+                    <button class="btn-podcast" onclick="generatePodcast()" id="btnPodcast">PODCAST_SCRIPT</button>
+                    <button class="btn-wp" onclick="toggleWpPanel()" id="btnWp" style="display:none;">PUBLISH_TO_WP</button>
+                    <button class="btn-copy" onclick="copyContent()">COPY</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="wp-publish-modal" id="wpPublishPanel">
+        <div class="wp-publish-modal-content">
+            <div class="wp-panel-header">
+                <div class="wp-panel-title">Publish to WordPress</div>
+                <button class="wp-panel-close" onclick="toggleWpPanel()">CLOSE</button>
+            </div>
+            <div class="wp-publish-body">
+                <div class="wp-field">
+                    <div class="wp-field-label">Title</div>
+                    <input type="text" id="wpTitle" placeholder="Article title...">
+                </div>
+                <div class="wp-publish-columns">
+                    <div class="wp-publish-col">
+                        <div class="wp-field">
+                            <div class="wp-field-label">Cat CS</div>
+                            <div class="wp-categories-list" id="wpCategoriesCs">Loading...</div>
+                        </div>
+                        <div class="wp-field">
+                            <div class="wp-field-label">Cat EN</div>
+                            <div class="wp-categories-list" id="wpCategoriesEn">Loading...</div>
+                        </div>
+                        <div class="wp-field">
+                            <div class="wp-field-label">Tag CS</div>
+                            <select id="wpStatusTagCs" style="flex:1; background:var(--input-bg); color:var(--text-primary); border:1px solid rgba(255,255,255,0.1); border-radius:0.25rem; padding:0.3rem 0.5rem; font-family:'JetBrains Mono',monospace; font-size:0.75rem;">
+                                <option value="">-- none --</option>
+                            </select>
+                        </div>
+                        <div class="wp-field">
+                            <div class="wp-field-label">Tag EN</div>
+                            <select id="wpStatusTagEn" style="flex:1; background:var(--input-bg); color:var(--text-primary); border:1px solid rgba(255,255,255,0.1); border-radius:0.25rem; padding:0.3rem 0.5rem; font-family:'JetBrains Mono',monospace; font-size:0.75rem;">
+                                <option value="">-- none --</option>
+                            </select>
+                        </div>
+                        <div class="wp-field">
+                            <div class="wp-field-label">Score</div>
+                            <select id="wpScore" style="flex:1; max-width:80px; background:var(--input-bg); color:var(--text-primary); border:1px solid rgba(255,255,255,0.1); border-radius:0.25rem; padding:0.3rem 0.5rem; font-family:'JetBrains Mono',monospace; font-size:0.75rem;">
+                                <option value="3">3</option>
+                                <option value="1">1</option>
+                                <option value="2">2</option>
+                                <option value="4">4</option>
+                                <option value="5">5</option>
+                            </select>
+                            <span style="font-family:'JetBrains Mono',monospace;font-size:0.6rem;color:#6b7280;">1=low 5=top</span>
+                        </div>
+                        <div class="wp-field">
+                            <div class="wp-field-label">Tags</div>
+                            <input type="text" id="wpTags" placeholder="tag1, tag2, tag3">
+                        </div>
+                        <div class="wp-field">
+                            <div class="wp-field-label">Language</div>
+                            <span class="wp-lang-badge" id="wpLang">CS</span>
+                        </div>
+                        <div class="wp-field">
+                            <div class="wp-field-label">Source</div>
+                            <textarea id="wpSourceInfo" rows="2" placeholder="One source per line&#10;https://... (source URL)" style="resize:vertical;"></textarea>
+                        </div>
+                    </div>
+                    <div class="wp-publish-col">
+                        <div class="wp-image-section">
+                            <div class="wp-field">
+                                <div class="wp-field-label">Image</div>
+                                <div class="wp-image-controls">
+                                    <input type="text" id="wpRawgQuery" placeholder="Search game images...">
+                                    <button class="wp-btn-search" onclick="wpSearchRawg()">SEARCH</button>
+                                    <label class="wp-btn-upload-file">
+                                        UPLOAD FILE
+                                        <input type="file" id="wpImageFile" accept="image/*" onchange="wpShowLocalFile()" style="display:none;">
+                                    </label>
+                                </div>
+                            </div>
+                            <div id="wpRawgResults" class="wp-rawg-results"></div>
+                            <div id="wpSelectedImage" class="wp-selected-image"></div>
+                            <div class="wp-field">
+                                <div class="wp-field-label">Caption</div>
+                                <input type="text" id="wpImageCaption" placeholder="Image caption (optional)">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="wp-actions">
+                    <button class="wp-btn-publish-both" onclick="wpPublishBoth()" id="wpBtnPublishBoth">PUBLISH CS+EN</button>
+                </div>
+                <div class="wp-result" id="wpResult"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="feeds-modal" id="feedsModal">
+        <div class="feeds-modal-content">
+            <div class="feeds-modal-header">
+                <div class="feeds-modal-title">RSS Feed Management</div>
+                <button class="feeds-modal-close" onclick="closeFeedsModal()">&times;</button>
+            </div>
+            <div class="feeds-add-form">
+                <input type="text" name="feed-name" placeholder="Name" id="feedAddName">
+                <input type="text" name="feed-url" placeholder="https://..." id="feedAddUrl">
+                <select id="feedAddLang">
+                    <option value="en">EN</option>
+                    <option value="cs">CS</option>
+                </select>
+                <button class="btn btn-primary" style="font-size:0.7rem;padding:0.4rem 0.8rem;" onclick="addFeed()">ADD</button>
+            </div>
+            <div class="feeds-list" id="feedsList"></div>
+            <div class="feeds-status">
+                <span id="feedsCount">-</span>
+                <span id="feedsMsg"></span>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>

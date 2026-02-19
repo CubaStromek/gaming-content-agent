@@ -1,50 +1,50 @@
-"""Tests for article_history module."""
+"""Tests for article_history module (SQLite backend)."""
 
-import json
 import os
 import pytest
 from unittest.mock import patch
 from datetime import datetime, timedelta
 
+import database
 import article_history
 
 
+@pytest.fixture(autouse=True)
+def use_tmp_db(tmp_path):
+    """Použije dočasnou SQLite databázi pro každý test."""
+    db_path = str(tmp_path / 'test.db')
+    database.init_db(db_path)
+    with patch.object(database, 'DB_PATH', db_path):
+        yield
+
+
 class TestLoadHistory:
-    def test_returns_empty_when_file_missing(self, tmp_path):
-        with patch.object(article_history, 'HISTORY_FILE', str(tmp_path / 'nonexistent.json')):
-            result = article_history.load_history()
-            assert result == {"last_updated": None, "articles": {}}
+    def test_returns_empty_when_db_empty(self):
+        result = article_history.load_history()
+        assert result == {"last_updated": None, "articles": {}}
 
-    def test_loads_existing_file(self, tmp_path):
-        history_file = tmp_path / 'history.json'
-        data = {"last_updated": "2025-01-15T10:00:00", "articles": {"https://test.com": "2025-01-15"}}
-        history_file.write_text(json.dumps(data), encoding='utf-8')
+    def test_loads_existing_data(self):
+        conn = database.get_db()
+        conn.execute("INSERT INTO processed_articles (url, date_added) VALUES (?, ?)",
+                     ("https://test.com", "2025-01-15"))
+        conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('history_last_updated', '2025-01-15T10:00:00')")
+        conn.commit()
+        conn.close()
 
-        with patch.object(article_history, 'HISTORY_FILE', str(history_file)):
-            result = article_history.load_history()
-            assert result["articles"]["https://test.com"] == "2025-01-15"
-
-    def test_returns_empty_on_corrupt_json(self, tmp_path):
-        history_file = tmp_path / 'history.json'
-        history_file.write_text("not valid json{{{", encoding='utf-8')
-
-        with patch.object(article_history, 'HISTORY_FILE', str(history_file)):
-            result = article_history.load_history()
-            assert result == {"last_updated": None, "articles": {}}
+        result = article_history.load_history()
+        assert result["articles"]["https://test.com"] == "2025-01-15"
+        assert result["last_updated"] == "2025-01-15T10:00:00"
 
 
 class TestSaveHistory:
-    def test_saves_and_updates_timestamp(self, tmp_path):
-        history_file = tmp_path / 'history.json'
-        with patch.object(article_history, 'HISTORY_FILE', str(history_file)):
-            history = {"last_updated": None, "articles": {"https://test.com": "2025-01-15"}}
-            result = article_history.save_history(history)
-            assert result is True
-            assert history_file.exists()
+    def test_saves_and_updates_timestamp(self):
+        history = {"last_updated": None, "articles": {"https://test.com": "2025-01-15"}}
+        result = article_history.save_history(history)
+        assert result is True
+        assert history["last_updated"] is not None
 
-            saved = json.loads(history_file.read_text(encoding='utf-8'))
-            assert saved["last_updated"] is not None
-            assert "https://test.com" in saved["articles"]
+        loaded = article_history.load_history()
+        assert "https://test.com" in loaded["articles"]
 
 
 class TestGetProcessedUrls:
@@ -57,11 +57,20 @@ class TestGetProcessedUrls:
         urls = article_history.get_processed_urls(empty_history)
         assert urls == set()
 
+    def test_returns_urls_from_db(self):
+        conn = database.get_db()
+        conn.execute("INSERT INTO processed_articles (url, date_added) VALUES (?, ?)",
+                     ("https://test.com", "2025-01-15"))
+        conn.commit()
+        conn.close()
+
+        urls = article_history.get_processed_urls()
+        assert "https://test.com" in urls
+
 
 class TestFilterNewArticles:
     def test_filters_processed(self, sample_articles, populated_history):
         new = article_history.filter_new_articles(sample_articles, populated_history)
-        # https://ign.com/gta6 is already processed
         assert len(new) == 2
         assert all(a['link'] != 'https://ign.com/gta6' for a in new)
 

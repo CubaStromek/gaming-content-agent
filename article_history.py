@@ -1,75 +1,45 @@
 """
-Správa historie zpracovaných článků
-Zajišťuje, že se stejné články neanalyzují opakovaně
+Správa historie zpracovaných článků — SQLite backend.
+Zajišťuje, že se stejné články neanalyzují opakovaně.
 """
 
-import json
-import os
-import sys
 from datetime import datetime, timedelta
 from typing import List, Dict, Set
+from database import get_db
 from logger import setup_logger
 
 log = setup_logger(__name__)
 
-HISTORY_FILE = "processed_articles.json"
 DEFAULT_EXPIRY_DAYS = 30
-
-# File locking — fcntl na Linuxu, msvcrt na Windows
-if sys.platform == 'win32':
-    import msvcrt
-
-    def _lock_file(f):
-        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
-
-    def _unlock_file(f):
-        try:
-            f.seek(0)
-            msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
-        except Exception:
-            pass
-else:
-    import fcntl
-
-    def _lock_file(f):
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-
-    def _unlock_file(f):
-        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
 def load_history() -> Dict:
     """
-    Načte historii zpracovaných článků
+    Načte historii zpracovaných článků z SQLite.
 
     Returns:
-        Slovník s historií nebo prázdná struktura
+        Slovník s historií (kompatibilní s původním formátem)
     """
-    if not os.path.exists(HISTORY_FILE):
-        return {
-            "last_updated": None,
-            "articles": {}
-        }
-
+    conn = get_db()
     try:
-        with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
-            _lock_file(f)
-            try:
-                data = json.load(f)
-            finally:
-                _unlock_file(f)
-            return data
-    except (json.JSONDecodeError, Exception) as e:
-        log.warning("⚠️  Chyba při načítání historie: %s", e)
+        rows = conn.execute("SELECT url, date_added FROM processed_articles").fetchall()
+        articles = {row["url"]: row["date_added"] for row in rows}
+
+        last_updated = conn.execute(
+            "SELECT value FROM meta WHERE key = 'history_last_updated'"
+        ).fetchone()
+
         return {
-            "last_updated": None,
-            "articles": {}
+            "last_updated": last_updated["value"] if last_updated else None,
+            "articles": articles,
         }
+    finally:
+        conn.close()
 
 
 def save_history(history: Dict) -> bool:
     """
-    Uloží historii zpracovaných článků
+    Uloží historii zpracovaných článků do SQLite.
 
     Args:
         history: Slovník s historií
@@ -78,37 +48,56 @@ def save_history(history: Dict) -> bool:
         True pokud úspěšně uloženo
     """
     try:
-        history["last_updated"] = datetime.now().isoformat()
+        now = datetime.now().isoformat()
+        history["last_updated"] = now
 
-        with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
-            _lock_file(f)
-            try:
-                json.dump(history, f, ensure_ascii=False, indent=2)
-            finally:
-                _unlock_file(f)
+        conn = get_db()
+        try:
+            conn.execute("DELETE FROM processed_articles")
+            for url, date_added in history.get("articles", {}).items():
+                conn.execute(
+                    "INSERT OR REPLACE INTO processed_articles (url, date_added) VALUES (?, ?)",
+                    (url, date_added),
+                )
+            conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('history_last_updated', ?)",
+                (now,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
         return True
     except Exception as e:
-        log.error("❌ Chyba při ukládání historie: %s", e)
+        log.error("Chyba při ukládání historie: %s", e)
         return False
 
 
-def get_processed_urls(history: Dict) -> Set[str]:
+def get_processed_urls(history: Dict = None) -> Set[str]:
     """
-    Vrátí množinu již zpracovaných URL
+    Vrátí množinu již zpracovaných URL.
 
     Args:
-        history: Slovník s historií
+        history: Volitelný slovník s historií (pro zpětnou kompatibilitu).
+                 Pokud None, načte přímo z DB.
 
     Returns:
         Set URL adres
     """
-    return set(history.get("articles", {}).keys())
+    if history is not None:
+        return set(history.get("articles", {}).keys())
+
+    conn = get_db()
+    try:
+        rows = conn.execute("SELECT url FROM processed_articles").fetchall()
+        return {row["url"] for row in rows}
+    finally:
+        conn.close()
 
 
 def filter_new_articles(articles: List[Dict], history: Dict) -> List[Dict]:
     """
-    Odfiltruje již zpracované články
+    Odfiltruje již zpracované články.
 
     Args:
         articles: Seznam všech stažených článků
@@ -130,14 +119,14 @@ def filter_new_articles(articles: List[Dict], history: Dict) -> List[Dict]:
             skipped_count += 1
 
     if skipped_count > 0:
-        log.info("⏭️  Přeskočeno %d již zpracovaných článků", skipped_count)
+        log.info("Přeskočeno %d již zpracovaných článků", skipped_count)
 
     return new_articles
 
 
 def mark_as_processed(articles: List[Dict], history: Dict) -> Dict:
     """
-    Označí články jako zpracované
+    Označí články jako zpracované.
 
     Args:
         articles: Seznam zpracovaných článků
@@ -158,7 +147,7 @@ def mark_as_processed(articles: List[Dict], history: Dict) -> Dict:
 
 def cleanup_old_entries(history: Dict, expiry_days: int = DEFAULT_EXPIRY_DAYS) -> Dict:
     """
-    Odstraní záznamy starší než expiry_days
+    Odstraní záznamy starší než expiry_days.
 
     Args:
         history: Historie
@@ -182,35 +171,27 @@ def cleanup_old_entries(history: Dict, expiry_days: int = DEFAULT_EXPIRY_DAYS) -
 
     removed_count = original_count - len(history["articles"])
     if removed_count > 0:
-        log.info("🧹 Vyčištěno %d starých záznamů z historie", removed_count)
+        log.info("Vyčištěno %d starých záznamů z historie", removed_count)
 
     return history
 
 
-def get_stats(history: Dict) -> Dict:
+def get_stats(history: Dict = None) -> Dict:
     """
-    Vrátí statistiky historie
+    Vrátí statistiky historie.
 
     Args:
-        history: Historie
+        history: Volitelná historie (pokud None, načte z DB)
 
     Returns:
         Slovník se statistikami
     """
+    if history is None:
+        history = load_history()
+
     articles = history.get("articles", {})
 
     return {
         "total_processed": len(articles),
         "last_updated": history.get("last_updated"),
     }
-
-
-if __name__ == "__main__":
-    # Test modulu
-    log.info("🧪 Test article_history modulu")
-
-    history = load_history()
-    stats = get_stats(history)
-
-    log.info("📊 Celkem zpracováno: %d článků", stats['total_processed'])
-    log.info("🕐 Poslední aktualizace: %s", stats['last_updated'] or 'nikdy')

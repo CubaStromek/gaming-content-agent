@@ -1,76 +1,66 @@
 """
-Publish Decision Log — zaznamenává publish/skip rozhodnutí do JSONL.
+Publish Decision Log — zaznamenává publish/skip rozhodnutí do SQLite.
 """
 
 import json
-import os
 from datetime import datetime
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOG_FILE = os.path.join(BASE_DIR, 'publish_log.jsonl')
+from urllib.parse import urlparse
+from database import get_db
 
 
 def log_decision(data: dict):
-    """Append one JSON line to publish_log.jsonl."""
-    entry = {
-        'timestamp': datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
-    }
-    entry.update(data)
+    """Uloží jedno publish/skip rozhodnutí do SQLite."""
+    timestamp = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+    action = data.get('action', '')
+    topic = data.get('topic', '')
+    title = data.get('title', data.get('published_title', ''))
+    score = data.get('score')
 
-    with open(LOG_FILE, 'a', encoding='utf-8') as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO publish_log (timestamp, action, topic, title, score, data_json) VALUES (?, ?, ?, ?, ?, ?)",
+            (timestamp, action, topic, title, score, json.dumps(data, ensure_ascii=False)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_stats() -> dict:
-    """Return basic stats from publish_log.jsonl."""
-    if not os.path.exists(LOG_FILE):
-        return {'total': 0, 'published': 0, 'skipped': 0, 'avg_score': 0, 'top_sources': []}
+    """Vrátí statistiky z publish_log tabulky."""
+    conn = get_db()
+    try:
+        published = conn.execute("SELECT COUNT(*) FROM publish_log WHERE action = 'published'").fetchone()[0]
+        skipped = conn.execute("SELECT COUNT(*) FROM publish_log WHERE action = 'skipped'").fetchone()[0]
 
-    published = 0
-    skipped = 0
-    scores = []
-    source_counts = {}
+        row = conn.execute("SELECT AVG(score) FROM publish_log WHERE score > 0").fetchone()
+        avg_score = round(row[0], 1) if row[0] else 0
 
-    with open(LOG_FILE, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
+        # Top sources z data_json
+        source_counts = {}
+        rows = conn.execute("SELECT data_json FROM publish_log WHERE data_json IS NOT NULL").fetchall()
+        for row in rows:
             try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
+                entry = json.loads(row[0])
+            except (json.JSONDecodeError, TypeError):
                 continue
-
-            action = entry.get('action', '')
-            if action == 'published':
-                published += 1
-            elif action == 'skipped':
-                skipped += 1
-
-            score = entry.get('score')
-            if score is not None and score > 0:
-                scores.append(score)
-
             for src in entry.get('sources', []):
-                # Extract domain from URL
                 try:
-                    from urllib.parse import urlparse
                     domain = urlparse(src).netloc
                     if domain:
                         source_counts[domain] = source_counts.get(domain, 0) + 1
                 except Exception:
                     pass
 
-    total = published + skipped
-    avg_score = round(sum(scores) / len(scores), 1) if scores else 0
+        top_sources = sorted(source_counts.items(), key=lambda x: x[1], reverse=True)[:10]
 
-    # Top 10 sources by frequency
-    top_sources = sorted(source_counts.items(), key=lambda x: x[1], reverse=True)[:10]
-
-    return {
-        'total': total,
-        'published': published,
-        'skipped': skipped,
-        'avg_score': avg_score,
-        'top_sources': [{'domain': d, 'count': c} for d, c in top_sources],
-    }
+        return {
+            'total': published + skipped,
+            'published': published,
+            'skipped': skipped,
+            'avg_score': avg_score,
+            'top_sources': [{'domain': d, 'count': c} for d, c in top_sources],
+        }
+    finally:
+        conn.close()

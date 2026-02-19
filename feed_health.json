@@ -1,0 +1,156 @@
+{
+  "IGN": {
+    "consecutive_failures": 0,
+    "total_success": 2,
+    "total_failure": 0,
+    "last_success": "2026-02-19T10:49:44.876524",
+    "last_failure": null
+  },
+  "GameSpot": {
+    "consecutive_failures": 0,
+    "total_success": 2,
+    "total_failure": 0,
+    "last_success": "2026-02-19T10:49:45.182485",
+    "last_failure": null
+  },
+  "PC Gamer": {
+    "consecutive_failures": 0,
+    "total_success": 2,
+    "total_failure": 0,
+    "last_success": "2026-02-19T10:49:45.683930",
+    "last_failure": null
+  },
+  "Rock Paper Shotgun": {
+    "consecutive_failures": 0,
+    "total_success": 2,
+    "total_failure": 0,
+    "last_success": "2026-02-19T10:49:46.136694",
+    "last_failure": null
+  },
+  "Kotaku": {
+    "consecutive_failures": 0,
+    "total_success": 2,
+    "total_failure": 0,
+    "last_success": "2026-02-19T10:49:46.819281",
+    "last_failure": null
+  },
+  "Polygon": {
+    "consecutive_failures": 0,
+    "total_success": 2,
+    "total_failure": 0,
+    "last_success": "2026-02-19T10:49:47.878223",
+    "last_failure": null
+  },
+  "GamesRadar": {
+    "consecutive_failures": 0,
+    "total_success": 2,
+    "total_failure": 0,
+    "last_success": "2026-02-19T10:49:48.447017",
+    "last_failure": null
+  },
+  "Pure Xbox": {
+    "consecutive_failures": 0,
+    "total_success": 2,
+    "total_failure": 0,
+    "last_success": "2026-02-19T10:49:48.762921",
+    "last_failure": null
+  },
+  "Hrej.cz": {
+    "consecutive_failures": 0,
+    "total_success": 2,
+    "total_failure": 0,
+    "last_success": "2026-02-19T10:50:01.495617",
+    "last_failure": null
+  },
+  "Zing.cz": {
+    "consecutive_failures": 0,
+    "total_success": 2,
+    "total_failure": 0,
+    "last_success": "2026-02-19T10:50:02.254666",
+    "last_failure": null
+  },
+  "Jiří Bigas": {
+    "consecutive_failures": 0,
+    "total_success": 2,
+    "total_failure": 0,
+    "last_success": "2026-02-19T10:50:02.691257",
+    "last_failure": null
+  },
+  "Games.cz": {
+    "consecutive_failures": 0,
+    "total_success": 2,
+    "total_failure": 0,
+    "last_success": "2026-02-19T10:50:03.122778",
+    "last_failure": null
+  },
+  "Spite.cz": {
+    "consecutive_failures": 0,
+    "total_success": 2,
+    "total_failure": 0,
+    "last_success": "2026-02-19T10:50:12.229032",
+    "last_failure": null
+  },
+  "HernýWeb.sk": {
+    "consecutive_failures": 1,
+    "total_success": 1,
+    "total_failure": 1,
+    "last_success": "2026-02-19T10:36:01.743626",
+    "last_failure": "2026-02-19T10:50:27.475412"
+  },
+  "TheGamer": {
+    "consecutive_failures": 0,
+    "total_success": 2,
+    "total_failure": 0,
+    "last_success": "2026-02-19T10:50:28.137402",
+    "last_failure": null
+  },
+  "VG247": {
+    "consecutive_failures": 0,
+    "total_success": 2,
+    "total_failure": 0,
+    "last_success": "2026-02-19T10:50:28.495680",
+    "last_failure": null
+  },
+  "Game Developer": {
+    "consecutive_failures": 0,
+    "total_success": 2,
+    "total_failure": 0,
+    "last_success": "2026-02-19T10:50:29.036288",
+    "last_failure": null
+  },
+  "Vortex.cz": {
+    "consecutive_failures": 0,
+    "total_success": 2,
+    "total_failure": 0,
+    "last_success": "2026-02-19T10:50:29.726033",
+    "last_failure": null
+  },
+  "PLAYzone.cz": {
+    "consecutive_failures": 0,
+    "total_success": 2,
+    "total_failure": 0,
+    "last_success": "2026-02-19T10:50:30.195845",
+    "last_failure": null
+  },
+  "PlayStation Blog": {
+    "consecutive_failures": 0,
+    "total_success": 2,
+    "total_failure": 0,
+    "last_success": "2026-02-19T10:50:31.361050",
+    "last_failure": null
+  },
+  "Xbox Wire": {
+    "consecutive_failures": 0,
+    "total_success": 2,
+    "total_failure": 0,
+    "last_success": "2026-02-19T10:50:31.785868",
+    "last_failure": null
+  },
+  "Steam News": {
+    "consecutive_failures": 0,
+    "total_success": 2,
+    "total_failure": 0,
+    "last_success": "2026-02-19T10:50:32.114465",
+    "last_failure": null
+  }
+}

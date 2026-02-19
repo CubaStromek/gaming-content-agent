@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-02-07T14:13:24.515570",
+  "last_updated": "2026-02-19T12:00:52.559343",
   "feeds": [
     {
       "id": "ign",
@@ -118,7 +118,7 @@
       "name": "VideoGamer",
       "url": "https://www.videogamer.com/rss",
       "lang": "en",
-      "enabled": false
+      "enabled": true
     },
     {
       "id": "game-developer",

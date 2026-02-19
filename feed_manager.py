@@ -160,6 +160,20 @@ def update_feed(feed_id, **kwargs):
     return target, None
 
 
+def auto_disable_feed(feed_name):
+    """Automaticky deaktivuje feed podle jména (volá feed_health)."""
+    feeds = load_feeds()
+    for f in feeds:
+        if f["name"] == feed_name:
+            if f.get("enabled", True):
+                f["enabled"] = False
+                f["auto_disabled"] = True
+                save_feeds(feeds)
+                log.info("🚫 Feed '%s' automaticky deaktivován (opakovaná selhání)", feed_name)
+            return True
+    return False
+
+
 def delete_feed(feed_id):
     """Smaze feed. Vraci True/False."""
     feeds = load_feeds()

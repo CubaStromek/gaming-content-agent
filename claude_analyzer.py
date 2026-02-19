@@ -1,14 +1,16 @@
 """
 Claude AI Analyzer
-Analyzuje herní články a generuje nápady na obsah
+Analyzuje herní články a generuje nápady na obsah.
+Podporuje strukturované výstupy přes tool_use (Fáze 1).
 """
 
 import re
 import anthropic
 import json
-from typing import List, Dict
+from typing import List, Dict, Optional
 import config
 from logger import setup_logger
+from models import Topic, AnalysisResult
 
 log = setup_logger(__name__)
 
@@ -127,6 +129,176 @@ VÝSTUP (seřaď od nejdůležitějšího, vytvoř PŘESNĚ {max_topics} témat 
 
     except Exception as e:
         log.error("❌ Chyba při volání Claude API: %s", e)
+        return None
+
+
+def _build_analysis_tool(max_topics: int) -> dict:
+    """Sestaví definici toolu pro strukturovaný výstup analýzy."""
+    return {
+        "name": "submit_analysis",
+        "description": f"Odešle strukturovanou analýzu s TOP {max_topics} herními tématy pro český herní blog",
+        "input_schema": {
+            "type": "object",
+            "required": ["topics"],
+            "properties": {
+                "topics": {
+                    "type": "array",
+                    "description": f"Přesně {max_topics} témat seřazených od nejdůležitějšího",
+                    "items": {
+                        "type": "object",
+                        "required": ["topic", "title", "angle", "context", "hook",
+                                     "visual", "virality_score", "why_now", "sources",
+                                     "seo_keywords", "game_name"],
+                        "properties": {
+                            "topic": {"type": "string", "description": "Název tématu"},
+                            "title": {"type": "string", "description": "Navržený český titulek článku"},
+                            "angle": {"type": "string", "description": "Úhel pohledu - jak téma uchopit"},
+                            "context": {"type": "string", "description": "2-3 věty kontextu s konkrétními fakty a čísly"},
+                            "hook": {"type": "string", "description": "Hlavní hook pro banner - úderná věta nebo číslo"},
+                            "visual": {"type": "string", "description": "Vizuální návrh pro banner - hra, postava, scéna, barvy, nálada"},
+                            "virality_score": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Hodnocení virality 1-100"},
+                            "why_now": {"type": "string", "description": "Proč je to aktuální, proč to napsat teď"},
+                            "sources": {"type": "array", "items": {"type": "string"}, "description": "Plné URL adresy zdrojových článků (https://...)"},
+                            "seo_keywords": {"type": "string", "description": "3-5 SEO klíčových slov oddělených čárkou"},
+                            "game_name": {"type": "string", "description": "Přesný anglický název hlavní hry (např. 'Grand Theft Auto VI'), nebo 'N/A'"},
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def _call_structured_api(client, prompt, tools):
+    """Volání Claude API se strukturovaným výstupem (tool_use)."""
+    return client.messages.create(
+        model=config.ANALYSIS_MODEL,
+        max_tokens=4000,
+        temperature=0.7,
+        tools=tools,
+        tool_choice={"type": "tool", "name": "submit_analysis"},
+        messages=[{"role": "user", "content": prompt}]
+    )
+
+
+if _HAS_TENACITY:
+    _call_structured_api = retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2, min=2, max=8),
+        retry=retry_if_exception_type((
+            anthropic.APIConnectionError,
+            anthropic.RateLimitError,
+        )),
+        before_sleep=lambda retry_state: log.warning(
+            "⚠️  Structured API volání selhalo, pokus %d/3, čekám...", retry_state.attempt_number
+        ),
+    )(_call_structured_api)
+
+
+def format_topics_as_report(topics: list) -> str:
+    """
+    Vygeneruje čitelný report text ze strukturovaných témat.
+    Formát je kompatibilní s parse_topics_from_report() pro zpětnou kompatibilitu.
+    """
+    parts = []
+    for i, topic in enumerate(topics, 1):
+        sources_text = "\n".join(topic.get("sources", []))
+        parts.append(
+            f"🎮 TÉMA {i}: {topic['topic']}\n"
+            f"📰 NAVRŽENÝ TITULEK: {topic['title']}\n"
+            f"🎯 ÚHEL POHLEDU: {topic['angle']}\n"
+            f"📝 KONTEXT: {topic['context']}\n"
+            f"💬 HLAVNÍ HOOK: {topic['hook']}\n"
+            f"🖼️ VIZUÁLNÍ NÁVRH: {topic['visual']}\n"
+            f"🔥 VIRALITA: {topic['virality_score']}/100\n"
+            f"💡 PROČ TEĎKA: {topic['why_now']}\n"
+            f"🔗 ZDROJE:\n{sources_text}\n"
+            f"🏷️ SEO KLÍČOVÁ SLOVA: {topic['seo_keywords']}\n"
+            f"🕹️ NÁZEV HRY: {topic.get('game_name', 'N/A')}"
+        )
+    return "\n\n".join(parts)
+
+
+def analyze_articles_structured(articles_text: str) -> Optional[dict]:
+    """
+    Analyzuje herní články pomocí Claude s tool_use pro strukturovaný výstup.
+
+    Args:
+        articles_text: Naformátované články jako text
+
+    Returns:
+        {"text": str, "topics": list[dict]} nebo None při selhání
+    """
+    log.info("🧠 Analyzuji články pomocí Claude AI (strukturovaný výstup)...")
+
+    client = anthropic.Anthropic(api_key=config.CLAUDE_API_KEY)
+
+    article_count = articles_text.count("ČLÁNEK ")
+    max_topics = min(2, max(1, article_count))
+
+    prompt = f"""Analyzuj tyto herní články z dnešního dne a vytvoř report pro českého herního blogera.
+
+ÚKOL:
+1. Identifikuj TOP {max_topics} nejvíce relevantních témat pro český herní blog (PŘESNĚ {max_topics})
+2. Pro každé téma navrhni konkrétní článek, který by mohl napsat
+3. Poskytni dostatek kontextu pro vytvoření grafických bannerů
+
+PRAVIDLA:
+- Zaměř se na témata zajímavá pro ČESKÉ publikum
+- Preferuj témata, která jsou AKTUÁLNÍ (dnes/tento týden)
+- Ignoruj témata starší než 3 dny (pokud nejsou viral)
+- Dej přednost news a analýzám před recenzemi
+- Pokud jsou tam oznámení nových her, dej jim prioritu
+- KONTEXT musí obsahovat konkrétní fakta a čísla, ne obecné fráze
+- V sources musíš uvést PLNÉ URL adresy (začínající https://) ze zdrojových článků
+- FAKTICKÁ PŘESNOST: NIKDY nepřipisuj hře českou/slovenskou origin, pokud to není faktem
+- Počet témat musí být PŘESNĚ {max_topics}
+
+Použij tool submit_analysis k odeslání výsledků.
+
+ČLÁNKY K ANALÝZE:
+{articles_text}"""
+
+    try:
+        tool = _build_analysis_tool(max_topics)
+        message = _call_structured_api(client, prompt, [tool])
+
+        # Extrahuj tool_use blok
+        topics_data = None
+        for block in message.content:
+            if block.type == "tool_use" and block.name == "submit_analysis":
+                topics_data = block.input
+                break
+
+        if not topics_data or not topics_data.get("topics"):
+            log.warning("⚠️  Strukturovaný výstup neobsahuje témata, fallback na text")
+            return None
+
+        # Validace přes Pydantic
+        try:
+            result = AnalysisResult.model_validate(topics_data)
+            topics = [t.model_dump() for t in result.topics]
+        except Exception as e:
+            log.warning("⚠️  Pydantic validace selhala: %s, používám raw data", e)
+            topics = topics_data["topics"]
+
+        # Generuj čitelný report text
+        report_text = format_topics_as_report(topics)
+
+        # Statistiky
+        log.info("✅ Strukturovaná analýza dokončena (%d témat)", len(topics))
+        log.info("   📊 Input tokeny: %d", message.usage.input_tokens)
+        log.info("   📊 Output tokeny: %d", message.usage.output_tokens)
+
+        cost_input = (message.usage.input_tokens / 1_000_000) * 3.00
+        cost_output = (message.usage.output_tokens / 1_000_000) * 15.00
+        total_cost = cost_input + cost_output
+        log.info("   💰 Odhadovaná cena: $%.4f", total_cost)
+
+        return {"text": report_text, "topics": topics}
+
+    except Exception as e:
+        log.error("❌ Chyba při strukturované analýze: %s", e)
         return None
 
 
