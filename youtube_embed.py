@@ -107,14 +107,49 @@ def _find_video_paragraph_index(html: str, lang: str = 'cs') -> int:
     """
     Najde index konce <p> tagu, který obsahuje video klíčové slovo.
     Vrací pozici v HTML stringu (konec tagu) nebo -1.
+    Přeskakuje <p> uvnitř <blockquote> — embed má být samostatný blok.
     """
     pattern = _VIDEO_KEYWORDS_CS if lang == 'cs' else _VIDEO_KEYWORDS_EN
 
+    # Najdi všechny blockquote rozsahy, abychom je přeskočili
+    blockquote_ranges = [
+        (m.start(), m.end())
+        for m in re.finditer(r'<blockquote[\s\S]*?</blockquote>', html, re.DOTALL)
+    ]
+
     for match in re.finditer(r'<p[^>]*>.*?</p>', html, re.DOTALL):
+        # Přeskoč <p> uvnitř blockquote
+        inside_bq = any(start <= match.start() < end for start, end in blockquote_ranges)
+        if inside_bq:
+            continue
         if pattern.search(match.group()):
             return match.end()
 
     return -1
+
+
+def _insert_embed_block(html: str, embed_block: str, lang: str = 'cs') -> str:
+    """Vloží embed blok na nejlepší pozici v HTML."""
+    # 1. Najdi odstavec s video klíčovým slovem (mimo blockquote)
+    insert_pos = _find_video_paragraph_index(html, lang)
+
+    if insert_pos > 0:
+        return html[:insert_pos] + embed_block + html[insert_pos:]
+
+    # 2. Fallback: vlož za blockquote (po úvodu, před první sekcí)
+    bq_match = re.search(r'</blockquote>', html)
+    if bq_match:
+        pos = bq_match.end()
+        return html[:pos] + embed_block + html[pos:]
+
+    # 3. Fallback: vlož po prvním <h2>...</h2>
+    h2_match = re.search(r'</h2>', html)
+    if h2_match:
+        pos = h2_match.end()
+        return html[:pos] + embed_block + html[pos:]
+
+    # 4. Poslední fallback: přidej na konec
+    return html + embed_block
 
 
 def embed_youtube_in_html(html: str, game_name: str, lang: str = 'cs') -> str:
@@ -147,18 +182,13 @@ def embed_youtube_in_html(html: str, game_name: str, lang: str = 'cs') -> str:
     log.info("Nalezeno video: %s (%s)", video['title'], video['url'])
 
     embed_block = '\n' + build_youtube_gutenberg_block(video['id']) + '\n'
+    return _insert_embed_block(html, embed_block, lang)
 
-    # Najdi odstavec s video klíčovým slovem
-    insert_pos = _find_video_paragraph_index(html, lang)
 
-    if insert_pos > 0:
-        return html[:insert_pos] + embed_block + html[insert_pos:]
-
-    # Fallback: vlož po prvním <h2>...</h2>
-    h2_match = re.search(r'</h2>', html)
-    if h2_match:
-        pos = h2_match.end()
-        return html[:pos] + embed_block + html[pos:]
-
-    # Poslední fallback: přidej na konec
-    return html + embed_block
+def force_embed_youtube(html: str, video_id: str, lang: str = 'cs') -> str:
+    """
+    Vloží YouTube embed do HTML bez kontroly klíčových slov.
+    Používá se když video už bylo nalezeno pro jinou jazykovou verzi.
+    """
+    embed_block = '\n' + build_youtube_gutenberg_block(video_id) + '\n'
+    return _insert_embed_block(html, embed_block, lang)

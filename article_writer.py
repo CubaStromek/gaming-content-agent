@@ -280,7 +280,7 @@ PRAVIDLA:
 - NEZMIŇUJ zdroje v textu článku (ne "podle IGN...")
 - NEPŘIDÁVEJ h1 nadpis - ten bude jako titulek článku
 - FAKTICKÁ PŘESNOST: Zkontroluj, že titulek odpovídá obsahu článku. Pokud navržený titulek obsahuje nepravdivé tvrzení (např. označuje hru jako "českou", i když studio je zahraniční), OPRAV titulek tak, aby byl fakticky správný.
-- NA ZAČÁTEK výstupu VŽDY uveď oba titulky na samostatných řádcích:
+- NA ZAČÁTEK výstupu VŽDY uveď titulky na samostatných řádcích:
   TITULEK CZ: [český titulek]
   TITULEK EN: [anglický titulek]
 - KRITICKÉ: V nadpisech (h2) NEPOUŽÍVEJ Title Case! Velké písmeno POUZE na začátku věty a u vlastních jmen. ŠPATNĚ: "Nová Éra Pro Herní Průmysl". SPRÁVNĚ: "Nová éra pro herní průmysl". ŠPATNĚ: "What This Means For Players". SPRÁVNĚ: "What this means for players".
@@ -320,6 +320,7 @@ POSTUP:
 
         # Odstraň řádky s titulky z textu, aby se nedostaly do HTML
         result_text = re.sub(r'^TITULEK\s*(?:CZ|EN)?:\s*.+$', '', result_text, flags=re.MULTILINE)
+        result_text = re.sub(r'^KEYWORD\s*(?:CZ|EN)?:\s*.+$', '', result_text, flags=re.MULTILINE)  # zpětná kompatibilita
         result_text = result_text.strip()
 
         # Parsuj CZ a EN casti

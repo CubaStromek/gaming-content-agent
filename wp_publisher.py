@@ -360,7 +360,7 @@ def _resolve_tag_ids(tag_names):
     return (tag_ids, None)
 
 
-def create_draft(title, content, category_ids=None, tag_names=None, lang=None, featured_image_id=None, status_tag=None, source_info=None, status='draft'):
+def create_draft(title, content, category_ids=None, tag_names=None, lang=None, featured_image_id=None, status_tag=None, source_info=None, status='draft', focus_keyword=None):
     """
     Vytvoří draft post na WP.
     Vrací ({id, edit_url, view_url}, None) nebo (None, error_string).
@@ -420,6 +420,27 @@ def create_draft(title, content, category_ids=None, tag_names=None, lang=None, f
         assigned_cats = post.get('categories', [])
         if category_ids and set(category_ids) != set(assigned_cats):
             print(f"[WP] Category mismatch for post {post_id}: sent={category_ids}, assigned={assigned_cats}, lang={lang}")
+
+        # Rank Math focus keyword (přes Rank Math REST API)
+        if focus_keyword:
+            try:
+                rm_url = config.WP_URL.rstrip('/') + '/wp-json/rankmath/v1/updateMeta'
+                rm_resp = requests.post(
+                    rm_url,
+                    headers={**_auth_headers(), 'Content-Type': 'application/json'},
+                    json={
+                        'objectType': 'post',
+                        'objectID': post_id,
+                        'meta': {'rank_math_focus_keyword': focus_keyword},
+                    },
+                    timeout=10,
+                )
+                if rm_resp.status_code == 200:
+                    print(f"[WP] Rank Math focus keyword set: '{focus_keyword}' (post {post_id})")
+                else:
+                    print(f"[WP] Rank Math keyword failed ({rm_resp.status_code}): {rm_resp.text[:200]}")
+            except Exception as e:
+                print(f"[WP] Rank Math keyword error: {e}")
 
         # Sestav URLs
         wp_base = config.WP_URL.rstrip('/')

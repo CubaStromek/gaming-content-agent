@@ -5,6 +5,7 @@ Spousteno 4x denne pres launchd (8:00, 12:00, 15:00, 20:00)
 """
 
 import os
+import re
 import sys
 import requests
 from datetime import datetime
@@ -149,13 +150,40 @@ def run():
 
         log.info("Clanek vygenerovan (%s)", article.get('cost', '?'))
 
-        # YouTube embed (pokud clanek zminuje video/trailer)
+        # YouTube embed (pokud kterakoliv verze zminuje video/trailer)
+        # Video se hleda jednou a vlozi do obou verzi — CZ ctenari umi anglicky
         game_name = topic.get('game_name', '')
         if not game_name or game_name == 'N/A':
             game_name = topic_name
-        article['cs'] = youtube_embed.embed_youtube_in_html(article['cs'], game_name, lang='cs')
-        if article.get('en'):
-            article['en'] = youtube_embed.embed_youtube_in_html(article['en'], game_name, lang='en')
+
+        cs_has_video = youtube_embed.has_video_reference(article['cs'], lang='cs')
+        en_has_video = article.get('en') and youtube_embed.has_video_reference(article['en'], lang='en')
+
+        if cs_has_video or en_has_video:
+            query = f"{game_name} official trailer 2026"
+            log.info("Hledám YouTube video: %s", query)
+            videos = youtube_embed.search_youtube(query)
+            if videos:
+                video = videos[0]
+                log.info("Nalezeno video: %s (%s)", video['title'], video['url'])
+                video_id = video['id']
+                # Vloz do CS — bud normalne (ma keyword) nebo force (EN trigger)
+                if cs_has_video:
+                    article['cs'] = youtube_embed.embed_youtube_in_html(article['cs'], game_name, lang='cs')
+                else:
+                    log.info("CS článek nemá video keyword, vkládám embed z EN detekce")
+                    article['cs'] = youtube_embed.force_embed_youtube(article['cs'], video_id, lang='cs')
+                # Vloz do EN
+                if article.get('en'):
+                    if en_has_video:
+                        article['en'] = youtube_embed.embed_youtube_in_html(article['en'], game_name, lang='en')
+                    else:
+                        log.info("EN článek nemá video keyword, vkládám embed z CS detekce")
+                        article['en'] = youtube_embed.force_embed_youtube(article['en'], video_id, lang='en')
+            else:
+                log.warning("YouTube video nenalezeno pro: %s", query)
+        else:
+            log.info("Žádná zmínka o videu v článku, přeskakuji YouTube embed")
 
         # Hledani featured image pres RAWG (pouzij cisty nazev hry)
         featured_image_id = None
@@ -176,6 +204,18 @@ def run():
         # Informace o zdroji pro WP meta pole
         source_info = '\n'.join(source_urls) if source_urls else None
 
+        # Rank Math focus keyword = název hry/firmy bez číslovky, pokud je v titulku
+        focus_kw = game_name if game_name and game_name != 'N/A' else None
+        if focus_kw:
+            # Odstraň koncovou číslovku (arabskou i římskou): "The Elder Scrolls VI" → "The Elder Scrolls"
+            focus_kw = re.sub(r'\s+(\d+|[IVXLCDM]+)$', '', focus_kw).strip()
+            # Kontrola: keyword musí být v titulku (case-insensitive)
+            if focus_kw.lower() not in title.lower():
+                log.info("Focus keyword '%s' není v CZ titulku, přeskakuji", focus_kw)
+                focus_kw = None
+            else:
+                log.info("Focus keyword: '%s'", focus_kw)
+
         # Publikace CZ verze
         log.info("Publikuji CZ verzi...")
         cs_content = wp_publisher.strip_first_heading(article['cs'])
@@ -189,6 +229,7 @@ def run():
             status_tag='news',
             source_info=source_info,
             status='publish',
+            focus_keyword=focus_kw,
         )
 
         if cs_err:
@@ -211,6 +252,13 @@ def run():
 
             log.info("Publikuji EN verzi...")
             en_content = wp_publisher.strip_first_heading(article['en'])
+            # Focus keyword pro EN — bez číslovky, zkontroluj v EN titulku
+            en_focus_kw = game_name if game_name and game_name != 'N/A' else None
+            if en_focus_kw:
+                en_focus_kw = re.sub(r'\s+(\d+|[IVXLCDM]+)$', '', en_focus_kw).strip()
+            if en_focus_kw and en_focus_kw.lower() not in en_title.lower():
+                log.info("Focus keyword '%s' není v EN titulku, přeskakuji", en_focus_kw)
+                en_focus_kw = None
             en_result, en_err = wp_publisher.create_draft(
                 title=en_title,
                 content=en_content,
@@ -221,6 +269,7 @@ def run():
                 status_tag='news',
                 source_info=source_info,
                 status='publish',
+                focus_keyword=en_focus_kw,
             )
 
             if en_err:
@@ -235,7 +284,7 @@ def run():
                 else:
                     log.warning("Propojeni selhalo: %s", link_err)
 
-        # Generovani FB post obrazku
+        # Generovani FB post obrazku (CZ + EN)
         if image_url:
             try:
                 # Stahni thumbnail lokalne
@@ -244,21 +293,30 @@ def run():
                 with open(local_thumb, 'wb') as f:
                     f.write(thumb_resp.content)
 
-                # Subtitle = CZ titulek clanku
-                fb_subtitle = title
-
-                # Nazev souboru z game_name
                 safe_name = "".join(c if c.isalnum() or c in '-_ ' else '' for c in game_name).strip().replace(' ', '_')
                 date_str = datetime.now().strftime('%Y-%m-%d')
-                fb_output = os.path.join(os.path.dirname(__file__), 'output', 'fb-posts', f'{date_str}_{safe_name}.png')
 
-                fb_path = generate_fb_post(
+                # CZ verze
+                fb_output_cs = os.path.join(os.path.dirname(__file__), 'output', 'fb-posts', f'{date_str}_{safe_name}_CZ.png')
+                fb_path_cs = generate_fb_post(
                     thumbnail_path=local_thumb,
                     title=game_name,
-                    subtitle=fb_subtitle,
-                    output_path=fb_output,
+                    subtitle=title,
+                    output_path=fb_output_cs,
                 )
-                log.info("FB post obrazek vygenerovan: %s", fb_path)
+                log.info("FB post obrazek CZ vygenerovan: %s", fb_path_cs)
+
+                # EN verze (pokud existuje anglicky clanek)
+                if article.get('en'):
+                    en_subtitle = article.get('en_title') or topic.get('topic', title)
+                    fb_output_en = os.path.join(os.path.dirname(__file__), 'output', 'fb-posts', f'{date_str}_{safe_name}_EN.png')
+                    fb_path_en = generate_fb_post(
+                        thumbnail_path=local_thumb,
+                        title=game_name,
+                        subtitle=en_subtitle,
+                        output_path=fb_output_en,
+                    )
+                    log.info("FB post obrazek EN vygenerovan: %s", fb_path_en)
 
                 # Cleanup temp souboru
                 if os.path.exists(local_thumb):
