@@ -1,7 +1,7 @@
 """
 Auto Publish Pipeline
 Automaticky stahne RSS, analyzuje, napise clanky a publikuje na GAMEfo.cz
-Spousteno 4x denne pres launchd (8:00, 12:00, 15:00, 20:00)
+Spousteno 5x denne pres launchd (8:00, 11:00, 14:00, 17:00, 20:00)
 """
 
 import os

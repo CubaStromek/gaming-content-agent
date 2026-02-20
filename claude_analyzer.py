@@ -16,16 +16,19 @@ from models import Topic, AnalysisResult
 log = setup_logger(__name__)
 
 try:
-    from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+    from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
     _HAS_TENACITY = True
 except ImportError:
     _HAS_TENACITY = False
 
-# OverloadedError (HTTP 529) není v public anthropic API, importujeme přímo
-try:
-    from anthropic._exceptions import OverloadedError as _OverloadedError
-except ImportError:
-    _OverloadedError = anthropic.InternalServerError  # fallback
+
+def _is_retryable(exc):
+    """Retry na overload (529), rate limit (429), server error (5xx) a connection errory."""
+    if isinstance(exc, (anthropic.APIConnectionError, anthropic.APITimeoutError)):
+        return True
+    if isinstance(exc, anthropic.APIStatusError):
+        return exc.status_code in (429, 500, 502, 503, 529)
+    return False
 
 
 def _call_analysis_api(client, prompt):
@@ -44,16 +47,13 @@ def _call_analysis_api(client, prompt):
 
 if _HAS_TENACITY:
     _call_analysis_api = retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=2, min=5, max=30),
-        retry=retry_if_exception_type((
-            anthropic.APIConnectionError,
-            anthropic.RateLimitError,
-            anthropic.InternalServerError,
-            _OverloadedError,
-        )),
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=4, min=15, max=120),
+        retry=retry_if_exception(_is_retryable),
         before_sleep=lambda retry_state: log.warning(
-            "⚠️  API volání selhalo, pokus %d/3, čekám...", retry_state.attempt_number
+            "⚠️  API volání selhalo (HTTP %s), pokus %d/5, čekám...",
+            getattr(retry_state.outcome.exception(), 'status_code', '?'),
+            retry_state.attempt_number
         ),
     )(_call_analysis_api)
 
@@ -192,16 +192,13 @@ def _call_structured_api(client, prompt, tools):
 
 if _HAS_TENACITY:
     _call_structured_api = retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=2, min=5, max=30),
-        retry=retry_if_exception_type((
-            anthropic.APIConnectionError,
-            anthropic.RateLimitError,
-            anthropic.InternalServerError,
-            _OverloadedError,
-        )),
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=4, min=15, max=120),
+        retry=retry_if_exception(_is_retryable),
         before_sleep=lambda retry_state: log.warning(
-            "⚠️  Structured API volání selhalo, pokus %d/3, čekám...", retry_state.attempt_number
+            "⚠️  Structured API volání selhalo (HTTP %s), pokus %d/5, čekám...",
+            getattr(retry_state.outcome.exception(), 'status_code', '?'),
+            retry_state.attempt_number
         ),
     )(_call_structured_api)
 
