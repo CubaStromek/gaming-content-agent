@@ -7,6 +7,7 @@ Spousteno 4x denne pres launchd (8:00, 12:00, 15:00, 20:00)
 import os
 import re
 import sys
+import time
 import requests
 from datetime import datetime
 
@@ -107,20 +108,36 @@ def run():
     rss_scraper.save_articles_to_json(articles, run_dir)
 
     # 5. Claude analyza -> TOP 2 temata (strukturovaný výstup s fallbackem)
+    #    Retry: pokud API vrátí 529 (Overloaded), čekáme 30 min a zkusíme znovu (max 3 pokusy)
     articles_text = rss_scraper.format_articles_for_analysis(articles)
 
-    structured = claude_analyzer.analyze_articles_structured(articles_text)
-    if structured:
-        analysis = structured["text"]
-        topics = structured["topics"]
-        log.info("Strukturovaná analýza: %d témat", len(topics))
-    else:
+    MAX_ANALYSIS_RETRIES = 3
+    RETRY_WAIT_MINUTES = 30
+    analysis = None
+    topics = None
+
+    for attempt in range(1, MAX_ANALYSIS_RETRIES + 1):
+        structured = claude_analyzer.analyze_articles_structured(articles_text)
+        if structured:
+            analysis = structured["text"]
+            topics = structured["topics"]
+            log.info("Strukturovaná analýza: %d témat", len(topics))
+            break
+
         log.info("Fallback na textovou analýzu + regex parsování")
         analysis = claude_analyzer.analyze_gaming_articles(articles_text)
-        if not analysis:
-            log.error("Claude analyza selhala")
+        if analysis:
+            topics = article_writer.parse_topics_from_report(analysis)
+            break
+
+        # Obě metody selhaly — retry pokud nejsme na posledním pokusu
+        if attempt < MAX_ANALYSIS_RETRIES:
+            log.warning("⏳ Claude API nedostupná (pokus %d/%d). Čekám %d minut před dalším pokusem...",
+                        attempt, MAX_ANALYSIS_RETRIES, RETRY_WAIT_MINUTES)
+            time.sleep(RETRY_WAIT_MINUTES * 60)
+        else:
+            log.error("❌ Claude analýza selhala po %d pokusech. Končím.", MAX_ANALYSIS_RETRIES)
             return
-        topics = article_writer.parse_topics_from_report(analysis)
 
     file_manager.save_report(analysis, claude_analyzer.extract_key_insights(articles), run_dir, articles)
 

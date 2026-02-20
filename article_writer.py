@@ -35,13 +35,20 @@ def _call_api(client, model, max_tokens, temperature, prompt):
     )
 
 
+try:
+    from anthropic._exceptions import OverloadedError as _OverloadedError
+except ImportError:
+    _OverloadedError = anthropic.InternalServerError
+
 if _HAS_TENACITY:
     _call_api = retry(
         stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=2, min=2, max=8),
+        wait=wait_exponential(multiplier=2, min=5, max=30),
         retry=retry_if_exception_type((
             anthropic.APIConnectionError,
             anthropic.RateLimitError,
+            anthropic.InternalServerError,
+            _OverloadedError,
         )),
         before_sleep=lambda retry_state: log.warning(
             "⚠️  API volání selhalo, pokus %d/3, čekám...", retry_state.attempt_number
