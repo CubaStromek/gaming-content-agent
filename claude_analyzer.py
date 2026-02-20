@@ -42,6 +42,7 @@ if _HAS_TENACITY:
         retry=retry_if_exception_type((
             anthropic.APIConnectionError,
             anthropic.RateLimitError,
+            anthropic.InternalServerError,
         )),
         before_sleep=lambda retry_state: log.warning(
             "⚠️  API volání selhalo, pokus %d/3, čekám...", retry_state.attempt_number
@@ -188,6 +189,7 @@ if _HAS_TENACITY:
         retry=retry_if_exception_type((
             anthropic.APIConnectionError,
             anthropic.RateLimitError,
+            anthropic.InternalServerError,
         )),
         before_sleep=lambda retry_state: log.warning(
             "⚠️  Structured API volání selhalo, pokus %d/3, čekám...", retry_state.attempt_number

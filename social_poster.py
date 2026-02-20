@@ -125,7 +125,7 @@ def post_to_facebook(text, image_path=None, lang='cs'):
 
     try:
         if image_path and os.path.exists(image_path):
-            endpoint = f"https://graph.facebook.com/v19.0/{page_id}/photos"
+            endpoint = f"https://graph.facebook.com/v21.0/{page_id}/photos"
             with open(image_path, 'rb') as img:
                 resp = requests.post(
                     endpoint,
@@ -134,14 +134,19 @@ def post_to_facebook(text, image_path=None, lang='cs'):
                     timeout=30,
                 )
         else:
-            endpoint = f"https://graph.facebook.com/v19.0/{page_id}/feed"
+            endpoint = f"https://graph.facebook.com/v21.0/{page_id}/feed"
             resp = requests.post(
                 endpoint,
                 data={'message': text, 'access_token': token},
                 timeout=30,
             )
 
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            error_data = resp.json() if resp.text else {}
+            error_msg = error_data.get('error', {}).get('message', resp.text)
+            log.error("Facebook %s API error %d: %s", lang.upper(), resp.status_code, error_msg)
+            return None, f"Facebook API {resp.status_code}: {error_msg}"
+
         data = resp.json()
 
         post_id = data.get('id') or data.get('post_id', '')
