@@ -23,6 +23,7 @@ import wp_publisher
 import publish_log
 import youtube_embed
 import social_poster
+import topic_dedup
 from logger import setup_logger
 from fb_generator.generate_fb_post import generate_fb_post
 
@@ -128,6 +129,22 @@ def run():
         return
 
     log.info("Nalezeno %d temat", len(topics))
+
+    # 6. Deduplikace témat (kontrola proti publish_log)
+    topics, dup_topics = topic_dedup.filter_duplicate_topics(topics)
+    for dup in dup_topics:
+        publish_log.log_decision({
+            'action': 'skipped',
+            'reason': 'duplicate_topic',
+            'topic': dup.get('topic', ''),
+            'score': dup.get('virality_score', 0),
+        })
+
+    if not topics:
+        log.info("Všechna témata jsou duplicitní. Končím.")
+        return
+
+    log.info("Po deduplikaci: %d témat k publikaci", len(topics))
 
     # 7. Pro kazde tema: napsat clanek + publikovat
     published_count = 0

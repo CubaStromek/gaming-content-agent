@@ -9,6 +9,7 @@ import anthropic
 import json
 from typing import List, Dict, Optional
 import config
+import topic_dedup
 from logger import setup_logger
 from models import Topic, AnalysisResult
 
@@ -101,7 +102,7 @@ DŮLEŽITÉ:
 - NIKDY nevytvářej prázdná témata! Každé téma musí mít kompletní obsah všech sekcí
 - FAKTICKÁ PŘESNOST: NIKDY nepřipisuj hře českou/slovenskou origin, pokud to není faktem. Neoznačuj hry jako "český", "česká hra", "od českých tvůrců" apod., pokud vývojářské studio skutečně není z ČR/SR. Psaní pro české publikum NEZNAMENÁ, že máš hry falešně vydávat za české!
 - Počet témat musí odpovídat počtu dostupných článků (max {max_topics})
-
+{topic_dedup.format_recent_topics_for_prompt(days=3)}
 ČLÁNKY K ANALÝZE:
 {articles_text}
 
@@ -255,7 +256,7 @@ PRAVIDLA:
 - V sources musíš uvést PLNÉ URL adresy (začínající https://) ze zdrojových článků
 - FAKTICKÁ PŘESNOST: NIKDY nepřipisuj hře českou/slovenskou origin, pokud to není faktem
 - Počet témat musí být PŘESNĚ {max_topics}
-
+{topic_dedup.format_recent_topics_for_prompt(days=3)}
 Použij tool submit_analysis k odeslání výsledků.
 
 ČLÁNKY K ANALÝZE:
