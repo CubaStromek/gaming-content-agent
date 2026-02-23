@@ -45,6 +45,10 @@ FACEBOOK_PAGE_TOKEN_CS = os.getenv("FACEBOOK_PAGE_TOKEN_CS", "")
 FACEBOOK_PAGE_ID_EN = os.getenv("FACEBOOK_PAGE_ID_EN", "")
 FACEBOOK_PAGE_TOKEN_EN = os.getenv("FACEBOOK_PAGE_TOKEN_EN", "")
 
+# Threads API (Meta Graph API)
+THREADS_USER_ID = os.getenv("THREADS_USER_ID", "")
+THREADS_ACCESS_TOKEN = os.getenv("THREADS_ACCESS_TOKEN", "")
+
 # Social media dry-run (loguje, ale nepostuje)
 SOCIAL_DRY_RUN = os.getenv("SOCIAL_DRY_RUN", "").lower() in ("1", "true", "yes")
 
@@ -58,6 +62,9 @@ def is_facebook_configured(lang='cs'):
     if lang == 'en':
         return bool(FACEBOOK_PAGE_ID_EN and FACEBOOK_PAGE_TOKEN_EN)
     return bool(FACEBOOK_PAGE_ID_CS and FACEBOOK_PAGE_TOKEN_CS)
+
+def is_threads_configured():
+    return bool(THREADS_USER_ID and THREADS_ACCESS_TOKEN)
 
 # SQLite databáze
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'gamefo.db')

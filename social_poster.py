@@ -1,8 +1,9 @@
 """
-Social Media Poster — postuje na X.com (Twitter) a Facebook Page.
+Social Media Poster — postuje na X.com (Twitter), Threads a Facebook Page.
 Volán z auto_publish.py po úspěšné publikaci článku na WordPress.
 
 Twitter: jen CZ (uživatel má jen českou mutaci)
+Threads: jen CZ (max 500 znaků, Meta Graph API)
 Facebook: CZ stránka (GAMEfo) + EN stránka (GAMEFOen)
 """
 
@@ -160,8 +161,91 @@ def post_to_facebook(text, image_path=None, lang='cs'):
         return None, str(e)
 
 
+def post_to_threads(text, image_url=None):
+    """
+    Postne na Threads přes Meta Graph API (dvoukrokový flow).
+    image_url musí být veřejně dostupné URL (ne lokální soubor).
+    Vrací (post_id, post_url) nebo (None, error_message).
+    """
+    if not config.is_threads_configured():
+        return None, 'Threads není nakonfigurován'
+
+    if config.SOCIAL_DRY_RUN:
+        log.info("[DRY RUN] Threads post: %s", text[:100])
+        return 'dry-run', 'https://threads.net/dry-run'
+
+    import time
+    import requests
+
+    user_id = config.THREADS_USER_ID
+    token = config.THREADS_ACCESS_TOKEN
+    base_url = "https://graph.threads.net/v1.0"
+
+    try:
+        # Krok 1: Vytvoření media containeru
+        container_params = {
+            'text': text,
+            'access_token': token,
+        }
+        if image_url:
+            container_params['media_type'] = 'IMAGE'
+            container_params['image_url'] = image_url
+        else:
+            container_params['media_type'] = 'TEXT'
+
+        resp = requests.post(
+            f"{base_url}/{user_id}/threads",
+            data=container_params,
+            timeout=30,
+        )
+
+        if resp.status_code != 200:
+            error_data = resp.json() if resp.text else {}
+            error_msg = error_data.get('error', {}).get('message', resp.text)
+            log.error("Threads container error %d: %s", resp.status_code, error_msg)
+            return None, f"Threads API {resp.status_code}: {error_msg}"
+
+        container_id = resp.json().get('id')
+        if not container_id:
+            return None, "Threads API nevrátilo container ID"
+
+        log.info("Threads container vytvořen: %s", container_id)
+
+        # Krok 2: Počkat na zpracování médií
+        wait_seconds = 30 if image_url else 5
+        log.info("Čekám %ds na zpracování Threads containeru...", wait_seconds)
+        time.sleep(wait_seconds)
+
+        # Krok 3: Publikace containeru
+        publish_resp = requests.post(
+            f"{base_url}/{user_id}/threads_publish",
+            data={
+                'creation_id': container_id,
+                'access_token': token,
+            },
+            timeout=30,
+        )
+
+        if publish_resp.status_code != 200:
+            error_data = publish_resp.json() if publish_resp.text else {}
+            error_msg = error_data.get('error', {}).get('message', publish_resp.text)
+            log.error("Threads publish error %d: %s", publish_resp.status_code, error_msg)
+            return None, f"Threads publish {publish_resp.status_code}: {error_msg}"
+
+        post_id = publish_resp.json().get('id')
+        post_url = f"https://www.threads.net/@gamefo/post/{post_id}" if post_id else ''
+
+        log.info("Threads post published: %s", post_url)
+        return post_id, post_url
+
+    except Exception as e:
+        log.error("Threads post selhal: %s", e)
+        return None, str(e)
+
+
 def post_to_all(title, excerpt, image_path, url, hashtags=None,
-                en_title=None, en_excerpt=None, en_image_path=None, en_url=None):
+                en_title=None, en_excerpt=None, en_image_path=None, en_url=None,
+                image_url=None):
     """
     Orchestrační funkce — postne na všechny nakonfigurované platformy.
 
@@ -181,6 +265,16 @@ def post_to_all(title, excerpt, image_path, url, hashtags=None,
         except Exception as e:
             log.warning("Twitter posting selhalo: %s", e)
             results['twitter'] = {'id': None, 'url': str(e)}
+
+    # Threads — jen CZ (max 500 znaků)
+    if config.is_threads_configured() or config.SOCIAL_DRY_RUN:
+        try:
+            th_text = _build_post_text(title, excerpt, url, hashtags, max_len=500)
+            th_id, th_url = post_to_threads(th_text, image_url=image_url)
+            results['threads'] = {'id': th_id, 'url': th_url}
+        except Exception as e:
+            log.warning("Threads posting selhalo: %s", e)
+            results['threads'] = {'id': None, 'url': str(e)}
 
     # Facebook CZ
     if config.is_facebook_configured('cs') or config.SOCIAL_DRY_RUN:

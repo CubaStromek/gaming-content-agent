@@ -420,6 +420,7 @@ def run():
                 en_excerpt=en_excerpt,
                 en_image_path=social_image_en,
                 en_url=en_url_social,
+                image_url=image_url,
             )
             log.info("Social posting: %s", social_results)
         except Exception as e:
