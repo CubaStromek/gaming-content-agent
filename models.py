@@ -20,6 +20,7 @@ class Topic(BaseModel):
     sources: List[str] = Field(description="URL zdrojových článků")
     seo_keywords: str = Field(description="SEO klíčová slova oddělená čárkou")
     game_name: str = Field(default="N/A", description="Anglický název hlavní hry, nebo N/A")
+    status_tag: str = Field(default="news", description="Typ článku: news, update, leak, critical, success, indie, review, trailer, rumor, info, finance, tema, preview")
 
 
 class AnalysisResult(BaseModel):

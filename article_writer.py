@@ -213,6 +213,7 @@ def parse_topics_from_report(report_text: str) -> List[Dict]:
             'why_now': _b + r'💡\s*' + _b + r'\s*PROČ TEĎKA' + _b + r'\s*:\s*' + _b + _val,
             'seo_keywords': _b + r'🏷️\s*' + _b + r'\s*SEO KLÍČOVÁ SLOVA' + _b + r'\s*:\s*' + _b + _val,
             'game_name': _b + r'🕹️\s*' + _b + r'\s*NÁZEV HRY' + _b + r'\s*:\s*' + _b + _val,
+            'status_tag': _b + r'📌\s*' + _b + r'\s*STATUS TAG' + _b + r'\s*:\s*' + _b + _val,
         }
 
         for key, pattern in patterns.items():
@@ -225,6 +226,11 @@ def parse_topics_from_report(report_text: str) -> List[Dict]:
         # Parsuj virality score jako cislo
         virality_match = re.search(r'(\d+)', topic.get('virality', ''))
         topic['virality_score'] = int(virality_match.group(1)) if virality_match else 0
+
+        # Validace status_tag — musí být z povolených hodnot
+        valid_status_tags = {'news', 'update', 'leak', 'critical', 'success', 'indie', 'review', 'trailer', 'rumor', 'info', 'finance', 'tema', 'preview'}
+        raw_tag = topic.get('status_tag', 'news').lower().strip()
+        topic['status_tag'] = raw_tag if raw_tag in valid_status_tags else 'news'
 
         # Parsuj zdroje (URL na samostatnych radcich)
         sources_section = re.search(r'\*{0,2}🔗\s*\*{0,2}\s*ZDROJE\*{0,2}\s*:\s*\*{0,2}\s*\n?([\s\S]*?)(?=\*{0,2}🏷️|$)', block)

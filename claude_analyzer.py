@@ -97,6 +97,7 @@ Pro každé téma napiš:
 - 🔗 ZDROJE: [PŘESNÉ URL adresy relevantních článků - zkopíruj celé URL z Link: polí výše]
 - 🏷️ SEO KLÍČOVÁ SLOVA: [3-5 klíčových slov pro SEO]
 - 🕹️ NÁZEV HRY: [přesný anglický název hlavní hry v tématu, např. "The Elder Scrolls V: Skyrim" nebo "Grand Theft Auto VI". Pokud téma není o konkrétní hře, napiš "N/A"]
+- 📌 STATUS TAG: [vyber JEDEN z: news, update, leak, critical, success, indie, review, trailer, rumor, info, finance, tema, preview]
 
 DŮLEŽITÉ:
 - Zaměř se na témata zajímavá pro ČESKÉ publikum
@@ -109,6 +110,7 @@ DŮLEŽITÉ:
 - NIKDY nevytvářej prázdná témata! Každé téma musí mít kompletní obsah všech sekcí
 - FAKTICKÁ PŘESNOST: NIKDY nepřipisuj hře českou/slovenskou origin, pokud to není faktem. Neoznačuj hry jako "český", "česká hra", "od českých tvůrců" apod., pokud vývojářské studio skutečně není z ČR/SR. Psaní pro české publikum NEZNAMENÁ, že máš hry falešně vydávat za české!
 - Počet témat musí odpovídat počtu dostupných článků (max {max_topics})
+- STATUS TAG pravidla: "news" = běžná zpráva/oznámení, "update" = patch/aktualizace existující hry, "leak" = únik neoficiálních informací, "critical" = kritická/důležitá zpráva s velkým dopadem, "success" = prodejní rekord/milník/úspěch, "indie" = nezávislá hra, "review" = recenze, "trailer" = nový trailer/video, "rumor" = nepotvrzená spekulace, "info" = obecná informace/analýza, "finance" = finanční zpráva/akvizice/byznys, "tema" = tématický rozbor, "preview" = náhled/hands-on/preview. Defaultní je "news", ale snaž se vybrat co nejpřesnější tag.
 {topic_dedup.format_recent_topics_for_prompt(days=3)}
 ČLÁNKY K ANALÝZE:
 {articles_text}
@@ -157,7 +159,7 @@ def _build_analysis_tool(max_topics: int) -> dict:
                         "type": "object",
                         "required": ["topic", "title", "angle", "context", "hook",
                                      "visual", "virality_score", "why_now", "sources",
-                                     "seo_keywords", "game_name"],
+                                     "seo_keywords", "game_name", "status_tag"],
                         "properties": {
                             "topic": {"type": "string", "description": "Název tématu"},
                             "title": {"type": "string", "description": "Navržený český titulek článku"},
@@ -170,6 +172,7 @@ def _build_analysis_tool(max_topics: int) -> dict:
                             "sources": {"type": "array", "items": {"type": "string"}, "description": "Plné URL adresy zdrojových článků (https://...)"},
                             "seo_keywords": {"type": "string", "description": "3-5 SEO klíčových slov oddělených čárkou"},
                             "game_name": {"type": "string", "description": "Přesný anglický název hlavní hry (např. 'Grand Theft Auto VI'), nebo 'N/A'"},
+                            "status_tag": {"type": "string", "enum": ["news", "update", "leak", "critical", "success", "indie", "review", "trailer", "rumor", "info", "finance", "tema", "preview"], "description": "Typ článku — news=zpráva, update=patch/aktualizace, leak=únik info, critical=důležitá zpráva, success=rekord/milník, indie=indie hra, review=recenze, trailer=nový trailer, rumor=spekulace, info=analýza, finance=byznys, tema=tématický rozbor, preview=náhled"},
                         }
                     }
                 }
@@ -222,7 +225,8 @@ def format_topics_as_report(topics: list) -> str:
             f"💡 PROČ TEĎKA: {topic['why_now']}\n"
             f"🔗 ZDROJE:\n{sources_text}\n"
             f"🏷️ SEO KLÍČOVÁ SLOVA: {topic['seo_keywords']}\n"
-            f"🕹️ NÁZEV HRY: {topic.get('game_name', 'N/A')}"
+            f"🕹️ NÁZEV HRY: {topic.get('game_name', 'N/A')}\n"
+            f"📌 STATUS TAG: {topic.get('status_tag', 'news')}"
         )
     return "\n\n".join(parts)
 
@@ -261,6 +265,7 @@ PRAVIDLA:
 - V sources musíš uvést PLNÉ URL adresy (začínající https://) ze zdrojových článků
 - FAKTICKÁ PŘESNOST: NIKDY nepřipisuj hře českou/slovenskou origin, pokud to není faktem
 - Počet témat musí být PŘESNĚ {max_topics}
+- STATUS TAG pravidla: "news" = běžná zpráva/oznámení, "update" = patch/aktualizace existující hry, "leak" = únik neoficiálních informací, "critical" = kritická/důležitá zpráva s velkým dopadem, "success" = prodejní rekord/milník/úspěch, "indie" = nezávislá hra, "review" = recenze, "trailer" = nový trailer/video, "rumor" = nepotvrzená spekulace, "info" = obecná informace/analýza, "finance" = finanční zpráva/akvizice/byznys, "tema" = tématický rozbor, "preview" = náhled/hands-on/preview. Defaultní je "news", ale snaž se vybrat co nejpřesnější tag.
 {topic_dedup.format_recent_topics_for_prompt(days=3)}
 Použij tool submit_analysis k odeslání výsledků.
 

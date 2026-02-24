@@ -262,6 +262,12 @@ def run():
         seo_keywords = topic.get('seo_keywords', '')
         tag_names = [kw.strip() for kw in seo_keywords.split(',') if kw.strip()] if seo_keywords else None
 
+        # Status tag z Claude analýzy (dynamický místo hardcoded 'news')
+        valid_status_tags = {'news', 'update', 'leak', 'critical', 'success', 'indie', 'review', 'trailer', 'rumor', 'info', 'finance', 'tema', 'preview'}
+        raw_status_tag = topic.get('status_tag', 'news').lower().strip()
+        status_tag = raw_status_tag if raw_status_tag in valid_status_tags else 'news'
+        log.info("Status tag: '%s'", status_tag)
+
         # Informace o zdroji pro WP meta pole
         source_info = '\n'.join(source_urls) if source_urls else None
 
@@ -287,7 +293,7 @@ def run():
             tag_names=tag_names,
             lang='cs',
             featured_image_id=featured_image_id,
-            status_tag='news',
+            status_tag=status_tag,
             source_info=source_info,
             status='publish',
             focus_keyword=focus_kw,
@@ -331,7 +337,7 @@ def run():
                 tag_names=tag_names,
                 lang='en',
                 featured_image_id=featured_image_id,
-                status_tag='news',
+                status_tag=status_tag,
                 source_info=source_info,
                 status='publish',
                 focus_keyword=en_focus_kw,
