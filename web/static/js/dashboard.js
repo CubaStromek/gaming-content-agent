@@ -1166,3 +1166,4 @@
         document.getElementById('modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
         document.getElementById('articleModal').addEventListener('click', e => { if (e.target.id === 'articleModal') closeArticleModal(); });
         document.getElementById('feedsModal').addEventListener('click', e => { if (e.target.id === 'feedsModal') closeFeedsModal(); });
+
