@@ -307,9 +307,13 @@ def run():
 
         # Publikace EN verze
         en_result = None
+        en_title = None
         if article.get('en'):
-            # Anglicky titulek z article_writer, fallback na topic name
-            en_title = article.get('en_title') or topic.get('topic', title)
+            # Anglicky titulek z article_writer
+            en_title = article.get('en_title')
+            if not en_title:
+                en_title = topic.get('topic', title)
+                log.warning("EN titulek chybí v article_writer výstupu, fallback na CZ: %s", en_title)
 
             log.info("Publikuji EN verzi...")
             en_content = wp_publisher.strip_first_heading(article['en'])
@@ -368,13 +372,12 @@ def run():
                 log.info("FB post obrazek CZ vygenerovan: %s", fb_path_cs)
 
                 # EN verze (pokud existuje anglicky clanek)
-                if article.get('en'):
-                    en_subtitle = article.get('en_title') or topic.get('topic', title)
+                if article.get('en') and en_title:
                     fb_output_en = os.path.join(os.path.dirname(__file__), 'output', 'fb-posts', f'{date_str}_{safe_name}_EN.png')
                     fb_path_en = generate_fb_post(
                         thumbnail_path=local_thumb,
                         title=game_name,
-                        subtitle=en_subtitle,
+                        subtitle=en_title,
                         output_path=fb_output_en,
                     )
                     log.info("FB post obrazek EN vygenerovan: %s", fb_path_en)
@@ -405,9 +408,8 @@ def run():
                 if os.path.exists(candidate_en):
                     social_image_en = candidate_en
 
-            # EN data pro Facebook EN stránku
-            en_title_social = article.get('en_title') or topic.get('topic') if en_result else None
-            en_excerpt = _extract_excerpt(article.get('en', ''), max_len=200) if en_result else None
+            # EN data pro Facebook EN stránku (en_title vypočítán výše na ř. 312)
+            en_excerpt_social = _extract_excerpt(article.get('en', ''), max_len=200) if en_result else None
             en_url_social = en_result['view_url'] if en_result else None
 
             social_results = social_poster.post_to_all(
@@ -416,8 +418,8 @@ def run():
                 image_path=social_image_cs,
                 url=cs_result['view_url'],
                 hashtags=hashtags[:5],
-                en_title=en_title_social,
-                en_excerpt=en_excerpt,
+                en_title=en_title if en_result else None,
+                en_excerpt=en_excerpt_social,
                 en_image_path=social_image_en,
                 en_url=en_url_social,
                 image_url=image_url,

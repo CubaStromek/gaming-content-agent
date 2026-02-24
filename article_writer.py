@@ -313,10 +313,10 @@ POSTUP:
         corrected_title = None
         en_title = None
 
-        title_cs_match = re.search(r'^TITULEK\s*CZ:\s*(.+)$', result_text, re.MULTILINE)
-        title_en_match = re.search(r'^TITULEK\s*EN:\s*(.+)$', result_text, re.MULTILINE)
+        title_cs_match = re.search(r'^\s*TITULEK\s*CZ:\s*(.+)$', result_text, re.MULTILINE)
+        title_en_match = re.search(r'^\s*TITULEK\s*EN:\s*(.+)$', result_text, re.MULTILINE)
         # Fallback na starý formát
-        title_old_match = re.search(r'^TITULEK:\s*(.+)$', result_text, re.MULTILINE)
+        title_old_match = re.search(r'^\s*TITULEK:\s*(.+)$', result_text, re.MULTILINE)
 
         if title_cs_match:
             corrected_title = title_cs_match.group(1).strip()
@@ -327,7 +327,7 @@ POSTUP:
             en_title = title_en_match.group(1).strip()
 
         # Odstraň řádky s titulky z textu, aby se nedostaly do HTML
-        result_text = re.sub(r'^TITULEK\s*(?:CZ|EN)?:\s*.+$', '', result_text, flags=re.MULTILINE)
+        result_text = re.sub(r'^\s*TITULEK\s*(?:CZ|EN)?:\s*.+$', '', result_text, flags=re.MULTILINE)
         result_text = re.sub(r'^KEYWORD\s*(?:CZ|EN)?:\s*.+$', '', result_text, flags=re.MULTILINE)  # zpětná kompatibilita
         result_text = result_text.strip()
 
