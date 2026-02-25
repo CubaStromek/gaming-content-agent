@@ -173,13 +173,18 @@ def run():
         log.info("-" * 40)
         log.info("TEMA %d/%d: %s (viralita: %d)", i, len(topics), topic_name, virality)
 
-        # Stahnuti zdrojovych clanku
+        # Stahnuti zdrojovych clanku (+ filtrování nefunkčních URL)
         source_urls = topic.get('sources', [])
         source_texts = []
+        valid_source_urls = []
         for url in source_urls[:3]:  # max 3 zdroje
             text = article_writer.scrape_full_article(url)
             if not text.startswith('[Chyba'):
                 source_texts.append(text)
+                valid_source_urls.append(url)
+            else:
+                log.warning("Zdroj nedostupný, nebude v odkazech: %s", url[:80])
+        source_urls = valid_source_urls
 
         if not source_texts:
             log.warning("Zadne zdrojove texty pro '%s', preskakuji", topic_name)

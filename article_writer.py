@@ -270,6 +270,8 @@ def write_article(topic: Dict, source_texts: List[str], length: str = 'medium') 
 
     if length == 'short':
         length_instruction = "Článek musí mít 800-1500 znaků (krátká zpráva, 3-4 odstavce)"
+    elif length == 'long':
+        length_instruction = "Článek musí mít 5000-8000 znaků (obsáhlý článek, 10-15 odstavců, více h2 sekcí, hlubší analýza a kontext)"
     else:
         length_instruction = "Článek musí mít 2000-3500 znaků (střední délka, 5-8 odstavců)"
 
@@ -311,7 +313,8 @@ POSTUP:
 <přesný překlad českého článku výše>"""
 
     try:
-        message = _call_api(client, config.ARTICLE_MODEL, 4096, 0.7, prompt)
+        max_tokens = 8192 if length == 'long' else 4096
+        message = _call_api(client, config.ARTICLE_MODEL, max_tokens, 0.7, prompt)
 
         result_text = message.content[0].text
 

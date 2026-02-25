@@ -57,6 +57,51 @@ with zipfile.ZipFile('GAMEfo_x_x_x.zip', 'w', zipfile.ZIP_DEFLATED) as zipf:
 
 ---
 
+## Ruční publikace článku (manual_article.py)
+
+Skript pro publikaci článku na vlastní téma — přeskočí RSS/analýzu a rovnou generuje + publikuje.
+
+**Voláno z Telegram bota** přes `/task napiš článek na GAMEfo o <téma>`.
+
+### Postup při použití
+
+1. **Najdi 2–3 zdrojové články** k tématu (URL anglických herních webů — IGN, PC Gamer, Kotaku atd.)
+2. Spusť skript:
+
+```bash
+python /Users/openclaw/AI-Projects/gaming-content-agent/manual_article.py \
+  --topic "Gothic remake" \
+  --game-name "Gothic" \
+  --sources "https://ign.com/article1,https://pcgamer.com/article2" \
+  --seo-keywords "gothic,remake,rpg" \
+  --status-tag news
+```
+
+### Parametry
+
+| Parametr | Povinný | Popis |
+|----------|---------|-------|
+| `--topic` | ano | Popis tématu článku |
+| `--sources` | ano | Zdrojové URL oddělené čárkou (min 1, max 5) |
+| `--game-name` | ne | Název hry (default = topic). Použito pro RAWG obrázek, SEO, social media |
+| `--title` | ne | Vlastní CZ titulek (jinak vygeneruje Claude) |
+| `--seo-keywords` | ne | SEO klíčová slova oddělená čárkou |
+| `--status-tag` | ne | news, update, leak, critical, success, indie, review, trailer, rumor, info, finance, tema, preview |
+
+### Pipeline
+
+`Zdroje → article_writer (CZ+EN) → YouTube embed → RAWG obrázek → WordPress publish → FB post obrázky → Social media (X.com, FB, Threads)`
+
+### Příklad z Telegramu
+
+Uživatel: `/task napiš článek na GAMEfo o tom, že GTA 6 bylo odloženo na 2027`
+
+Claude Code CLI by měl:
+1. Vyhledat 2-3 zdrojové články na webu (WebSearch)
+2. Spustit `python manual_article.py --topic "GTA 6 odloženo na 2027" --game-name "GTA 6" --sources "url1,url2" --status-tag critical`
+
+---
+
 ## Android appka (APP/)
 
 **Package:** `com.cubastromek.gamefo` | **Config:** `APP/app.config.ts`
