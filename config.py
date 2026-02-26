@@ -46,6 +46,10 @@ FACEBOOK_PAGE_ID_EN = os.getenv("FACEBOOK_PAGE_ID_EN", "")
 FACEBOOK_PAGE_TOKEN_EN = os.getenv("FACEBOOK_PAGE_TOKEN_EN", "")
 
 # Threads API (Meta Graph API)
+# POZOR: Účet @gamefo.cz byl permanentně zabanován Metou dne 2026-02-25.
+# THREADS_ENABLED=false vypíná posting na Threads. Pro re-aktivaci s novým účtem
+# nastav THREADS_ENABLED=true a aktualizuj THREADS_USER_ID + THREADS_ACCESS_TOKEN.
+THREADS_ENABLED = os.getenv("THREADS_ENABLED", "false").lower() in ("1", "true", "yes")
 THREADS_USER_ID = os.getenv("THREADS_USER_ID", "")
 THREADS_ACCESS_TOKEN = os.getenv("THREADS_ACCESS_TOKEN", "")
 
@@ -64,7 +68,7 @@ def is_facebook_configured(lang='cs'):
     return bool(FACEBOOK_PAGE_ID_CS and FACEBOOK_PAGE_TOKEN_CS)
 
 def is_threads_configured():
-    return bool(THREADS_USER_ID and THREADS_ACCESS_TOKEN)
+    return bool(THREADS_ENABLED and THREADS_USER_ID and THREADS_ACCESS_TOKEN)
 
 # SQLite databáze
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'gamefo.db')

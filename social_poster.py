@@ -1,10 +1,11 @@
 """
-Social Media Poster — postuje na X.com (Twitter), Threads a Facebook Page.
+Social Media Poster — postuje na X.com (Twitter) a Facebook Page.
 Volán z auto_publish.py po úspěšné publikaci článku na WordPress.
 
 Twitter: jen CZ (uživatel má jen českou mutaci)
-Threads: jen CZ (max 500 znaků, Meta Graph API)
 Facebook: CZ stránka (GAMEfo) + EN stránka (GAMEFOen)
+Threads: VYPNUTO (účet @gamefo.cz permanentně zabanován Metou 2026-02-25).
+         Kód zachován pro případ re-aktivace s novým účtem (config.THREADS_ENABLED).
 """
 
 import os
@@ -267,7 +268,8 @@ def post_to_all(title, excerpt, image_path, url, hashtags=None,
             results['twitter'] = {'id': None, 'url': str(e)}
 
     # Threads — jen CZ (max 500 znaků)
-    if config.is_threads_configured() or config.SOCIAL_DRY_RUN:
+    # POZOR: THREADS_ENABLED=false → celý blok se přeskočí (účet zabanován 2026-02-25)
+    if config.THREADS_ENABLED and (config.is_threads_configured() or config.SOCIAL_DRY_RUN):
         try:
             th_text = _build_post_text(title, excerpt, url, hashtags, max_len=500)
             th_id, th_url = post_to_threads(th_text, image_url=image_url)
