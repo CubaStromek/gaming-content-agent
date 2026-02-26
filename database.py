@@ -37,6 +37,15 @@ CREATE TABLE IF NOT EXISTS feed_health (
     last_failure TEXT
 );
 
+CREATE TABLE IF NOT EXISTS social_posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    post_id TEXT,
+    article_title TEXT,
+    timestamp TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT

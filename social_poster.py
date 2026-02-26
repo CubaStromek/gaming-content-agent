@@ -9,10 +9,67 @@ Threads: VYPNUTO (účet @gamefo.cz permanentně zabanován Metou 2026-02-25).
 """
 
 import os
+import random
+import time
+from datetime import datetime
+
 import config
+from database import get_db
 from logger import setup_logger
 
 log = setup_logger(__name__)
+
+
+def get_today_social_count():
+    """Vrátí počet social media postů (článků) odeslaných dnes.
+    Počítá jen '_batch' záznamy — 1 článek = 1 slot bez ohledu na počet platforem."""
+    today = datetime.now().strftime('%Y-%m-%d')
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM social_posts WHERE date = ? AND platform = '_batch'", (today,)
+        ).fetchone()
+        return row[0] if row else 0
+    except Exception:
+        # Tabulka ještě neexistuje — vrať 0
+        return 0
+    finally:
+        conn.close()
+
+
+def log_social_post(platform, post_id, article_title):
+    """Zaznamená odeslaný social post do DB."""
+    now = datetime.now()
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO social_posts (date, platform, post_id, article_title, timestamp) VALUES (?, ?, ?, ?, ?)",
+            (now.strftime('%Y-%m-%d'), platform, str(post_id) if post_id else None,
+             article_title, now.strftime('%Y-%m-%dT%H:%M:%S')),
+        )
+        conn.commit()
+    except Exception as e:
+        log.warning("Nepodařilo se zalogovat social post: %s", e)
+    finally:
+        conn.close()
+
+
+def can_post_social():
+    """Zkontroluje, jestli jsme ještě nepřekročili denní limit."""
+    count = get_today_social_count()
+    limit = config.SOCIAL_DAILY_LIMIT
+    if count >= limit:
+        log.info("Denní social limit dosažen (%d/%d), přeskakuji social posting", count, limit)
+        return False
+    log.info("Social posting: %d/%d dnes", count, limit)
+    return True
+
+
+def random_delay():
+    """Počká náhodnou dobu před social postem (aby to nevypadalo jako bot)."""
+    delay = random.randint(config.SOCIAL_DELAY_MIN, config.SOCIAL_DELAY_MAX)
+    log.info("Náhodný delay před social postem: %ds", delay)
+    time.sleep(delay)
 
 
 def _build_post_text(title, excerpt, url, hashtags, max_len=None):
@@ -253,9 +310,22 @@ def post_to_all(title, excerpt, image_path, url, hashtags=None,
     Twitter: jen CZ verze
     Facebook: CZ na GAMEfo, EN na GAMEFOen (pokud jsou k dispozici EN data)
 
+    Denní limit: SOCIAL_DAILY_LIMIT (default 3) — počítá se 1 článek = 1 post
+    (i když se postne na víc platforem najednou).
+    Náhodný delay před postem: SOCIAL_DELAY_MIN–SOCIAL_DELAY_MAX sekund.
+
     Vrací dict s výsledky.
     """
     results = {}
+
+    # Kontrola denního limitu
+    if not can_post_social():
+        results['skipped'] = 'daily_limit_reached'
+        return results
+
+    # Náhodný delay (přeskočí v dry-run režimu)
+    if not config.SOCIAL_DRY_RUN:
+        random_delay()
 
     # Twitter — jen CZ (max 280 znaků)
     if config.is_twitter_configured() or config.SOCIAL_DRY_RUN:
@@ -263,6 +333,8 @@ def post_to_all(title, excerpt, image_path, url, hashtags=None,
             tw_text = _build_post_text(title, excerpt, url, hashtags, max_len=280)
             tw_id, tw_url = post_to_twitter(tw_text, image_path=image_path, url=url)
             results['twitter'] = {'id': tw_id, 'url': tw_url}
+            if tw_id:
+                log_social_post('twitter', tw_id, title)
         except Exception as e:
             log.warning("Twitter posting selhalo: %s", e)
             results['twitter'] = {'id': None, 'url': str(e)}
@@ -274,6 +346,8 @@ def post_to_all(title, excerpt, image_path, url, hashtags=None,
             th_text = _build_post_text(title, excerpt, url, hashtags, max_len=500)
             th_id, th_url = post_to_threads(th_text, image_url=image_url)
             results['threads'] = {'id': th_id, 'url': th_url}
+            if th_id:
+                log_social_post('threads', th_id, title)
         except Exception as e:
             log.warning("Threads posting selhalo: %s", e)
             results['threads'] = {'id': None, 'url': str(e)}
@@ -284,6 +358,8 @@ def post_to_all(title, excerpt, image_path, url, hashtags=None,
             fb_text = _build_post_text(title, excerpt, url, hashtags)
             fb_id, fb_url = post_to_facebook(fb_text, image_path=image_path, lang='cs')
             results['facebook_cs'] = {'id': fb_id, 'url': fb_url}
+            if fb_id:
+                log_social_post('facebook_cs', fb_id, title)
         except Exception as e:
             log.warning("Facebook CZ posting selhalo: %s", e)
             results['facebook_cs'] = {'id': None, 'url': str(e)}
@@ -294,9 +370,16 @@ def post_to_all(title, excerpt, image_path, url, hashtags=None,
             fb_en_text = _build_post_text(en_title, en_excerpt or '', en_url, hashtags)
             fb_en_id, fb_en_url = post_to_facebook(fb_en_text, image_path=en_image_path, lang='en')
             results['facebook_en'] = {'id': fb_en_id, 'url': fb_en_url}
+            if fb_en_id:
+                log_social_post('facebook_en', fb_en_id, title)
         except Exception as e:
             log.warning("Facebook EN posting selhalo: %s", e)
             results['facebook_en'] = {'id': None, 'url': str(e)}
+
+    # Zaloguj jako 1 social post (1 článek = 1 "slot" bez ohledu na počet platforem)
+    # Toto je hlavní počítadlo pro denní limit
+    if results and 'skipped' not in results:
+        log_social_post('_batch', None, title)
 
     if not results:
         log.info("Žádná sociální síť není nakonfigurována, přeskakuji social posting")

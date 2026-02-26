@@ -56,6 +56,13 @@ THREADS_ACCESS_TOKEN = os.getenv("THREADS_ACCESS_TOKEN", "")
 # Social media dry-run (loguje, ale nepostuje)
 SOCIAL_DRY_RUN = os.getenv("SOCIAL_DRY_RUN", "").lower() in ("1", "true", "yes")
 
+# Denní limit social media postů (ochrana proti banu za spam)
+SOCIAL_DAILY_LIMIT = int(os.getenv("SOCIAL_DAILY_LIMIT", "3"))
+
+# Náhodný delay před social postem (sekundy) — aby to nevypadalo jako bot
+SOCIAL_DELAY_MIN = int(os.getenv("SOCIAL_DELAY_MIN", "60"))
+SOCIAL_DELAY_MAX = int(os.getenv("SOCIAL_DELAY_MAX", "300"))
+
 def is_wp_configured():
     return bool(WP_URL and WP_USER and WP_APP_PASSWORD)
 
