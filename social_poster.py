@@ -20,18 +20,50 @@ from logger import setup_logger
 log = setup_logger(__name__)
 
 
-def get_today_social_count():
-    """Vrátí počet social media postů (článků) odeslaných dnes.
-    Počítá jen '_batch' záznamy — 1 článek = 1 slot bez ohledu na počet platforem."""
+# Časová okna pro rozložení social postů přes den
+# Auto-publish běží v 8, 11, 14, 17, 20h — každé okno dostane max 1 social post
+SOCIAL_SLOTS = {
+    'morning':   (6, 12),   # 6:00–11:59 → run 8:00, 11:00
+    'afternoon': (12, 17),  # 12:00–16:59 → run 14:00
+    'evening':   (17, 23),  # 17:00–22:59 → run 17:00, 20:00
+}
+
+
+def get_current_slot():
+    """Vrátí aktuální časový slot (morning/afternoon/evening) nebo None."""
+    hour = datetime.now().hour
+    for slot_name, (start, end) in SOCIAL_SLOTS.items():
+        if start <= hour < end:
+            return slot_name
+    return None
+
+
+def is_slot_used(slot_name):
+    """Zkontroluje, jestli už byl daný slot dnes využitý."""
     today = datetime.now().strftime('%Y-%m-%d')
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT COUNT(*) FROM social_posts WHERE date = ? AND platform = '_batch'", (today,)
+            "SELECT COUNT(*) FROM social_posts WHERE date = ? AND platform = ? ",
+            (today, f'_slot_{slot_name}'),
+        ).fetchone()
+        return (row[0] if row else 0) > 0
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+def get_today_social_count():
+    """Vrátí počet social media postů (slotů) odeslaných dnes."""
+    today = datetime.now().strftime('%Y-%m-%d')
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM social_posts WHERE date = ? AND platform LIKE '_slot_%'", (today,)
         ).fetchone()
         return row[0] if row else 0
     except Exception:
-        # Tabulka ještě neexistuje — vrať 0
         return 0
     finally:
         conn.close()
@@ -55,13 +87,19 @@ def log_social_post(platform, post_id, article_title):
 
 
 def can_post_social():
-    """Zkontroluje, jestli jsme ještě nepřekročili denní limit."""
-    count = get_today_social_count()
-    limit = config.SOCIAL_DAILY_LIMIT
-    if count >= limit:
-        log.info("Denní social limit dosažen (%d/%d), přeskakuji social posting", count, limit)
+    """Zkontroluje, jestli aktuální časový slot ještě nemá social post.
+    Rozloží posty přes den: 1x ráno, 1x odpoledne, 1x večer."""
+    slot = get_current_slot()
+    if not slot:
+        log.info("Mimo social posting okno, přeskakuji")
         return False
-    log.info("Social posting: %d/%d dnes", count, limit)
+
+    if is_slot_used(slot):
+        log.info("Slot '%s' už dnes využitý, přeskakuji social posting", slot)
+        return False
+
+    count = get_today_social_count()
+    log.info("Social posting: slot '%s' volný (%d/3 dnes)", slot, count)
     return True
 
 
@@ -376,10 +414,11 @@ def post_to_all(title, excerpt, image_path, url, hashtags=None,
             log.warning("Facebook EN posting selhalo: %s", e)
             results['facebook_en'] = {'id': None, 'url': str(e)}
 
-    # Zaloguj jako 1 social post (1 článek = 1 "slot" bez ohledu na počet platforem)
-    # Toto je hlavní počítadlo pro denní limit
+    # Zaloguj využití časového slotu (1 článek = 1 slot: ráno/odpoledne/večer)
     if results and 'skipped' not in results:
-        log_social_post('_batch', None, title)
+        slot = get_current_slot()
+        if slot:
+            log_social_post(f'_slot_{slot}', None, title)
 
     if not results:
         log.info("Žádná sociální síť není nakonfigurována, přeskakuji social posting")
