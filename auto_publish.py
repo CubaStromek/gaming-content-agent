@@ -23,6 +23,7 @@ import file_manager
 import wp_publisher
 import publish_log
 import youtube_embed
+import section_images
 import social_poster
 import topic_dedup
 from logger import setup_logger
@@ -251,12 +252,27 @@ def run():
         else:
             log.info("Žádná zmínka o videu v článku, přeskakuji YouTube embed")
 
+        # RAWG screenshoty → WP meta pro Story Mode v appce (ne inline v HTML)
+        section_images_meta = None
+        screenshots = section_images.fetch_rawg_screenshots(game_name)
+        if screenshots:
+            uploaded_screenshots = []
+            for sc_url in screenshots:
+                sc_id, sc_src, sc_err = wp_publisher.upload_media(sc_url, title=game_name)
+                if sc_id and sc_src:
+                    uploaded_screenshots.append((sc_id, sc_src))
+                else:
+                    log.warning("Screenshot upload selhal: %s", sc_err)
+            if uploaded_screenshots:
+                section_images_meta = section_images.build_section_images_meta(uploaded_screenshots)
+                log.info("Screenshoty pro Story Mode: %d uploadnuto", len(uploaded_screenshots))
+
         # Hledani featured image pres RAWG (pouzij cisty nazev hry)
         featured_image_id = None
         image_url = search_rawg_image(game_name)
         if image_url:
             log.info("RAWG image nalezen, uploaduji...")
-            media_id, err = wp_publisher.upload_media(image_url, title=title)
+            media_id, _, err = wp_publisher.upload_media(image_url, title=title)
             if media_id:
                 featured_image_id = media_id
                 log.info("Featured image uploaded (ID: %d)", media_id)
@@ -302,6 +318,7 @@ def run():
             source_info=source_info,
             status='publish',
             focus_keyword=focus_kw,
+            section_images=section_images_meta,
         )
 
         if cs_err:
@@ -346,6 +363,7 @@ def run():
                 source_info=source_info,
                 status='publish',
                 focus_keyword=en_focus_kw,
+                section_images=section_images_meta,
             )
 
             if en_err:

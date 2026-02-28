@@ -25,6 +25,7 @@ import article_writer
 import wp_publisher
 import social_poster
 import youtube_embed
+import section_images
 import publish_log
 from logger import setup_logger
 from auto_publish import search_rawg_image, _extract_excerpt
@@ -142,19 +143,34 @@ def publish_manual_article(topic_name, game_name, source_urls, title=None,
                 else:
                     article['en'] = youtube_embed.force_embed_youtube(article['en'], video_id, lang='en')
 
-    # 5. Featured image (RAWG)
+    # 5. RAWG screenshoty → WP meta pro Story Mode v appce (ne inline v HTML)
+    section_images_meta = None
+    screenshots = section_images.fetch_rawg_screenshots(game_name)
+    if screenshots:
+        uploaded_screenshots = []
+        for sc_url in screenshots:
+            sc_id, sc_src, sc_err = wp_publisher.upload_media(sc_url, title=game_name)
+            if sc_id and sc_src:
+                uploaded_screenshots.append((sc_id, sc_src))
+            else:
+                log.warning("Screenshot upload selhal: %s", sc_err)
+        if uploaded_screenshots:
+            section_images_meta = section_images.build_section_images_meta(uploaded_screenshots)
+            log.info("Screenshoty pro Story Mode: %d uploadnuto", len(uploaded_screenshots))
+
+    # 6. Featured image (RAWG)
     featured_image_id = None
     image_url = search_rawg_image(game_name)
     if image_url:
         log.info("RAWG image nalezen, uploaduji...")
-        media_id, err = wp_publisher.upload_media(image_url, title=title)
+        media_id, _, err = wp_publisher.upload_media(image_url, title=title)
         if media_id:
             featured_image_id = media_id
             log.info("Featured image uploaded (ID: %d)", media_id)
         else:
             log.warning("Upload image selhal: %s", err)
 
-    # 6. SEO keywords jako tagy
+    # 7. SEO keywords jako tagy
     tag_names = list(seo_keywords) if seo_keywords else None
 
     # Validace status_tag
@@ -174,7 +190,7 @@ def publish_manual_article(topic_name, game_name, source_urls, title=None,
 
     source_info = '\n'.join(source_urls)
 
-    # 7. Publikace CZ
+    # 8. Publikace CZ
     log.info("Publikuji CZ verzi...")
     cs_content = wp_publisher.strip_first_heading(article['cs'])
     cs_result, cs_err = wp_publisher.create_draft(
@@ -188,6 +204,7 @@ def publish_manual_article(topic_name, game_name, source_urls, title=None,
         source_info=source_info,
         status='publish',
         focus_keyword=focus_kw,
+        section_images=section_images_meta,
     )
 
     if cs_err:
@@ -196,7 +213,7 @@ def publish_manual_article(topic_name, game_name, source_urls, title=None,
 
     log.info("CZ publikován: %s", cs_result['view_url'])
 
-    # 8. Publikace EN
+    # 9. Publikace EN
     en_result = None
     if article.get('en'):
         if not en_title:
@@ -221,6 +238,7 @@ def publish_manual_article(topic_name, game_name, source_urls, title=None,
             source_info=source_info,
             status='publish',
             focus_keyword=en_focus_kw,
+            section_images=section_images_meta,
         )
 
         if en_err:
@@ -233,7 +251,7 @@ def publish_manual_article(topic_name, game_name, source_urls, title=None,
             else:
                 log.warning("Propojení selhalo: %s", link_err)
 
-    # 9. FB post obrázky
+    # 10. FB post obrázky
     import requests as req
     if image_url:
         try:
@@ -269,7 +287,7 @@ def publish_manual_article(topic_name, game_name, source_urls, title=None,
         except Exception as e:
             log.warning("FB post generování selhalo: %s", e)
 
-    # 10. Social media posting
+    # 11. Social media posting
     social_results = {}
     try:
         excerpt = _extract_excerpt(article.get('cs', ''), max_len=200)
@@ -309,7 +327,7 @@ def publish_manual_article(topic_name, game_name, source_urls, title=None,
     except Exception as e:
         log.warning("Social posting selhalo: %s", e)
 
-    # 11. Publish log
+    # 12. Publish log
     publish_log.log_decision({
         'action': 'published',
         'source': 'manual',
@@ -325,7 +343,7 @@ def publish_manual_article(topic_name, game_name, source_urls, title=None,
         'social': social_results,
     })
 
-    # 12. Výstup
+    # 13. Výstup
     elapsed = (datetime.now() - start_time).total_seconds()
     log.info("=" * 60)
     log.info("HOTOVO za %.0f sekund", elapsed)
@@ -355,7 +373,10 @@ def publish_manual_article(topic_name, game_name, source_urls, title=None,
         print(f"EN: {en_result['view_url']}")
     if social_results:
         for platform, data in social_results.items():
-            status = data.get('url', 'N/A')
+            if isinstance(data, dict):
+                status = data.get('url', 'N/A')
+            else:
+                status = str(data)
             print(f"{platform}: {status}")
     print(f"Náklady: {article.get('cost', '?')}")
     print(f"Čas: {elapsed:.0f}s")

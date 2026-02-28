@@ -212,11 +212,12 @@ class TestUploadMedia:
         # Mock WP upload
         mock_upload_resp = MagicMock()
         mock_upload_resp.status_code = 201
-        mock_upload_resp.json.return_value = {'id': 123}
+        mock_upload_resp.json.return_value = {'id': 123, 'source_url': 'https://blog.example.com/wp-content/uploads/image.png'}
         mock_post.return_value = mock_upload_resp
 
-        media_id, error = wp_publisher.upload_media("https://example.com/image.png", title="Test")
+        media_id, source_url, error = wp_publisher.upload_media("https://example.com/image.png", title="Test")
         assert media_id == 123
+        assert source_url == 'https://blog.example.com/wp-content/uploads/image.png'
         assert error is None
 
     @patch('wp_publisher.requests.get')
@@ -225,8 +226,9 @@ class TestUploadMedia:
         mock_resp.status_code = 404
         mock_get.return_value = mock_resp
 
-        media_id, error = wp_publisher.upload_media("https://example.com/missing.png")
+        media_id, source_url, error = wp_publisher.upload_media("https://example.com/missing.png")
         assert media_id is None
+        assert source_url is None
         assert "404" in error
 
 

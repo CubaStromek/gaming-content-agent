@@ -213,13 +213,13 @@ def get_status_tags(force_refresh=False):
 def upload_media(image_url, title=""):
     """
     Stáhne obrázek z URL a uploadne ho do WP media library.
-    Vrací (media_id, None) nebo (None, error_string).
+    Vrací (media_id, source_url, None) nebo (None, None, error_string).
     """
     try:
         # Stáhni obrázek
         img_resp = requests.get(image_url, timeout=15, stream=True)
         if img_resp.status_code != 200:
-            return (None, f"Cannot download image: HTTP {img_resp.status_code}")
+            return (None, None, f"Cannot download image: HTTP {img_resp.status_code}")
 
         content_type = img_resp.headers.get('Content-Type', 'image/jpeg')
 
@@ -244,15 +244,16 @@ def upload_media(image_url, title=""):
         )
 
         if resp.status_code not in (200, 201):
-            return (None, f"WP media upload error {resp.status_code}: {resp.text[:200]}")
+            return (None, None, f"WP media upload error {resp.status_code}: {resp.text[:200]}")
 
         media_data = resp.json()
-        return (media_data['id'], None)
+        source_url = media_data.get('source_url', '')
+        return (media_data['id'], source_url, None)
 
     except requests.exceptions.Timeout:
-        return (None, "Image upload timeout")
+        return (None, None, "Image upload timeout")
     except Exception as e:
-        return (None, f"Media upload error: {str(e)}")
+        return (None, None, f"Media upload error: {str(e)}")
 
 
 def upload_media_file(file_data, filename, content_type, caption="", alt_text=""):
@@ -360,7 +361,7 @@ def _resolve_tag_ids(tag_names):
     return (tag_ids, None)
 
 
-def create_draft(title, content, category_ids=None, tag_names=None, lang=None, featured_image_id=None, status_tag=None, source_info=None, status='draft', focus_keyword=None):
+def create_draft(title, content, category_ids=None, tag_names=None, lang=None, featured_image_id=None, status_tag=None, source_info=None, status='draft', focus_keyword=None, section_images=None):
     """
     Vytvoří draft post na WP.
     Vrací ({id, edit_url, view_url}, None) nebo (None, error_string).
@@ -396,6 +397,8 @@ def create_draft(title, content, category_ids=None, tag_names=None, lang=None, f
             meta['gameinfo_status_tag'] = status_tag
         if source_info:
             meta['gameinfo_source'] = source_info
+        if section_images:
+            meta['gameinfo_section_images'] = section_images
         if meta:
             post_data['meta'] = meta
 
