@@ -253,19 +253,8 @@ def run():
             log.info("Žádná zmínka o videu v článku, přeskakuji YouTube embed")
 
         # RAWG screenshoty → WP meta pro Story Mode v appce (ne inline v HTML)
-        section_images_meta = None
-        screenshots = section_images.fetch_rawg_screenshots(game_name)
-        if screenshots:
-            uploaded_screenshots = []
-            for sc_url in screenshots:
-                sc_id, sc_src, sc_err = wp_publisher.upload_media(sc_url, title=game_name)
-                if sc_id and sc_src:
-                    uploaded_screenshots.append((sc_id, sc_src))
-                else:
-                    log.warning("Screenshot upload selhal: %s", sc_err)
-            if uploaded_screenshots:
-                section_images_meta = section_images.build_section_images_meta(uploaded_screenshots)
-                log.info("Screenshoty pro Story Mode: %d uploadnuto", len(uploaded_screenshots))
+        # Nejdřív hledá existující ve WP, fallback na RAWG API + upload
+        section_images_meta = section_images.get_or_fetch_screenshots(game_name)
 
         # Hledani featured image pres RAWG (pouzij cisty nazev hry)
         featured_image_id = None
