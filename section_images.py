@@ -8,12 +8,20 @@ podle názvu hry — šetří RAWG API volání i WP storage.
 """
 
 import json
+import re
 import requests
 import config
 import wp_publisher
 from logger import setup_logger
 
 log = setup_logger(__name__)
+
+
+def _slugify(text):
+    """Převede název hry na URL-safe slug (např. 'GTA 6' → 'gta-6')."""
+    text = text.lower().strip()
+    text = re.sub(r'[^a-z0-9]+', '-', text)
+    return text.strip('-') or 'game'
 
 
 def find_existing_screenshots(game_name, min_count=3, max_count=5):
@@ -121,8 +129,10 @@ def get_or_fetch_screenshots(game_name, max_count=5):
         return None
 
     uploaded = []
-    for sc_url in urls:
-        sc_id, sc_src, sc_err = wp_publisher.upload_media(sc_url, title=game_name)
+    slug = _slugify(game_name)
+    for i, sc_url in enumerate(urls, 1):
+        fname = f"{slug}-screenshot-{i}.jpg"
+        sc_id, sc_src, sc_err = wp_publisher.upload_media(sc_url, title=game_name, custom_filename=fname)
         if sc_id and sc_src:
             uploaded.append((sc_id, sc_src))
         else:

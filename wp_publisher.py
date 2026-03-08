@@ -210,12 +210,53 @@ def get_status_tags(force_refresh=False):
         return (None, f"Error fetching status tags: {str(e)}")
 
 
-def upload_media(image_url, title=""):
+def _find_existing_media(filename):
+    """
+    Hledá existující media položku v WP podle filename.
+    Vrací (media_id, source_url) nebo (None, None).
+    """
+    try:
+        search_name = filename.rsplit('.', 1)[0] if '.' in filename else filename
+        resp = requests.get(
+            _api_url('media'),
+            headers=_auth_headers(),
+            params={'search': search_name, 'per_page': 5},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            for item in resp.json():
+                slug = item.get('slug', '')
+                src = item.get('source_url', '')
+                if search_name.lower() in slug or filename.lower() in src.lower():
+                    return (item['id'], src)
+    except Exception:
+        pass
+    return (None, None)
+
+
+def upload_media(image_url, title="", custom_filename=""):
     """
     Stáhne obrázek z URL a uploadne ho do WP media library.
+    Pokud media se stejným filename už existuje, vrátí existující.
     Vrací (media_id, source_url, None) nebo (None, None, error_string).
     """
     try:
+        from urllib.parse import urlparse
+
+        # Určení názvu souboru
+        if custom_filename:
+            filename = custom_filename
+        else:
+            path = urlparse(image_url).path
+            filename = path.split('/')[-1] if '/' in path else 'image.jpg'
+            if '.' not in filename:
+                filename = 'image.jpg'
+
+        # Dedup: zkontroluj jestli stejný soubor už v WP médiích existuje
+        existing_id, existing_url = _find_existing_media(filename)
+        if existing_id:
+            return (existing_id, existing_url, None)
+
         # Stáhni obrázek
         img_resp = requests.get(image_url, timeout=15, stream=True)
         if img_resp.status_code != 200:
@@ -223,11 +264,7 @@ def upload_media(image_url, title=""):
 
         content_type = img_resp.headers.get('Content-Type', 'image/jpeg')
 
-        # Určení názvu souboru z URL
-        from urllib.parse import urlparse
-        path = urlparse(image_url).path
-        filename = path.split('/')[-1] if '/' in path else 'image.jpg'
-        if '.' not in filename:
+        if '.' not in filename.split('/')[-1]:
             ext = content_type.split('/')[-1].replace('jpeg', 'jpg')
             filename = f"image.{ext}"
 
@@ -247,8 +284,22 @@ def upload_media(image_url, title=""):
             return (None, None, f"WP media upload error {resp.status_code}: {resp.text[:200]}")
 
         media_data = resp.json()
+        media_id = media_data['id']
         source_url = media_data.get('source_url', '')
-        return (media_data['id'], source_url, None)
+
+        # Nastav title a alt_text pokud byl zadán title
+        if title:
+            try:
+                requests.post(
+                    _api_url(f'media/{media_id}'),
+                    headers=_auth_headers(),
+                    json={'title': title, 'alt_text': title},
+                    timeout=10,
+                )
+            except Exception:
+                pass  # non-critical
+
+        return (media_id, source_url, None)
 
     except requests.exceptions.Timeout:
         return (None, None, "Image upload timeout")
