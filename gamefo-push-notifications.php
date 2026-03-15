@@ -2,7 +2,7 @@
 /**
  * Plugin Name: GameFo Push Notifications
  * Description: Handles device tokens and sends push notifications via Expo when new posts are published.
- * Version: 1.3.0
+ * Version: 1.3.1
  * Author: GAMEfo Team
  * Text Domain: gamefo-push
  */
@@ -40,12 +40,33 @@ register_activation_hook(__FILE__, 'gamefo_create_device_table');
 // Also create table when theme is switched (for theme-bundled version)
 add_action('after_switch_theme', 'gamefo_create_device_table');
 
-// Migrate existing DB: add language column if missing
+// Migrate existing DB
 add_action('init', function() {
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'gamefo_devices';
     $db_version = get_option('gamefo_push_db_version', '1.0');
+
+    // v1.1 — add language column
     if (version_compare($db_version, '1.1', '<')) {
-        gamefo_create_device_table(); // dbDelta handles ALTER TABLE
+        gamefo_create_device_table();
         update_option('gamefo_push_db_version', '1.1');
+    }
+
+    // v1.2 — deduplicate tokens + ensure UNIQUE KEY
+    // dbDelta nepřidává UNIQUE KEY do existující tabulky — musíme sami
+    if (version_compare($db_version, '1.2', '<')) {
+        // Smaž duplikáty: ponechej jen nejnovější záznam pro každý token
+        $wpdb->query("
+            DELETE d1 FROM {$table_name} d1
+            INNER JOIN {$table_name} d2
+            ON d1.token = d2.token AND d1.id < d2.id
+        ");
+
+        // Přidej UNIQUE KEY pokud chybí (ALTER IGNORE přeskočí zbývající duplikáty)
+        $wpdb->query("ALTER TABLE {$table_name} ADD UNIQUE KEY IF NOT EXISTS token_unique (token)");
+
+        update_option('gamefo_push_db_version', '1.2');
+        gamefo_push_log('MIGRATION v1.2: duplicates removed, unique key ensured');
     }
 });
 
@@ -105,17 +126,37 @@ function gamefo_register_device(WP_REST_Request $request) {
 
     $table_name = $wpdb->prefix . 'gamefo_devices';
 
-    $result = $wpdb->replace(
-        $table_name,
-        array(
-            'token' => $token,
-            'platform' => $platform,
-            'language' => $language,
-            'created_at' => current_time('mysql'),
-            'last_used' => current_time('mysql')
-        ),
-        array('%s', '%s', '%s', '%s', '%s')
-    );
+    // Explicitní upsert — funguje i bez UNIQUE KEY v DB (bezpečné pro všechny verze tabulky)
+    $existing_id = $wpdb->get_var($wpdb->prepare(
+        "SELECT id FROM $table_name WHERE token = %s",
+        $token
+    ));
+
+    if ($existing_id) {
+        // Token existuje — jen aktualizuj jazyk a platform
+        $result = $wpdb->update(
+            $table_name,
+            array('platform' => $platform, 'language' => $language, 'last_used' => current_time('mysql')),
+            array('id' => $existing_id),
+            array('%s', '%s', '%s'),
+            array('%d')
+        );
+        gamefo_push_log('REGISTER UPDATE: existing token language set to ' . $language);
+    } else {
+        // Nový token — vlož
+        $result = $wpdb->insert(
+            $table_name,
+            array(
+                'token' => $token,
+                'platform' => $platform,
+                'language' => $language,
+                'created_at' => current_time('mysql'),
+                'last_used' => current_time('mysql')
+            ),
+            array('%s', '%s', '%s', '%s', '%s')
+        );
+        gamefo_push_log('REGISTER INSERT: new token, platform=' . $platform . ', lang=' . $language);
+    }
 
     if ($result === false) {
         gamefo_push_log('REGISTER failed: DB error — ' . $wpdb->last_error);

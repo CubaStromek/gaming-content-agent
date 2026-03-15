@@ -26,8 +26,8 @@ RSS Feeds → rss_scraper.py → claude_analyzer.py → email_sender.py
 ## WordPress šablona (wp-theme-gameinfo)
 
 - **Repo:** https://github.com/CubaStromek/gamefo-wordpress-theme (private)
-- **Lokální složka:** `wp-theme-gameinfo/`
-- **Verze:** 1.15.6 | WP 5.0+, PHP 7.4+
+- **Lokální složka:** `/Users/openclaw/AI-Projects/gamefo-wordpress-theme/`
+- **Verze:** 1.17.2 | WP 5.0+, PHP 7.4+
 - **Text Domain:** gamefo | Textdomain soubor: gameinfo-terminal
 - **Terminálový design:** dark/light mode, Inter + Fira Code fonty, Material Symbols ikony
 
