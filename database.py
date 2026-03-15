@@ -50,6 +50,17 @@ CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS cleanup_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    post_id INTEGER NOT NULL,
+    post_title TEXT,
+    lang TEXT,
+    paired_post_id INTEGER,
+    media_deleted INTEGER DEFAULT 0,
+    dry_run INTEGER DEFAULT 0
+);
 """
 
 

@@ -62,6 +62,14 @@ add_action('rest_api_init', function () {
             return current_user_can('edit_posts');
         },
     ]);
+
+    register_rest_route('gamefo/v1', '/post-translations/(?P<id>\d+)', [
+        'methods'  => 'GET',
+        'callback' => 'gamefo_get_post_translations',
+        'permission_callback' => function () {
+            return current_user_can('edit_posts');
+        },
+    ]);
 });
 
 function gamefo_filter_terms_by_lang($taxonomy, $lang) {
@@ -151,4 +159,17 @@ function gamefo_link_translations($request) {
         'cs'     => $cs_id,
         'en'     => $en_id,
     ]);
+}
+
+function gamefo_get_post_translations($request) {
+    if (!function_exists('pll_get_post_translations')) {
+        return new WP_Error('no_polylang', 'Polylang is not active', ['status' => 400]);
+    }
+
+    $post_id = absint($request['id']);
+    if (!get_post($post_id)) {
+        return new WP_Error('not_found', 'Post not found', ['status' => 404]);
+    }
+
+    return rest_ensure_response(pll_get_post_translations($post_id));
 }
