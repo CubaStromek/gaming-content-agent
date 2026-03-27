@@ -263,9 +263,12 @@ def publish_manual_article(topic_name, game_name, source_urls, title=None,
 
             if article.get('en') and en_title:
                 fb_output_en = os.path.join(os.path.dirname(__file__), 'output', 'fb-posts', f'{date_str}_{safe_name}_EN.png')
+                # Pro EN obrázek: game_name je anglický název hry (z --game-name),
+                # ale pokud fallbacknul na topic (český), použij jen en_title
+                en_fb_title = game_name if game_name != topic_name else ''
                 generate_fb_post(
                     thumbnail_path=local_thumb,
-                    title=game_name,
+                    title=en_fb_title,
                     subtitle=en_title,
                     output_path=fb_output_en,
                 )

@@ -219,9 +219,8 @@ def run():
 
         # YouTube embed (pokud kterakoliv verze zminuje video/trailer)
         # Video se hleda jednou a vlozi do obou verzi — CZ ctenari umi anglicky
-        game_name = topic.get('game_name', '')
-        if not game_name or game_name == 'N/A':
-            game_name = topic_name
+        game_name_raw = topic.get('game_name', '')
+        game_name = game_name_raw if (game_name_raw and game_name_raw != 'N/A') else topic_name
 
         cs_has_video = youtube_embed.has_video_reference(article['cs'], lang='cs')
         en_has_video = article.get('en') and youtube_embed.has_video_reference(article['en'], lang='en')
@@ -392,9 +391,11 @@ def run():
                 # EN verze (pokud existuje anglicky clanek)
                 if article.get('en') and en_title:
                     fb_output_en = os.path.join(os.path.dirname(__file__), 'output', 'fb-posts', f'{date_str}_{safe_name}_EN.png')
+                    # Pro EN obrázek: title = anglický název hry (z analyzeru), ne český topic
+                    en_fb_title = game_name_raw if (game_name_raw and game_name_raw != 'N/A') else ''
                     fb_path_en = generate_fb_post(
                         thumbnail_path=local_thumb,
-                        title=game_name,
+                        title=en_fb_title,
                         subtitle=en_title,
                         output_path=fb_output_en,
                     )
