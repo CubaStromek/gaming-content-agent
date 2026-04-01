@@ -187,8 +187,34 @@ def run():
                 log.warning("Zdroj nedostupný, nebude v odkazech: %s", url[:80])
         source_urls = valid_source_urls
 
+        # Fallback: pokud všechny zdroje selhaly, zkus najít alternativní URL z RSS článků
         if not source_texts:
-            log.warning("Zadne zdrojove texty pro '%s', preskakuji", topic_name)
+            log.warning("Všechny zdroje selhaly pro '%s', hledám alternativní URL z RSS...", topic_name)
+            topic_keywords = set(topic_name.lower().split())
+            # Odfiltruj stopwords
+            topic_keywords -= {'a', 'the', 'of', 'in', 'for', 'on', 'to', 'is', '-', '–', 'and', 'pro', 'nový', 'nová', 'nové', 'že', 'se', 'na', 'je', 'z', 'do', 'od', 'při', 'za'}
+            fallback_urls = []
+            for art in articles:
+                art_text = f"{art.get('title', '')} {art.get('summary', '')}".lower()
+                # Článek je relevantní pokud obsahuje alespoň 2 klíčová slova z názvu tématu
+                matches = sum(1 for kw in topic_keywords if kw in art_text)
+                if matches >= min(2, len(topic_keywords)) and art['link'] not in [u for u in source_urls]:
+                    fallback_urls.append(art['link'])
+            if fallback_urls:
+                log.info("Nalezeno %d alternativních URL, zkouším stáhnout...", len(fallback_urls))
+                for url in fallback_urls[:5]:  # max 5 pokusů
+                    text = article_writer.scrape_full_article(url)
+                    if not text.startswith('[Chyba'):
+                        source_texts.append(text)
+                        source_urls.append(url)
+                        log.info("Fallback zdroj OK: %s", url[:80])
+                        if len(source_texts) >= 2:
+                            break
+                    else:
+                        log.warning("Fallback zdroj nedostupný: %s", url[:80])
+
+        if not source_texts:
+            log.warning("Zadne zdrojove texty pro '%s' (ani po fallbacku), preskakuji", topic_name)
             publish_log.log_decision({
                 'action': 'skipped',
                 'reason': 'no_source_texts',
@@ -250,6 +276,16 @@ def run():
                 log.warning("YouTube video nenalezeno pro: %s", query)
         else:
             log.info("Žádná zmínka o videu v článku, přeskakuji YouTube embed")
+
+        # Rychlý test dostupnosti WP před jakýmkoliv odesíláním
+        if not wp_publisher.check_wp_available():
+            log.error("WP nedostupný — přeskakuji článek '%s' (prevence Fail2Ban)", topic_name)
+            publish_log.log_decision({
+                'action': 'skipped',
+                'reason': 'wp_unavailable',
+                'topic': topic_name,
+            })
+            continue
 
         # RAWG screenshoty → WP meta pro Story Mode v appce (ne inline v HTML)
         # Nejdřív hledá existující ve WP, fallback na RAWG API + upload

@@ -37,6 +37,26 @@ def is_configured():
     return config.is_wp_configured()
 
 
+def check_wp_available(timeout=8):
+    """
+    Rychlý test dostupnosti WP REST API (jeden lehký request).
+    Vrací True pokud WP odpovídá, False při timeoutu nebo connection erroru.
+    Používá se před sérií uploadů — prevence Fail2Ban banu při výpadku hostingu.
+    """
+    try:
+        resp = requests.get(
+            _api_url('posts'),
+            headers=_auth_headers(),
+            params={'per_page': 1},
+            timeout=timeout,
+        )
+        return resp.status_code in (200, 201)
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+        return False
+    except Exception:
+        return False
+
+
 def _to_gutenberg_blocks(html: str) -> str:
     """Převede surové HTML na Gutenberg block markup, aby WP nevyžadoval 'Převést na bloky'."""
     # Seznamy (před <p>, aby se nechytly <p> uvnitř <li>)

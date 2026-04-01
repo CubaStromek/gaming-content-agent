@@ -28,6 +28,7 @@ def find_existing_screenshots(game_name, min_count=3, max_count=5):
     """
     Hledá existující obrázky ve WP Media Library podle názvu hry (title search).
     Vrací list of (media_id, source_url) tuples, nebo prázdný list.
+    Vrací None pokud WP není dostupný (timeout/connection error) — signál pro přeskočení uploadu.
     """
     try:
         resp = requests.get(
@@ -62,6 +63,9 @@ def find_existing_screenshots(game_name, min_count=3, max_count=5):
 
         return []
 
+    except requests.exceptions.Timeout:
+        log.warning("WP media search timeout pro '%s' — WP nedostupný, přeskakuji upload screenshotů", game_name)
+        return None  # None = WP nedostupný, nespouštět upload
     except Exception as e:
         log.warning("WP media search error pro '%s': %s", game_name, e)
         return []
@@ -119,6 +123,9 @@ def get_or_fetch_screenshots(game_name, max_count=5):
 
     # 1. Zkus WP cache
     existing = find_existing_screenshots(game_name, min_count=3, max_count=max_count)
+    if existing is None:
+        # WP nedostupný — nespouštět upload, aby nedošlo k Fail2Ban banu
+        return None
     if existing:
         log.info("Screenshoty pro Story Mode: %d z WP cache", len(existing))
         return build_section_images_meta(existing)
@@ -137,6 +144,9 @@ def get_or_fetch_screenshots(game_name, max_count=5):
             uploaded.append((sc_id, sc_src))
         else:
             log.warning("Screenshot upload selhal: %s", sc_err)
+            if "timeout" in (sc_err or "").lower():
+                log.warning("WP upload timeout — přerušuji sérii uploadů pro '%s'", game_name)
+                break  # Při timeoutu neopakovat další pokusy — prevence Fail2Ban banu
 
     if not uploaded:
         return None

@@ -106,6 +106,7 @@ DŮLEŽITÉ:
 - Dej přednost news a analýzám před recenzemi
 - Pokud jsou tam oznámení nových her, dej jim prioritu
 - V sekci ZDROJE musíš uvést PLNÉ URL adresy (začínající https://), ne čísla článků!
+- ZDROJE: Ke každému tématu přiřaď VŠECHNY relevantní URL ze vstupních článků, které se tématu týkají. MINIMUM 2 zdroje, ideálně 3+. Různé weby často píšou o stejném tématu — najdi je všechny! Nikdy nepřiřazuj jen 1 zdroj, pokud existují další.
 - KONTEXT musí obsahovat konkrétní fakta a čísla, ne obecné fráze
 - NIKDY nevytvářej prázdná témata! Každé téma musí mít kompletní obsah všech sekcí
 - FAKTICKÁ PŘESNOST: NIKDY nepřipisuj hře českou/slovenskou origin, pokud to není faktem. Neoznačuj hry jako "český", "česká hra", "od českých tvůrců" apod., pokud vývojářské studio skutečně není z ČR/SR. Psaní pro české publikum NEZNAMENÁ, že máš hry falešně vydávat za české!
@@ -263,6 +264,7 @@ PRAVIDLA:
 - Pokud jsou tam oznámení nových her, dej jim prioritu
 - KONTEXT musí obsahovat konkrétní fakta a čísla, ne obecné fráze
 - V sources musíš uvést PLNÉ URL adresy (začínající https://) ze zdrojových článků
+- ZDROJE: Ke každému tématu přiřaď VŠECHNY relevantní URL ze vstupních článků, které se tématu týkají. MINIMUM 2 zdroje, ideálně 3+. Různé weby často píšou o stejném tématu — najdi je všechny!
 - FAKTICKÁ PŘESNOST: NIKDY nepřipisuj hře českou/slovenskou origin, pokud to není faktem
 - Počet témat musí být PŘESNĚ {max_topics}
 - STATUS TAG pravidla: "news" = běžná zpráva/oznámení, "update" = patch/aktualizace existující hry, "leak" = únik neoficiálních informací, "critical" = kritická/důležitá zpráva s velkým dopadem, "success" = prodejní rekord/milník/úspěch, "indie" = nezávislá hra, "review" = recenze, "trailer" = nový trailer/video, "rumor" = nepotvrzená spekulace, "info" = obecná informace/analýza, "finance" = finanční zpráva/akvizice/byznys, "tema" = tématický rozbor, "preview" = náhled/hands-on/preview. Defaultní je "news", ale snaž se vybrat co nejpřesnější tag.
