@@ -85,10 +85,10 @@ MAX_ARTICLES_PER_SOURCE = int(os.getenv("MAX_ARTICLES_PER_SOURCE", "10"))
 MIN_VIRALITY_SCORE = int(os.getenv("MIN_VIRALITY_SCORE", "50"))
 
 # Model pro generování článků
-ARTICLE_MODEL = "claude-sonnet-4-20250514"
+ARTICLE_MODEL = "claude-sonnet-4-6"
 
 # Model pro analýzu (přepisovatelný přes .env)
-ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "claude-sonnet-4-20250514")
+ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "claude-sonnet-4-6")
 
 # Maximální délka summary při scrapování RSS (znaky)
 SUMMARY_MAX_LENGTH = int(os.getenv("SUMMARY_MAX_LENGTH", "500"))

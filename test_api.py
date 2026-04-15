@@ -18,7 +18,7 @@ try:
     print("\n📡 Zkouším základní volání...")
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=50,
         messages=[{
             "role": "user",
@@ -28,7 +28,7 @@ try:
 
     print(f"✅ API funguje!")
     print(f"Odpověď: {message.content[0].text}")
-    print(f"Model: claude-sonnet-4-20250514")
+    print(f"Model: claude-sonnet-4-6")
 
 except Exception as e:
     print(f"❌ Chyba: {e}")

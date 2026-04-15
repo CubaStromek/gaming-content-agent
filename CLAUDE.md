@@ -9,7 +9,7 @@
 
 ## Přehled projektu
 
-Automatizovaný systém pro české gaming bloggery. Monitoruje herní weby (12 RSS feedů), analyzuje trendy Claude AI (Sonnet 4), posílá denní reporty emailem.
+Automatizovaný systém pro české gaming bloggery. Monitoruje herní weby (12 RSS feedů), analyzuje trendy Claude AI (Sonnet 4.6), posílá denní reporty emailem.
 
 ```
 RSS Feeds → rss_scraper.py → claude_analyzer.py → email_sender.py
@@ -19,7 +19,7 @@ RSS Feeds → rss_scraper.py → claude_analyzer.py → email_sender.py
 
 - **Spuštění:** `python main.py` (pipeline) nebo `python web_app.py` (web UI)
 - **Deduplikace:** `processed_articles.json` — filtruje nové články, čistí po 30 dnech
-- **Náklady:** ~$0.02–0.06/běh analýzy (Sonnet 4, ~5 800 tokenů), ~$0.05–0.20 navíc za vygenerovaný článek
+- **Náklady:** ~$0.02–0.06/běh analýzy (Sonnet 4.6, ~5 800 tokenů), ~$0.05–0.20 navíc za vygenerovaný článek
 
 ---
 
