@@ -269,13 +269,13 @@ def write_article(topic: Dict, source_texts: List[str], length: str = 'medium') 
     sources_list = "\n".join(source_urls)
 
     if length == 'short':
-        length_instruction = "Článek musí mít 800-1500 znaků (krátká zpráva, 3-4 odstavce)"
+        length_instruction = "Článek musí mít 800-1500 znaků (krátká analýza, 3-4 odstavce)"
     elif length == 'long':
-        length_instruction = "Článek musí mít 5000-8000 znaků (obsáhlý článek, 10-15 odstavců, více h2 sekcí, hlubší analýza a kontext)"
+        length_instruction = "Článek musí mít 5000-8000 znaků (deep-dive, 10-15 odstavců, více h2 sekcí, silná analýza a kontext)"
     else:
-        length_instruction = "Článek musí mít 2000-3500 znaků (střední délka, 5-8 odstavců)"
+        length_instruction = "Článek musí mít 2000-3500 znaků (střední analýza, 5-8 odstavců)"
 
-    prompt = f"""Napíš originální herní článek na základě zdrojových textů.
+    prompt = f"""Napíš ANALYTICKÝ herní článek s vlastním úhlem pohledu. Toto NENÍ přepis zprávy — je to komentář redaktora, který zpravodajskou událost zasazuje do kontextu a říká, CO TO ZNAMENÁ.
 
 TÉMA: {topic.get('topic', '')}
 NAVRŽENÝ TITULEK: {topic.get('title', '')}
@@ -283,28 +283,60 @@ NAVRŽENÝ TITULEK: {topic.get('title', '')}
 KONTEXT: {topic.get('context', '')}
 SEO KLÍČOVÁ SLOVA: {topic.get('seo_keywords', '')}
 
-ZDROJOVÉ TEXTY:
+ZDROJOVÉ TEXTY (použij JEN pro fakta, ne jako šablonu):
 {sources_combined}
 
-PRAVIDLA:
-- Piš VLASTNÍMI SLOVY, ne kopíruj ze zdrojů
+=== FILOZOFIE ČLÁNKU (KRITICKÉ) ===
+Zdrojové weby (IGN, PC Gamer...) už napsaly CO se stalo. Náš úkol je říct PROČ TO VADÍ / PROČ TO STOJÍ ZA POZORNOST. Google i čtenáři už tu novinku četli jinde. Pokud článek jen převypráví fakta, NEMÁ DŮVOD EXISTOVAT.
+
+Každý článek MUSÍ mít:
+1. **Jasný úhel** — redaktor má názor, ne jen "oznámeno X, očekává se Y"
+2. **Kontext** — proč je to součást většího trendu v herním průmyslu / žánru / u vývojáře
+3. **Důsledek** — co to znamená pro hráče, konkurenci, nebo budoucnost hry/studia
+4. **Hook v úvodu** — první odstavec NENÍ "Společnost X oznámila Y." Je to provokativní teze, paradox, srovnání, nebo otázka, která nutí číst dál
+
+ZAKÁZANÉ ÚVODY (inverted pyramid novinářského stylu):
+- "Vývojář X oznámil novou hru Y..."
+- "Na akci Z byl představen..."
+- "Podle nejnovějších zpráv..."
+
+DOBRÉ ÚVODY:
+- Paradox: "Čekalo se oznámení, přišlo odložení. A hráči jsou podivně klidní."
+- Teze: "Tohle není jen další delay. Je to symptom něčeho většího v celém AAA segmentu."
+- Kontrast: "Před rokem by to byl skandál. Dnes už nikoho nepřekvapí."
+- Otázka s napětím: "Kdo tu vlastně vyhrál — studio, vydavatel, nebo hráči?"
+
+STRUKTURA (doporučená, ne povinná — přizpůsob tématu):
+- Úvodní hook (první <p> = silná teze/paradox, NE shrnutí faktů)
+- <h2>Co se stalo</h2> — MAXIMÁLNĚ 2-3 věty holých faktů. Nerozmazávej.
+- <h2>Proč to vadí / proč je to jinak</h2> — ANALÝZA, kontext, srovnání
+- <h2>Co z toho plyne</h2> — důsledky, výhled, otázky do budoucna
+- Poslední odstavec: názor/provokativní shrnutí/otevřená otázka — NE "uvidíme, jak se to vyvine"
+
+=== PRAVIDLA ===
+- Piš VLASTNÍMI SLOVY, ze zdrojů přebírej JEN fakta a čísla, nikdy ne formulace
 - {length_instruction}
-- Formát: ČISTÉ HTML (h2 nadpisy, p odstavce, strong pro důležité)
+- Formát: ČISTÉ HTML (<h2>, <p>, <strong>)
 - NEPOUŽÍVEJ markdown! Žádné ```, ---, #, ** — POUZE HTML tagy
-- Styl: informativní, poutavý, pro české herní publikum
-- Zahrň konkrétní fakta a čísla ze zdrojů
+- Styl: analytický, s názorem, pro české herní publikum. NE neutrální zpravodajský tón. Nebojí se mít postoj.
+- Zahrň konkrétní fakta a čísla (to je zásadní pro důvěryhodnost analýzy)
 - NEZMIŇUJ zdroje v textu článku (ne "podle IGN...")
-- NEPŘIDÁVEJ h1 nadpis - ten bude jako titulek článku
-- FAKTICKÁ PŘESNOST: Zkontroluj, že titulek odpovídá obsahu článku. Pokud navržený titulek obsahuje nepravdivé tvrzení (např. označuje hru jako "českou", i když studio je zahraniční), OPRAV titulek tak, aby byl fakticky správný.
-- NA ZAČÁTEK výstupu VŽDY uveď titulky na samostatných řádcích:
-  TITULEK CZ: [český titulek]
-  TITULEK EN: [anglický titulek]
+- NEPŘIDÁVEJ h1 nadpis — ten bude jako titulek článku
+- NEPOUŽÍVEJ vatu typu "jak se situace vyvine, ukáže čas", "zatím není jasné", "uvidíme". Pokud je otazník, POJMENUJ ho konkrétně.
+- FAKTICKÁ PŘESNOST: Zkontroluj, že titulek odpovídá obsahu. Pokud navržený titulek obsahuje nepravdivé tvrzení (např. označuje hru jako "českou", i když studio je zahraniční), OPRAV titulek.
+- TITULEK: ne clickbait, ale musí mít ÚHEL (ne "X oznámil Y", spíš "X oznámil Y — a tady je problém" / "Proč X mění pravidla žánru" / "Co X neřekl o Y").
+- NA ZAČÁTEK výstupu VŽDY uveď titulky a meta popisy na samostatných řádcích:
+  TITULEK CZ: [český titulek s úhlem]
+  TITULEK EN: [anglický titulek s úhlem]
+  META CZ: [český meta description, 140-155 znaků, VŽDY ukončené tečkou/otazníkem, obsahuje klíčové slovo, musí lákat k prokliku]
+  META EN: [anglický meta description, 140-155 znaků, VŽDY ukončené tečkou/otazníkem, obsahuje klíčové slovo, musí lákat k prokliku]
 - KRITICKÉ: V nadpisech (h2) NEPOUŽÍVEJ Title Case! Velké písmeno POUZE na začátku věty a u vlastních jmen. ŠPATNĚ: "Nová Éra Pro Herní Průmysl". SPRÁVNĚ: "Nová éra pro herní průmysl". ŠPATNĚ: "What This Means For Players". SPRÁVNĚ: "What this means for players".
-- NEPŘIDÁVEJ sekci "Zdroje" ani "Sources" — odkazy na zdroje se přidají automaticky
+- KRITICKÉ: META CZ/EN NESMÍ být uťaté v půli věty! Krátký svébytný popis (1-2 věty) končící interpunkcí — NIKDY NE kopie úvodního odstavce.
+- NEPŘIDÁVEJ sekci "Zdroje" ani "Sources" — přidají se automaticky
 
 POSTUP:
-1. Nejdřív napiš článek v ČEŠTINĚ (BEZ sekce zdrojů)
-2. Potom PŘELOŽ celý článek do angličtiny
+1. Nejdřív napiš článek v ČEŠTINĚ (BEZ sekce zdrojů) — s úhlem, s názorem, ne neutrální referát
+2. Potom PŘELOŽ celý článek do angličtiny (zachovej úhel a tón)
 
 === ČESKY ===
 <článek v češtině jako HTML>
@@ -321,9 +353,13 @@ POSTUP:
         # Extrahuj titulky CZ a EN
         corrected_title = None
         en_title = None
+        meta_cs = None
+        meta_en = None
 
         title_cs_match = re.search(r'^\s*TITULEK\s*CZ:\s*(.+)$', result_text, re.MULTILINE)
         title_en_match = re.search(r'^\s*TITULEK\s*EN:\s*(.+)$', result_text, re.MULTILINE)
+        meta_cs_match = re.search(r'^\s*META\s*CZ:\s*(.+)$', result_text, re.MULTILINE)
+        meta_en_match = re.search(r'^\s*META\s*EN:\s*(.+)$', result_text, re.MULTILINE)
         # Fallback na starý formát
         title_old_match = re.search(r'^\s*TITULEK:\s*(.+)$', result_text, re.MULTILINE)
 
@@ -335,8 +371,14 @@ POSTUP:
         if title_en_match:
             en_title = title_en_match.group(1).strip()
 
-        # Odstraň řádky s titulky z textu, aby se nedostaly do HTML
+        if meta_cs_match:
+            meta_cs = meta_cs_match.group(1).strip().strip('"\'').strip('*')
+        if meta_en_match:
+            meta_en = meta_en_match.group(1).strip().strip('"\'').strip('*')
+
+        # Odstraň řádky s titulky a meta popisy z textu, aby se nedostaly do HTML
         result_text = re.sub(r'^\s*TITULEK\s*(?:CZ|EN)?:\s*.+$', '', result_text, flags=re.MULTILINE)
+        result_text = re.sub(r'^\s*META\s*(?:CZ|EN):\s*.+$', '', result_text, flags=re.MULTILINE)
         result_text = re.sub(r'^KEYWORD\s*(?:CZ|EN)?:\s*.+$', '', result_text, flags=re.MULTILINE)  # zpětná kompatibilita
         result_text = result_text.strip()
 
@@ -383,6 +425,10 @@ POSTUP:
             result['corrected_title'] = corrected_title
         if en_title:
             result['en_title'] = en_title
+        if meta_cs:
+            result['meta_description_cs'] = meta_cs
+        if meta_en:
+            result['meta_description_en'] = meta_en
         return result
 
     except Exception as e:
