@@ -26,6 +26,7 @@ import youtube_embed
 import section_images
 import social_poster
 import topic_dedup
+import internal_linking
 from logger import setup_logger
 from fb_generator.generate_fb_post import generate_fb_post
 
@@ -316,21 +317,26 @@ def run():
         # Informace o zdroji pro WP meta pole
         source_info = '\n'.join(source_urls) if source_urls else None
 
-        # Rank Math focus keyword = název hry/firmy bez číslovky, pokud je v titulku
-        focus_kw = game_name if game_name and game_name != 'N/A' else None
+        # Rank Math focus keyword — priorita: AI-generované (long-tail z article_writeru) → game_name fallback
+        focus_kw = article.get('focus_keyword_cs')
         if focus_kw:
-            # Odstraň koncovou číslovku (arabskou i římskou): "The Elder Scrolls VI" → "The Elder Scrolls"
-            focus_kw = re.sub(r'\s+(\d+|[IVXLCDM]+)$', '', focus_kw).strip()
-            # Kontrola: keyword musí být v titulku (case-insensitive)
-            if focus_kw.lower() not in title.lower():
-                log.info("Focus keyword '%s' není v CZ titulku, přeskakuji", focus_kw)
-                focus_kw = None
-            else:
-                log.info("Focus keyword: '%s'", focus_kw)
+            log.info("Focus keyword (AI): '%s'", focus_kw)
+        else:
+            # Fallback: název hry bez číslovky, jen pokud je v titulku
+            focus_kw = game_name if game_name and game_name != 'N/A' else None
+            if focus_kw:
+                focus_kw = re.sub(r'\s+(\d+|[IVXLCDM]+)$', '', focus_kw).strip()
+                if focus_kw.lower() not in title.lower():
+                    log.info("Fallback focus keyword '%s' není v CZ titulku, přeskakuji", focus_kw)
+                    focus_kw = None
+                else:
+                    log.info("Focus keyword (fallback game_name): '%s'", focus_kw)
 
         # Publikace CZ verze
         log.info("Publikuji CZ verzi...")
         cs_content = wp_publisher.strip_first_heading(article['cs'])
+        if tag_names:
+            cs_content = internal_linking.enrich_with_internal_links(cs_content, tag_names, lang='cs')
         cs_result, cs_err = wp_publisher.create_draft(
             title=title,
             content=cs_content,
@@ -343,6 +349,7 @@ def run():
             status='publish',
             focus_keyword=focus_kw,
             section_images=section_images_meta,
+            meta_description=article.get('meta_description_cs'),
         )
 
         if cs_err:
@@ -369,13 +376,19 @@ def run():
 
             log.info("Publikuji EN verzi...")
             en_content = wp_publisher.strip_first_heading(article['en'])
-            # Focus keyword pro EN — bez číslovky, zkontroluj v EN titulku
-            en_focus_kw = game_name if game_name and game_name != 'N/A' else None
+            if tag_names:
+                en_content = internal_linking.enrich_with_internal_links(en_content, tag_names, lang='en')
+            # Focus keyword pro EN — priorita: AI-generované → game_name fallback
+            en_focus_kw = article.get('focus_keyword_en')
             if en_focus_kw:
-                en_focus_kw = re.sub(r'\s+(\d+|[IVXLCDM]+)$', '', en_focus_kw).strip()
-            if en_focus_kw and en_focus_kw.lower() not in en_title.lower():
-                log.info("Focus keyword '%s' není v EN titulku, přeskakuji", en_focus_kw)
-                en_focus_kw = None
+                log.info("EN focus keyword (AI): '%s'", en_focus_kw)
+            else:
+                en_focus_kw = game_name if game_name and game_name != 'N/A' else None
+                if en_focus_kw:
+                    en_focus_kw = re.sub(r'\s+(\d+|[IVXLCDM]+)$', '', en_focus_kw).strip()
+                if en_focus_kw and en_focus_kw.lower() not in en_title.lower():
+                    log.info("EN fallback focus keyword '%s' není v EN titulku, přeskakuji", en_focus_kw)
+                    en_focus_kw = None
             en_result, en_err = wp_publisher.create_draft(
                 title=en_title,
                 content=en_content,
@@ -388,6 +401,7 @@ def run():
                 status='publish',
                 focus_keyword=en_focus_kw,
                 section_images=section_images_meta,
+                meta_description=article.get('meta_description_en'),
             )
 
             if en_err:

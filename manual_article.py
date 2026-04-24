@@ -27,6 +27,7 @@ import social_poster
 import youtube_embed
 import section_images
 import publish_log
+import internal_linking
 from logger import setup_logger
 from auto_publish import search_rawg_image, _extract_excerpt
 from fb_generator.generate_fb_post import generate_fb_post
@@ -169,19 +170,27 @@ def publish_manual_article(topic_name, game_name, source_urls, title=None,
         status_tag = 'news'
     log.info("Status tag: '%s'", status_tag)
 
-    # Rank Math focus keyword
-    focus_kw = game_name if game_name else None
+    # Rank Math focus keyword — priorita: AI-generované → game_name fallback
+    focus_kw = article.get('focus_keyword_cs')
     if focus_kw:
-        focus_kw = re.sub(r'\s+(\d+|[IVXLCDM]+)$', '', focus_kw).strip()
-        if focus_kw.lower() not in title.lower():
-            log.info("Focus keyword '%s' není v CZ titulku, přeskakuji", focus_kw)
-            focus_kw = None
+        log.info("Focus keyword (AI): '%s'", focus_kw)
+    else:
+        focus_kw = game_name if game_name else None
+        if focus_kw:
+            focus_kw = re.sub(r'\s+(\d+|[IVXLCDM]+)$', '', focus_kw).strip()
+            if focus_kw.lower() not in title.lower():
+                log.info("Fallback focus keyword '%s' není v CZ titulku, přeskakuji", focus_kw)
+                focus_kw = None
+            else:
+                log.info("Focus keyword (fallback game_name): '%s'", focus_kw)
 
     source_info = '\n'.join(source_urls)
 
     # 8. Publikace CZ
     log.info("Publikuji CZ verzi...")
     cs_content = wp_publisher.strip_first_heading(article['cs'])
+    if tag_names:
+        cs_content = internal_linking.enrich_with_internal_links(cs_content, tag_names, lang='cs')
     cs_result, cs_err = wp_publisher.create_draft(
         title=title,
         content=cs_content,
@@ -194,6 +203,7 @@ def publish_manual_article(topic_name, game_name, source_urls, title=None,
         status='publish',
         focus_keyword=focus_kw,
         section_images=section_images_meta,
+        meta_description=article.get('meta_description_cs'),
     )
 
     if cs_err:
@@ -208,14 +218,20 @@ def publish_manual_article(topic_name, game_name, source_urls, title=None,
         if not en_title:
             en_title = topic_name
 
-        en_focus_kw = game_name if game_name else None
+        en_focus_kw = article.get('focus_keyword_en')
         if en_focus_kw:
-            en_focus_kw = re.sub(r'\s+(\d+|[IVXLCDM]+)$', '', en_focus_kw).strip()
-        if en_focus_kw and en_title and en_focus_kw.lower() not in en_title.lower():
-            en_focus_kw = None
+            log.info("EN focus keyword (AI): '%s'", en_focus_kw)
+        else:
+            en_focus_kw = game_name if game_name else None
+            if en_focus_kw:
+                en_focus_kw = re.sub(r'\s+(\d+|[IVXLCDM]+)$', '', en_focus_kw).strip()
+            if en_focus_kw and en_title and en_focus_kw.lower() not in en_title.lower():
+                en_focus_kw = None
 
         log.info("Publikuji EN verzi...")
         en_content = wp_publisher.strip_first_heading(article['en'])
+        if tag_names:
+            en_content = internal_linking.enrich_with_internal_links(en_content, tag_names, lang='en')
         en_result, en_err = wp_publisher.create_draft(
             title=en_title,
             content=en_content,
@@ -228,6 +244,7 @@ def publish_manual_article(topic_name, game_name, source_urls, title=None,
             status='publish',
             focus_keyword=en_focus_kw,
             section_images=section_images_meta,
+            meta_description=article.get('meta_description_en'),
         )
 
         if en_err:

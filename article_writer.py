@@ -269,11 +269,11 @@ def write_article(topic: Dict, source_texts: List[str], length: str = 'medium') 
     sources_list = "\n".join(source_urls)
 
     if length == 'short':
-        length_instruction = "Článek musí mít 800-1500 znaků (krátká analýza, 3-4 odstavce)"
+        length_instruction = "Článek musí mít 600-800 slov (krátká analýza, 5-7 odstavců). MINIMUM je 600 slov — Rank Math pod tím hlásí 'zvažte použití alespoň 600 slov'. Pokud se blížíš ke spodní hranici, přidej další odstavec s kontextem nebo srovnáním."
     elif length == 'long':
-        length_instruction = "Článek musí mít 5000-8000 znaků (deep-dive, 10-15 odstavců, více h2 sekcí, silná analýza a kontext)"
+        length_instruction = "Článek musí mít 1200-1800 slov (deep-dive, 12-18 odstavců, více h2 sekcí, silná analýza a kontext)"
     else:
-        length_instruction = "Článek musí mít 2000-3500 znaků (střední analýza, 5-8 odstavců)"
+        length_instruction = "Článek musí mít 700-1000 slov (střední analýza, 7-10 odstavců). MINIMUM je 600 slov kvůli Rank Math SEO skóre."
 
     prompt = f"""Napíš ANALYTICKÝ herní článek s vlastním úhlem pohledu. Toto NENÍ přepis zprávy — je to komentář redaktora, který zpravodajskou událost zasazuje do kontextu a říká, CO TO ZNAMENÁ.
 
@@ -300,16 +300,21 @@ ZAKÁZANÉ ÚVODY (inverted pyramid novinářského stylu):
 - "Na akci Z byl představen..."
 - "Podle nejnovějších zpráv..."
 
-DOBRÉ ÚVODY:
-- Paradox: "Čekalo se oznámení, přišlo odložení. A hráči jsou podivně klidní."
-- Teze: "Tohle není jen další delay. Je to symptom něčeho většího v celém AAA segmentu."
-- Kontrast: "Před rokem by to byl skandál. Dnes už nikoho nepřekvapí."
-- Otázka s napětím: "Kdo tu vlastně vyhrál — studio, vydavatel, nebo hráči?"
+DOBRÉ ÚVODY (analytické, věcné, bez rétorických triků):
+- Zasazení do kontextu: "Odložení přichází v době, kdy tři z pěti největších AAA titulů letošního roku posunuly termín o víc než rok."
+- Konkrétní pozorování: "Rockstar poprvé od roku 2013 drží oznámený termín vydání déle než rok — a u GTA 6 to zatím platí."
+- Srovnání s trendem: "Zatímco menší studia zkracují vývojové cykly, u velkých vydavatelů se prodlužují. Nejnovější oznámení zapadá přesně do toho vzorce."
+- Přímé pojmenování tématu: "Nový trailer potvrzuje, co se šeptalo od léta: hra se odkládá podruhé a směřuje k jarnímu oknu 2027."
+
+ZAKÁZANÉ ÚVODY I ZDE:
+- Rétorické otázky ("Kdo na tom vydělal?", "Je to skutečně konec?")
+- Pomlčkové teasery ("A hráči jsou podivně klidní.")
+- Superlativy a emocionální hodnocení v první větě ("šokující", "konečně", "bomba")
 
 STRUKTURA (doporučená, ne povinná — přizpůsob tématu):
-- Úvodní hook (první <p> = silná teze/paradox, NE shrnutí faktů)
+- Úvodní hook (první <p> = silná teze/paradox, NE shrnutí faktů). MUSÍ obsahovat hlavní KEYWORD (CZ i EN) — ideálně v první větě, nejpozději do 100 znaků od začátku článku. Bez toho Rank Math hlásí "klíčové slovo se nezobrazuje na začátku obsahu".
 - <h2>Co se stalo</h2> — MAXIMÁLNĚ 2-3 věty holých faktů. Nerozmazávej.
-- <h2>Proč to vadí / proč je to jinak</h2> — ANALÝZA, kontext, srovnání
+- <h2>Proč to vadí / proč je to jinak</h2> — ANALÝZA, kontext, srovnání. Alespoň jeden H2 nadpis by měl obsahovat KEYWORD nebo jeho variantu.
 - <h2>Co z toho plyne</h2> — důsledky, výhled, otázky do budoucna
 - Poslední odstavec: názor/provokativní shrnutí/otevřená otázka — NE "uvidíme, jak se to vyvine"
 
@@ -318,25 +323,46 @@ STRUKTURA (doporučená, ne povinná — přizpůsob tématu):
 - {length_instruction}
 - Formát: ČISTÉ HTML (<h2>, <p>, <strong>)
 - NEPOUŽÍVEJ markdown! Žádné ```, ---, #, ** — POUZE HTML tagy
-- Styl: analytický, s názorem, pro české herní publikum. NE neutrální zpravodajský tón. Nebojí se mít postoj.
+- Styl: analytický, s názorem. NE neutrální zpravodajský tón. Nebojí se mít postoj.
+  - CZ verze: pro české herní publikum (můžeš zmínit český trh, české hráče, lokální kontext).
+  - EN verze: pro MEZINÁRODNÍ anglicky mluvící publikum (USA, UK, západní Evropa). NIKDY nezmiňuj "Czech players", "Czech market", "Czech gamers", "in the Czech Republic" ani jinou referenci na Českou republiku. EN verze není překlad pro Čechy čtoucí anglicky — je to článek pro globální čtenáře. Pokud CZ verze říká "čeští hráči", v EN použij obecnější pojem: "players", "PC gamers", "console players", "Steam users", "Western audiences" apod. dle kontextu.
 - Zahrň konkrétní fakta a čísla (to je zásadní pro důvěryhodnost analýzy)
 - NEZMIŇUJ zdroje v textu článku (ne "podle IGN...")
 - NEPŘIDÁVEJ h1 nadpis — ten bude jako titulek článku
 - NEPOUŽÍVEJ vatu typu "jak se situace vyvine, ukáže čas", "zatím není jasné", "uvidíme". Pokud je otazník, POJMENUJ ho konkrétně.
 - FAKTICKÁ PŘESNOST: Zkontroluj, že titulek odpovídá obsahu. Pokud navržený titulek obsahuje nepravdivé tvrzení (např. označuje hru jako "českou", i když studio je zahraniční), OPRAV titulek.
-- TITULEK: ne clickbait, ale musí mít ÚHEL (ne "X oznámil Y", spíš "X oznámil Y — a tady je problém" / "Proč X mění pravidla žánru" / "Co X neřekl o Y").
-- NA ZAČÁTEK výstupu VŽDY uveď titulky a meta popisy na samostatných řádcích:
-  TITULEK CZ: [český titulek s úhlem]
-  TITULEK EN: [anglický titulek s úhlem]
-  META CZ: [český meta description, 140-155 znaků, VŽDY ukončené tečkou/otazníkem, obsahuje klíčové slovo, musí lákat k prokliku]
-  META EN: [anglický meta description, 140-155 znaků, VŽDY ukončené tečkou/otazníkem, obsahuje klíčové slovo, musí lákat k prokliku]
+- TITULEK: věcný, profesionální, analytický tón — nikdy clickbait.
+  - DÉLKA: MAX 60 znaků (tolerance do 65). Google v SERPu usekává nad 60 znaků. Neměj souvětí, jedna věta, jedna myšlenka.
+  - KLÍČOVÉ SLOVO: hlavní SEO klíčové slovo (nebo název hry, pokud je klíčové slovo jeho součástí) MUSÍ být v první třetině titulku — ideálně úplně na začátku.
+  - ZAKÁZÁNO: rétorické otázky ("Proč tomu věřit?", "Kdo na tom vydělá?"), pomlčkové dovětky typu "— a tady je problém" / "a to není vše", superlativy a emocionální nálepky ("šokující", "bomba", "konečně"), fráze "tentokrát vážně" / "teď už doopravdy", vykřičníky, dvojtečkové teasery ("GTA 6: co o tom nevíte").
+  - SPRÁVNĚ: titulek pojmenuje KONKRÉTNÍ fakt + úhel jednou krátkou větou bez hype. Příklady (všechny pod 60 znaků, klíčové slovo vpředu): "GTA 6 potvrzeno na listopad 2026, Rockstar drží termín" (54), "Gothic remake mění bojový systém, atmosféra zůstává" (52), "Silksong se odkládá, Team Cherry ukazuje limity solo studií" (59).
+  - Musí mít ÚHEL (ne jen "X oznámil Y"), ale úhel = informace navíc nebo zasazení do kontextu, NE rétorická figura.
+- NA ZAČÁTEK výstupu VŽDY uveď titulky, klíčová slova a meta popisy na samostatných řádcích:
+  KEYWORD CZ: [jedno hlavní SEO klíčové slovo v češtině, 2-4 slova, long-tail — ne jen "gta 6", spíš "gta 6 datum vydání" / "gothic remake recenze". Pokud jsou výše zadaná SEO KLÍČOVÁ SLOVA, vyber z nich to nejsilnější, jinak navrhni sám]
+  KEYWORD EN: [jedno hlavní SEO klíčové slovo v angličtině, 2-4 slova, long-tail, stejná logika]
+  TITULEK CZ: [český titulek, MAX 60 znaků, KEYWORD CZ v první třetině]
+  TITULEK EN: [anglický titulek, MAX 60 znaků, KEYWORD EN v první třetině]
+  META CZ: [český meta description, 140-155 znaků, VŽDY ukončené tečkou/otazníkem, obsahuje KEYWORD CZ, musí lákat k prokliku]
+  META EN: [anglický meta description, 140-155 znaků, VŽDY ukončené tečkou/otazníkem, obsahuje KEYWORD EN, musí lákat k prokliku]
 - KRITICKÉ: V nadpisech (h2) NEPOUŽÍVEJ Title Case! Velké písmeno POUZE na začátku věty a u vlastních jmen. ŠPATNĚ: "Nová Éra Pro Herní Průmysl". SPRÁVNĚ: "Nová éra pro herní průmysl". ŠPATNĚ: "What This Means For Players". SPRÁVNĚ: "What this means for players".
 - KRITICKÉ: META CZ/EN NESMÍ být uťaté v půli věty! Krátký svébytný popis (1-2 věty) končící interpunkcí — NIKDY NE kopie úvodního odstavce.
 - NEPŘIDÁVEJ sekci "Zdroje" ani "Sources" — přidají se automaticky
 
+=== SEO CHECKLIST (povinné, ne doporučení) ===
+Před odesláním článku zkontroluj, že platí VŠECHNO:
+1. KEYWORD CZ je v TITULEK CZ, v první třetině. (Totéž EN.)
+2. KEYWORD CZ je v prvním odstavci CZ článku (do 100 znaků od začátku). (Totéž EN.)
+3. KEYWORD CZ je v META CZ. (Totéž EN.)
+4. KEYWORD CZ se v celém CZ článku objeví minimálně 3× (přirozeně, ne spam). (Totéž EN.)
+5. Alespoň jeden <h2> v CZ článku obsahuje KEYWORD nebo jeho variantu. (Totéž EN.)
+6. TITULEK CZ/EN má max 60 znaků.
+7. CZ článek má MINIMUM 600 slov (ideál podle požadované délky výše). Spočítej si slova před odevzdáním. Pokud je méně, dopiš odstavec s kontextem/srovnáním/důsledkem — NE vatou ("ukáže čas", "uvidíme"), ale konkrétními informacemi nebo úhlem navíc. Totéž platí pro EN.
+8. EN verze NEOBSAHUJE žádnou zmínku o "Czech", "Czech Republic", "Czech players/gamers/market", "in Czechia" apod. — ani v titulku, ani v meta, ani v textu. EN je pro mezinárodní publikum. Výjimka: fakticky relevantní téma (české studio jako Warhorse, CD Projekt je polské — ne české).
+Pokud některý bod nesedí, PŘEPIŠ titulek nebo úvod, ne článek celý. U bodu 7 rozšiř analytický obsah.
+
 POSTUP:
-1. Nejdřív napiš článek v ČEŠTINĚ (BEZ sekce zdrojů) — s úhlem, s názorem, ne neutrální referát
-2. Potom PŘELOŽ celý článek do angličtiny (zachovej úhel a tón)
+1. Nejdřív napiš článek v ČEŠTINĚ (BEZ sekce zdrojů) — s úhlem, s názorem, ne neutrální referát. Cílové publikum: čeští hráči.
+2. Potom vytvoř ANGLICKOU verzi (zachovej úhel, tón a strukturu, ale LOKALIZUJ pro mezinárodní publikum). Není to doslovný překlad — odkazy na "české hráče / český trh / Českou republiku" nahraď obecnějšími pojmy ("players", "PC gamers", "Western players", "the audience" apod.). V EN verzi se ČR nezmiňuje vůbec, pokud to není fakticky podstatné téma (např. české studio jako Warhorse).
 
 === ČESKY ===
 <článek v češtině jako HTML>
@@ -350,16 +376,20 @@ POSTUP:
 
         result_text = message.content[0].text
 
-        # Extrahuj titulky CZ a EN
+        # Extrahuj titulky, klíčová slova a meta CZ/EN
         corrected_title = None
         en_title = None
         meta_cs = None
         meta_en = None
+        keyword_cs = None
+        keyword_en = None
 
         title_cs_match = re.search(r'^\s*TITULEK\s*CZ:\s*(.+)$', result_text, re.MULTILINE)
         title_en_match = re.search(r'^\s*TITULEK\s*EN:\s*(.+)$', result_text, re.MULTILINE)
         meta_cs_match = re.search(r'^\s*META\s*CZ:\s*(.+)$', result_text, re.MULTILINE)
         meta_en_match = re.search(r'^\s*META\s*EN:\s*(.+)$', result_text, re.MULTILINE)
+        keyword_cs_match = re.search(r'^\s*KEYWORD\s*CZ:\s*(.+)$', result_text, re.MULTILINE)
+        keyword_en_match = re.search(r'^\s*KEYWORD\s*EN:\s*(.+)$', result_text, re.MULTILINE)
         # Fallback na starý formát
         title_old_match = re.search(r'^\s*TITULEK:\s*(.+)$', result_text, re.MULTILINE)
 
@@ -376,10 +406,15 @@ POSTUP:
         if meta_en_match:
             meta_en = meta_en_match.group(1).strip().strip('"\'').strip('*')
 
-        # Odstraň řádky s titulky a meta popisy z textu, aby se nedostaly do HTML
+        if keyword_cs_match:
+            keyword_cs = keyword_cs_match.group(1).strip().strip('"\'').strip('*').lower()
+        if keyword_en_match:
+            keyword_en = keyword_en_match.group(1).strip().strip('"\'').strip('*').lower()
+
+        # Odstraň řádky s titulky, klíčovými slovy a meta popisy z textu, aby se nedostaly do HTML
         result_text = re.sub(r'^\s*TITULEK\s*(?:CZ|EN)?:\s*.+$', '', result_text, flags=re.MULTILINE)
         result_text = re.sub(r'^\s*META\s*(?:CZ|EN):\s*.+$', '', result_text, flags=re.MULTILINE)
-        result_text = re.sub(r'^KEYWORD\s*(?:CZ|EN)?:\s*.+$', '', result_text, flags=re.MULTILINE)  # zpětná kompatibilita
+        result_text = re.sub(r'^\s*KEYWORD\s*(?:CZ|EN)?:\s*.+$', '', result_text, flags=re.MULTILINE)
         result_text = result_text.strip()
 
         # Parsuj CZ a EN casti
@@ -429,6 +464,10 @@ POSTUP:
             result['meta_description_cs'] = meta_cs
         if meta_en:
             result['meta_description_en'] = meta_en
+        if keyword_cs:
+            result['focus_keyword_cs'] = keyword_cs
+        if keyword_en:
+            result['focus_keyword_en'] = keyword_en
         return result
 
     except Exception as e:
