@@ -12,6 +12,7 @@ Voláno z Telegram bota přes Claude Code CLI:
 """
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -170,8 +171,11 @@ def publish_manual_article(topic_name, game_name, source_urls, title=None,
         status_tag = 'news'
     log.info("Status tag: '%s'", status_tag)
 
-    # Rank Math focus keyword — priorita: AI-generované → game_name fallback
+    # Rank Math focus keyword — krátké 1-2 slova (přesná shoda v titulku zvedá score)
     focus_kw = article.get('focus_keyword_cs')
+    if focus_kw and len(focus_kw.split()) > 2:
+        log.info("AI vrátilo dlouhý keyword '%s' (%d slov) → fallback na game_name", focus_kw, len(focus_kw.split()))
+        focus_kw = None
     if focus_kw:
         log.info("Focus keyword (AI): '%s'", focus_kw)
     else:
@@ -191,6 +195,10 @@ def publish_manual_article(topic_name, game_name, source_urls, title=None,
     cs_content = wp_publisher.strip_first_heading(article['cs'])
     if tag_names:
         cs_content = internal_linking.enrich_with_internal_links(cs_content, tag_names, lang='cs')
+
+    story_cards_cs_json = json.dumps(article['story_cards_cs'], ensure_ascii=False) if article.get('story_cards_cs') else None
+    story_cards_en_json = json.dumps(article['story_cards_en'], ensure_ascii=False) if article.get('story_cards_en') else None
+
     cs_result, cs_err = wp_publisher.create_draft(
         title=title,
         content=cs_content,
@@ -204,6 +212,7 @@ def publish_manual_article(topic_name, game_name, source_urls, title=None,
         focus_keyword=focus_kw,
         section_images=section_images_meta,
         meta_description=article.get('meta_description_cs'),
+        story_cards=story_cards_cs_json,
     )
 
     if cs_err:
@@ -219,6 +228,9 @@ def publish_manual_article(topic_name, game_name, source_urls, title=None,
             en_title = topic_name
 
         en_focus_kw = article.get('focus_keyword_en')
+        if en_focus_kw and len(en_focus_kw.split()) > 2:
+            log.info("AI vrátilo dlouhý EN keyword '%s' (%d slov) → fallback na game_name", en_focus_kw, len(en_focus_kw.split()))
+            en_focus_kw = None
         if en_focus_kw:
             log.info("EN focus keyword (AI): '%s'", en_focus_kw)
         else:
@@ -245,6 +257,7 @@ def publish_manual_article(topic_name, game_name, source_urls, title=None,
             focus_keyword=en_focus_kw,
             section_images=section_images_meta,
             meta_description=article.get('meta_description_en'),
+            story_cards=story_cards_en_json,
         )
 
         if en_err:

@@ -14,6 +14,7 @@ import config
 # In-memory cache pro kategorie (per-language) a status tagy
 _categories_cache = {}
 _status_tags_cache = {'data': None, 'fetched_at': 0}
+_top_tags_cache = {'data': None, 'fetched_at': 0}
 _CACHE_TTL = 300  # 5 minut
 
 
@@ -432,7 +433,51 @@ def _resolve_tag_ids(tag_names):
     return (tag_ids, None)
 
 
-def create_draft(title, content, category_ids=None, tag_names=None, lang=None, featured_image_id=None, status_tag=None, source_info=None, status='draft', focus_keyword=None, section_images=None):
+def get_top_tags(limit=30, force_refresh=False):
+    """
+    Vrátí top N tagů dle počtu článků (napříč všemi jazyky).
+    Každá položka: {'name': str, 'count': int}.
+    Cache 5 min — stačí pro jeden běh pipeline.
+    """
+    now = time.time()
+    if not force_refresh and _top_tags_cache['data'] is not None and (now - _top_tags_cache['fetched_at']) < _CACHE_TTL:
+        return _top_tags_cache['data'][:limit]
+
+    try:
+        # WP API neumí přímo top-by-count při všech jazycích najednou,
+        # tak stáhneme 100 nejpočetnějších.
+        resp = requests.get(
+            _api_url('tags'),
+            headers=_auth_headers(),
+            params={
+                'per_page': 100,
+                'orderby': 'count',
+                'order': 'desc',
+                'hide_empty': 'true',
+                '_fields': 'name,count',
+            },
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return []
+        # Dedup podle jména (Polylang dělá CZ + EN variantu se stejným jménem)
+        # Sčítáme counts přes jazyky.
+        merged = {}
+        for t in resp.json():
+            key = t['name'].strip().lower()
+            if key in merged:
+                merged[key]['count'] += t['count']
+            else:
+                merged[key] = {'name': t['name'].strip(), 'count': t['count']}
+        tags = sorted(merged.values(), key=lambda x: x['count'], reverse=True)
+        _top_tags_cache['data'] = tags
+        _top_tags_cache['fetched_at'] = now
+        return tags[:limit]
+    except Exception:
+        return []
+
+
+def create_draft(title, content, category_ids=None, tag_names=None, lang=None, featured_image_id=None, status_tag=None, source_info=None, status='draft', focus_keyword=None, section_images=None, meta_description=None, story_cards=None):
     """
     Vytvoří draft post na WP.
     Vrací ({id, edit_url, view_url}, None) nebo (None, error_string).
@@ -470,6 +515,8 @@ def create_draft(title, content, category_ids=None, tag_names=None, lang=None, f
             meta['gameinfo_source'] = source_info
         if section_images:
             meta['gameinfo_section_images'] = section_images
+        if story_cards:
+            meta['gameinfo_story_cards'] = story_cards
         if meta:
             post_data['meta'] = meta
 
@@ -495,8 +542,13 @@ def create_draft(title, content, category_ids=None, tag_names=None, lang=None, f
         if category_ids and set(category_ids) != set(assigned_cats):
             print(f"[WP] Category mismatch for post {post_id}: sent={category_ids}, assigned={assigned_cats}, lang={lang}")
 
-        # Rank Math focus keyword (přes Rank Math REST API)
+        # Rank Math meta (focus keyword + description) přes Rank Math REST API
+        rm_meta = {}
         if focus_keyword:
+            rm_meta['rank_math_focus_keyword'] = focus_keyword
+        if meta_description:
+            rm_meta['rank_math_description'] = meta_description
+        if rm_meta:
             try:
                 rm_url = config.WP_URL.rstrip('/') + '/wp-json/rankmath/v1/updateMeta'
                 rm_resp = requests.post(
@@ -505,16 +557,17 @@ def create_draft(title, content, category_ids=None, tag_names=None, lang=None, f
                     json={
                         'objectType': 'post',
                         'objectID': post_id,
-                        'meta': {'rank_math_focus_keyword': focus_keyword},
+                        'meta': rm_meta,
                     },
                     timeout=10,
                 )
                 if rm_resp.status_code == 200:
-                    print(f"[WP] Rank Math focus keyword set: '{focus_keyword}' (post {post_id})")
+                    fields = ', '.join(k.replace('rank_math_', '') for k in rm_meta.keys())
+                    print(f"[WP] Rank Math meta set ({fields}) for post {post_id}")
                 else:
-                    print(f"[WP] Rank Math keyword failed ({rm_resp.status_code}): {rm_resp.text[:200]}")
+                    print(f"[WP] Rank Math meta failed ({rm_resp.status_code}): {rm_resp.text[:200]}")
             except Exception as e:
-                print(f"[WP] Rank Math keyword error: {e}")
+                print(f"[WP] Rank Math meta error: {e}")
 
         # Sestav URLs
         wp_base = config.WP_URL.rstrip('/')

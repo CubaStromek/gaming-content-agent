@@ -3,6 +3,7 @@ Article Writer - generovani clanku z TOP temat
 Stahne zdrojove clanky, posle do Claude a vygeneruje CZ + EN verzi
 """
 
+import json
 import re
 import requests
 import anthropic
@@ -46,11 +47,11 @@ def _call_api(client, model, max_tokens, temperature, prompt):
 
 if _HAS_TENACITY:
     _call_api = retry(
-        stop=stop_after_attempt(5),
-        wait=wait_exponential(multiplier=4, min=15, max=120),
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(multiplier=4, min=15, max=60),
         retry=retry_if_exception(_is_retryable),
         before_sleep=lambda retry_state: log.warning(
-            "⚠️  API volání selhalo (HTTP %s), pokus %d/5, čekám...",
+            "⚠️  API volání selhalo (HTTP %s), pokus %d/2, čekám...",
             getattr(retry_state.outcome.exception(), 'status_code', '?'),
             retry_state.attempt_number
         ),
@@ -110,6 +111,72 @@ def _make_first_paragraph_quote(html: str) -> str:
         count=1,
         flags=re.DOTALL,
     )
+
+
+def _extract_story_cards(text: str, lang: str) -> Optional[List[Dict]]:
+    """
+    Najde STORY_CARDS <lang>: [...] v AI výstupu, vrátí list dictů nebo None.
+    Robustní bracket-matching parser — JSON může obsahovat zalomení řádků i vnořené uvozovky.
+    """
+    label = f'STORY_CARDS {lang}:'
+    idx = text.find(label)
+    if idx == -1:
+        return None
+    start = text.find('[', idx)
+    if start == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    escape = False
+    end = -1
+    for i in range(start, len(text)):
+        ch = text[i]
+        if escape:
+            escape = False
+            continue
+        if ch == '\\' and in_string:
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == '[':
+            depth += 1
+        elif ch == ']':
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    if end == -1:
+        log.warning("STORY_CARDS %s: chybí uzavírací závorka, fallback aktivní", lang)
+        return None
+
+    raw = text[start:end]
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        log.warning("STORY_CARDS %s: JSON parse error (%s), fallback aktivní", lang, e)
+        return None
+
+    if not isinstance(data, list):
+        return None
+
+    cards = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        heading = (item.get('heading') or '').strip()
+        body = (item.get('body') or '').strip()
+        if not body:
+            continue
+        cards.append({'heading': heading[:60], 'body': body[:200]})
+
+    if not cards:
+        return None
+    return cards[:5]
 
 
 def _insert_separators_before_h2(html: str) -> str:
@@ -311,12 +378,64 @@ ZAKÁZANÉ ÚVODY I ZDE:
 - Pomlčkové teasery ("A hráči jsou podivně klidní.")
 - Superlativy a emocionální hodnocení v první větě ("šokující", "konečně", "bomba")
 
-STRUKTURA (doporučená, ne povinná — přizpůsob tématu):
-- Úvodní hook (první <p> = silná teze/paradox, NE shrnutí faktů). MUSÍ obsahovat hlavní KEYWORD (CZ i EN) — ideálně v první větě, nejpozději do 100 znaků od začátku článku. Bez toho Rank Math hlásí "klíčové slovo se nezobrazuje na začátku obsahu".
-- <h2>Co se stalo</h2> — MAXIMÁLNĚ 2-3 věty holých faktů. Nerozmazávej.
-- <h2>Proč to vadí / proč je to jinak</h2> — ANALÝZA, kontext, srovnání. Alespoň jeden H2 nadpis by měl obsahovat KEYWORD nebo jeho variantu.
-- <h2>Co z toho plyne</h2> — důsledky, výhled, otázky do budoucna
-- Poslední odstavec: názor/provokativní shrnutí/otevřená otázka — NE "uvidíme, jak se to vyvine"
+=== ZAKÁZANÉ AI VZORCE (čtenáři je okamžitě poznávají jako "ChatGPT text") ===
+NIC z následujícího se v článku nesmí objevit. Pokud něco napíšeš, smaž a přepiš.
+
+1. **Vzorec "Není X. Je to Y." / "Nejde o X, jde o Y."** — typický esejistický pattern. Maximálně 1× v celém článku, ideálně 0×.
+   - ŠPATNĚ: "Tohle není jen herní kuriozita. Je to učebnicový příklad..."
+   - SPRÁVNĚ: "Steam tu má další řízenou krizi z review bombingu — typickou, ale s nezvyklým detailem..."
+
+2. **Em-dash (–) jako zázračný interpunkční nástroj** — používej pomlčku JEN když opravdu odděluje vsuvku, kterou jinak nelze vyjádřit. Většinu pomlček nahraď tečkou, čárkou nebo závorkou. Maximálně 3 em-dashe na 1000 slov. AI texty mívají 15–25.
+
+3. **Esejistický slovník** — okamžité red flags, NEPOUŽÍVAT:
+   - "učebnicový příklad", "učebnicová ukázka"
+   - "zásadně problematický", "strukturálně zabudované"
+   - "obojí je reálné a obojí je relevantní"
+   - "specifická cena", "specifický kontext", "specifičnost tohoto případu"
+   - "v zcela různých světech", "ve dvou různých světech"
+   - "nepsaná dohoda", "implicitní kontrakt"
+   - "permanentní zkouška", "permanentní napětí"
+
+4. **Dvojitý balancing v závěru** — "Data má X. Frustrace má Y. Obojí je reálné." Tohle je doslova ChatGPT signature. Závěr má názor, ne vyvážení.
+
+5. **Předvídání budoucnosti binární volbou** — "X teď stojí před konkrétní volbou: buď A, nebo B." Život není binární; nepiš jako učebnice rozhodovací teorie.
+
+6. **Vata/zástupné fráze** — "ve specifickém kontextu", "z jiného úhlu pohledu", "je důležité si uvědomit, že", "stojí za zmínku, že".
+
+7. **"Co z toho plyne pro X i pro Y"** v textu — je to AI strukturní fráze. Pokud chceš důsledky, popiš je rovnou.
+
+=== STRUKTURA & H2 NADPISY (KRITICKÉ — tady čtenáři nejvíc poznají AI) ===
+
+**ZAKÁZANÉ H2 (šablonové, ChatGPT-style — NIKDY nepoužívat):**
+- ❌ "Co se stalo" / "What happened"
+- ❌ "Proč to vadí" / "Why this matters" / "Why it matters"
+- ❌ "Co z toho plyne" / "What this means" / "What this means for X"
+- ❌ "Co z toho plyne pro X i pro Y"
+- ❌ "Hlubší otázka" / "The deeper question"
+- ❌ "X jako permanentní zkouška Y" / "X as a permanent test of Y"
+- ❌ Jakýkoli nadpis začínající "Proč X..." / "Why X..." (kromě případů, kdy je to citace)
+
+**POVINNÉ vlastnosti dobrého H2:**
+- Konkrétní jméno (hra, studio, postava, číslo) NEBO konkrétní akce. Generické pojmy ("komunita", "hráči", "trh") nestačí.
+- Maximum 7 slov. Krátký, hutný.
+- Ne vysvětluje, oznamuje. NE "Proč Mega Crit selhala v komunikaci" → ANO "Mega Crit ukázala čísla. Pomohla si tím méně."
+- NE titlecase. První písmeno věty + vlastní jména. (Stávající pravidlo, platí dál.)
+
+**DOBRÉ H2 — vzory z reálného herního zpravodajství:**
+- "Mega Crit ukázala čísla, ale komunita je nepřijala"
+- "The Doormaker má nejvyšší win rate ze tří bossů"
+- "27 000 záporných recenzí za deset dní"
+- "Patch v0.104.0 obrátil situaci proti vývojářům"
+- "Rockstar drží termín GTA 6 přes 12 měsíců"
+- "Gothic remake mění boj, atmosféra zůstává"
+- "Sony stáhla PS5 Pro reklamu po 48 hodinách"
+
+**Struktura článku:**
+- Úvodní hook (první <p> = silná teze/paradox/konkrétní fakt, NE shrnutí faktů). MUSÍ obsahovat hlavní KEYWORD (CZ i EN) — ideálně v první větě, nejpozději do 100 znaků od začátku článku.
+- 2–4 <h2> sekce, každá s konkrétním H2 podle pravidel výše. Alespoň jeden H2 obsahuje KEYWORD nebo jeho variantu.
+- První sekce po úvodu: holá fakta (kdy, kde, kdo, kolik). MAX 2–3 věty. NIKDY ne "Co se stalo".
+- Prostřední sekce: kontext, čísla, srovnání s podobnými případy. Tady patří analýza.
+- Poslední sekce / odstavec: názor/provokativní shrnutí/otevřená otázka — ne "uvidíme, jak se to vyvine", ne dvojitý balancing, ne "X teď stojí před volbou".
 
 === PRAVIDLA ===
 - Piš VLASTNÍMI SLOVY, ze zdrojů přebírej JEN fakta a čísla, nikdy ne formulace
@@ -338,12 +457,14 @@ STRUKTURA (doporučená, ne povinná — přizpůsob tématu):
   - SPRÁVNĚ: titulek pojmenuje KONKRÉTNÍ fakt + úhel jednou krátkou větou bez hype. Příklady (všechny pod 60 znaků, klíčové slovo vpředu): "GTA 6 potvrzeno na listopad 2026, Rockstar drží termín" (54), "Gothic remake mění bojový systém, atmosféra zůstává" (52), "Silksong se odkládá, Team Cherry ukazuje limity solo studií" (59).
   - Musí mít ÚHEL (ne jen "X oznámil Y"), ale úhel = informace navíc nebo zasazení do kontextu, NE rétorická figura.
 - NA ZAČÁTEK výstupu VŽDY uveď titulky, klíčová slova a meta popisy na samostatných řádcích:
-  KEYWORD CZ: [jedno hlavní SEO klíčové slovo v češtině, 2-4 slova, long-tail — ne jen "gta 6", spíš "gta 6 datum vydání" / "gothic remake recenze". Pokud jsou výše zadaná SEO KLÍČOVÁ SLOVA, vyber z nich to nejsilnější, jinak navrhni sám]
-  KEYWORD EN: [jedno hlavní SEO klíčové slovo v angličtině, 2-4 slova, long-tail, stejná logika]
+  KEYWORD CZ: [hlavní SEO klíčové slovo v češtině, 1-2 slova, KRÁTKÉ — Rank Math hodnotí přesnou shodu v titulku/H2/úvodu, takže long-tail fráze score srážejí. Priorita: 1) přesný název hry/platformy/studia ("xbox", "gta 6", "gothic remake", "silksong", "rockstar"), 2) max 2 slova ("herní leaky", "gaming awards"). NIKDY 3+ slovné fráze typu "gta 6 datum vydání leak". Pokud jsou výše zadaná SEO KLÍČOVÁ SLOVA, vyber z nich nejkratší a nejsilnější, jinak navrhni sám.]
+  KEYWORD EN: [main SEO keyword in English, 1-2 words, SHORT — Rank Math scores exact match in title/H2/intro, long-tail phrases lower the score. Priority: 1) exact game/platform/studio name ("xbox", "gta 6", "gothic remake", "silksong", "rockstar"), 2) max 2 words ("gaming leaks", "indie awards"). NEVER 3+ word phrases. Same logic as CZ.]
   TITULEK CZ: [český titulek, MAX 60 znaků, KEYWORD CZ v první třetině]
   TITULEK EN: [anglický titulek, MAX 60 znaků, KEYWORD EN v první třetině]
   META CZ: [český meta description, 140-155 znaků, VŽDY ukončené tečkou/otazníkem, obsahuje KEYWORD CZ, musí lákat k prokliku]
   META EN: [anglický meta description, 140-155 znaků, VŽDY ukončené tečkou/otazníkem, obsahuje KEYWORD EN, musí lákat k prokliku]
+  STORY_CARDS CZ: [JEDNO-ŘÁDKOVÝ JSON array 3-5 objektů ve tvaru {{"heading": "max 40 znaků", "body": "max 160 znaků, 1-2 věty"}}. Toto NENÍ shrnutí článku po sekcích — vyber 3-5 nejdůležitějších bodů (klíčový fakt → kontext/úhel → důsledek). Každá karta = 1 myšlenka, čte se na svislé mobilní obrazovce SAMOSTATNĚ, čtenář vidí jen tu jednu kartu a musí pochopit pointu bez ostatních. Bez HTML, bez markdown, plain text v JSON stringu. Heading je věcný (ne otázka, ne clickbait). Body 1-2 reálné věty. Příklad jedné karty: {{"heading":"Rockstar drží termín přes rok","body":"Od oznámení v roce 2024 GTA 6 nezměnilo datum vydání, což je u AAA tahounů nezvyklé."}}]
+  STORY_CARDS EN: [Same logic in English, JSON array 3-5 objects {{"heading": "max 40 chars", "body": "max 160 chars, 1-2 sentences"}}. NEVER mention Czech Republic / Czech players. Plain text only, no HTML, no markdown.]
 - KRITICKÉ: V nadpisech (h2) NEPOUŽÍVEJ Title Case! Velké písmeno POUZE na začátku věty a u vlastních jmen. ŠPATNĚ: "Nová Éra Pro Herní Průmysl". SPRÁVNĚ: "Nová éra pro herní průmysl". ŠPATNĚ: "What This Means For Players". SPRÁVNĚ: "What this means for players".
 - KRITICKÉ: META CZ/EN NESMÍ být uťaté v půli věty! Krátký svébytný popis (1-2 věty) končící interpunkcí — NIKDY NE kopie úvodního odstavce.
 - NEPŘIDÁVEJ sekci "Zdroje" ani "Sources" — přidají se automaticky
@@ -390,6 +511,8 @@ POSTUP:
         meta_en_match = re.search(r'^\s*META\s*EN:\s*(.+)$', result_text, re.MULTILINE)
         keyword_cs_match = re.search(r'^\s*KEYWORD\s*CZ:\s*(.+)$', result_text, re.MULTILINE)
         keyword_en_match = re.search(r'^\s*KEYWORD\s*EN:\s*(.+)$', result_text, re.MULTILINE)
+        story_cards_cs = _extract_story_cards(result_text, 'CZ')
+        story_cards_en = _extract_story_cards(result_text, 'EN')
         # Fallback na starý formát
         title_old_match = re.search(r'^\s*TITULEK:\s*(.+)$', result_text, re.MULTILINE)
 
@@ -415,6 +538,8 @@ POSTUP:
         result_text = re.sub(r'^\s*TITULEK\s*(?:CZ|EN)?:\s*.+$', '', result_text, flags=re.MULTILINE)
         result_text = re.sub(r'^\s*META\s*(?:CZ|EN):\s*.+$', '', result_text, flags=re.MULTILINE)
         result_text = re.sub(r'^\s*KEYWORD\s*(?:CZ|EN)?:\s*.+$', '', result_text, flags=re.MULTILINE)
+        # STORY_CARDS může být víceřádkový JSON, mažeme od labelu po uzavírací ]
+        result_text = re.sub(r'^\s*STORY_CARDS\s*(?:CZ|EN):\s*\[[\s\S]*?\]\s*$', '', result_text, flags=re.MULTILINE)
         result_text = result_text.strip()
 
         # Parsuj CZ a EN casti
@@ -468,6 +593,12 @@ POSTUP:
             result['focus_keyword_cs'] = keyword_cs
         if keyword_en:
             result['focus_keyword_en'] = keyword_en
+        if story_cards_cs:
+            result['story_cards_cs'] = story_cards_cs
+            log.info("STORY_CARDS CZ: %d karet", len(story_cards_cs))
+        if story_cards_en:
+            result['story_cards_en'] = story_cards_en
+            log.info("STORY_CARDS EN: %d karet", len(story_cards_en))
         return result
 
     except Exception as e:
