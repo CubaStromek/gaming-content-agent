@@ -110,13 +110,16 @@ def random_delay():
     time.sleep(delay)
 
 
-def _build_post_text(title, excerpt, url, hashtags, max_len=None):
+def _build_post_text(title, excerpt, url, hashtags, max_len=None, include_url=True):
     """Sestaví text postu. Pokud je max_len, zkrátí excerpt aby se vešel."""
     hashtag_str = ' '.join(hashtags) if hashtags else ''
+    url_line = f"👉 {url}" if (include_url and url) else ''
 
     if max_len:
         # Spočítej fixní části
-        fixed = f"🎮 {title}\n\n\n\n👉 {url}"
+        fixed = f"🎮 {title}"
+        if url_line:
+            fixed += f"\n\n\n\n{url_line}"
         if hashtag_str:
             fixed += f"\n\n{hashtag_str}"
         remaining = max_len - len(fixed)
@@ -136,7 +139,8 @@ def _build_post_text(title, excerpt, url, hashtags, max_len=None):
     parts = [f"🎮 {title}"]
     if short_excerpt:
         parts.append(short_excerpt)
-    parts.append(f"👉 {url}")
+    if url_line:
+        parts.append(url_line)
     if hashtag_str:
         parts.append(hashtag_str)
 
@@ -185,10 +189,7 @@ def post_to_twitter(text, image_path=None, url=None):
         )
 
         tweet_id = response.data['id']
-        # Zjisti username pro URL
-        me = client.get_me()
-        username = me.data.username if me.data else 'unknown'
-        tweet_url = f"https://x.com/{username}/status/{tweet_id}"
+        tweet_url = f"https://x.com/{config.TWITTER_USERNAME}/status/{tweet_id}"
 
         log.info("Tweet posted: %s", tweet_url)
         return tweet_id, tweet_url
@@ -368,7 +369,7 @@ def post_to_all(title, excerpt, image_path, url, hashtags=None,
     # Twitter — jen CZ (max 280 znaků)
     if config.is_twitter_configured() or config.SOCIAL_DRY_RUN:
         try:
-            tw_text = _build_post_text(title, excerpt, url, hashtags, max_len=280)
+            tw_text = _build_post_text(title, excerpt, url, hashtags, max_len=280, include_url=False)
             tw_id, tw_url = post_to_twitter(tw_text, image_path=image_path, url=url)
             results['twitter'] = {'id': tw_id, 'url': tw_url}
             if tw_id:
