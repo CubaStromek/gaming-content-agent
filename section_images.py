@@ -24,11 +24,31 @@ def _slugify(text):
     return text.strip('-') or 'game'
 
 
+def find_screenshots_by_filename(game_name, max_count=5):
+    """
+    Dedup č. 1: hledá screenshoty podle deterministického filename slugu
+    `<slug>-screenshot-N.jpg` (1..max_count). Robustní vůči přepsanému/chybějícímu titulku.
+    Vrací list (media_id, source_url) v pořadí 1..N. Prázdný list = nenalezeno.
+    (WP timeout je polknutý uvnitř _find_existing_media — projeví se jako prázdný list.
+    Detekce nedostupnosti WP je řešená v navazujícím find_existing_screenshots.)
+    """
+    slug = _slugify(game_name)
+    matched = []
+    for i in range(1, max_count + 1):
+        fname = f"{slug}-screenshot-{i}.jpg"
+        mid, src = wp_publisher._find_existing_media(fname)
+        if mid and src:
+            matched.append((mid, src))
+        else:
+            break  # mezera v sérii — další indexy nemá smysl zkoušet
+    return matched
+
+
 def find_existing_screenshots(game_name, min_count=3, max_count=5):
     """
-    Hledá existující obrázky ve WP Media Library podle názvu hry (title search).
-    Vrací list of (media_id, source_url) tuples, nebo prázdný list.
-    Vrací None pokud WP není dostupný (timeout/connection error) — signál pro přeskočení uploadu.
+    Dedup č. 2 (fallback): hledá obrázky podle title equals game_name přes WP search.
+    Vrací list of (media_id, source_url), nebo prázdný list.
+    Vrací None pokud WP není dostupný (timeout/connection error).
     """
     try:
         resp = requests.get(
@@ -36,7 +56,7 @@ def find_existing_screenshots(game_name, min_count=3, max_count=5):
             headers=wp_publisher._auth_headers(),
             params={
                 'search': game_name,
-                'per_page': max_count,
+                'per_page': 50,  # dost prostoru pro exact-title filtr
                 'media_type': 'image',
                 'orderby': 'date',
                 'order': 'desc',
@@ -58,7 +78,7 @@ def find_existing_screenshots(game_name, min_count=3, max_count=5):
                     matched.append((item['id'], src))
 
         if len(matched) >= min_count:
-            log.info("WP cache hit pro '%s': %d existujících obrázků", game_name, len(matched))
+            log.info("WP cache hit pro '%s' (title): %d existujících obrázků", game_name, len(matched))
             return matched[:max_count]
 
         return []
@@ -121,13 +141,18 @@ def get_or_fetch_screenshots(game_name, max_count=5):
     if not game_name or game_name == 'N/A':
         return None
 
-    # 1. Zkus WP cache
+    # 1a. Filename-based dedup (deterministický slug — robustní vůči přepsaným titulkům)
+    by_filename = find_screenshots_by_filename(game_name, max_count=max_count)
+    if len(by_filename) >= 3:
+        log.info("Screenshoty pro Story Mode: %d z WP cache (filename dedup)", len(by_filename))
+        return build_section_images_meta(by_filename)
+
+    # 1b. Title-based dedup (fallback pro starší obrázky bez deterministického filename)
     existing = find_existing_screenshots(game_name, min_count=3, max_count=max_count)
     if existing is None:
-        # WP nedostupný — nespouštět upload, aby nedošlo k Fail2Ban banu
         return None
     if existing:
-        log.info("Screenshoty pro Story Mode: %d z WP cache", len(existing))
+        log.info("Screenshoty pro Story Mode: %d z WP cache (title dedup)", len(existing))
         return build_section_images_meta(existing)
 
     # 2. Fallback RAWG → upload

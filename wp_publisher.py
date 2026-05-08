@@ -9,6 +9,9 @@ import re
 import time
 import requests
 import config
+from logger import setup_logger
+
+log = setup_logger(__name__)
 
 
 # In-memory cache pro kategorie (per-language) a status tagy
@@ -308,17 +311,39 @@ def upload_media(image_url, title="", custom_filename=""):
         media_id = media_data['id']
         source_url = media_data.get('source_url', '')
 
-        # Nastav title a alt_text pokud byl zadán title
+        # Nastav title a alt_text — kritické pro budoucí dedup ve Story Mode.
+        # Při selhání rollback uploadu (smaž media), aby se neudělal "sirotek" bez title,
+        # který by se příště nedohledal a způsobil další duplikát.
         if title:
-            try:
-                requests.post(
-                    _api_url(f'media/{media_id}'),
-                    headers=_auth_headers(),
-                    json={'title': title, 'alt_text': title},
-                    timeout=10,
-                )
-            except Exception:
-                pass  # non-critical
+            title_set = False
+            for attempt in range(2):
+                try:
+                    title_resp = requests.post(
+                        _api_url(f'media/{media_id}'),
+                        headers=_auth_headers(),
+                        json={'title': title, 'alt_text': title},
+                        timeout=10,
+                    )
+                    if title_resp.status_code in (200, 201):
+                        title_set = True
+                        break
+                    log.warning("Title update HTTP %d (attempt %d) pro media %d", title_resp.status_code, attempt + 1, media_id)
+                except Exception as e:
+                    log.warning("Title update error (attempt %d) pro media %d: %s", attempt + 1, media_id, e)
+                time.sleep(1)
+
+            if not title_set:
+                log.error("Title update selhal pro media %d ('%s') — mažu, aby vznikl konzistentní stav pro příští dedup", media_id, title)
+                try:
+                    requests.delete(
+                        _api_url(f'media/{media_id}'),
+                        headers=_auth_headers(),
+                        params={'force': 'true'},
+                        timeout=10,
+                    )
+                except Exception as e:
+                    log.warning("Rollback delete media %d selhal: %s", media_id, e)
+                return (None, None, "Media title update failed (rolled back)")
 
         return (media_id, source_url, None)
 
