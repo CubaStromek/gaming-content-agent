@@ -7,6 +7,8 @@ Podporuje kategorie, tagy, featured image upload a Polylang propojení.
 import base64
 import re
 import time
+from typing import Dict, List
+
 import requests
 import config
 from logger import setup_logger
@@ -58,53 +60,51 @@ def check_wp_available(timeout=8):
     except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
         return False
     except Exception:
+        log.exception("WP healthcheck selhal nečekanou výjimkou")
         return False
 
 
+_GUTENBERG_WRAPS = {
+    'p': ('<!-- wp:paragraph -->', '<!-- /wp:paragraph -->'),
+    'h2': ('<!-- wp:heading -->', '<!-- /wp:heading -->'),
+    'h3': ('<!-- wp:heading {"level":3} -->', '<!-- /wp:heading -->'),
+    'h4': ('<!-- wp:heading {"level":4} -->', '<!-- /wp:heading -->'),
+    'ul': ('<!-- wp:list -->', '<!-- /wp:list -->'),
+    'ol': ('<!-- wp:list {"ordered":true} -->', '<!-- /wp:list -->'),
+    'blockquote': ('<!-- wp:quote -->', '<!-- /wp:quote -->'),
+    'hr': ('<!-- wp:separator -->', '<!-- /wp:separator -->'),
+}
+
+
 def _to_gutenberg_blocks(html: str) -> str:
-    """Převede surové HTML na Gutenberg block markup, aby WP nevyžadoval 'Převést na bloky'."""
-    # Seznamy (před <p>, aby se nechytly <p> uvnitř <li>)
-    html = re.sub(
-        r'(<ul[^>]*>[\s\S]*?</ul>)',
-        r'<!-- wp:list -->\n\1\n<!-- /wp:list -->',
-        html
-    )
-    html = re.sub(
-        r'(<ol[^>]*>[\s\S]*?</ol>)',
-        r'<!-- wp:list {"ordered":true} -->\n\1\n<!-- /wp:list -->',
-        html
-    )
-    # Blockquotes
-    html = re.sub(
-        r'(<blockquote[^>]*>[\s\S]*?</blockquote>)',
-        r'<!-- wp:quote -->\n\1\n<!-- /wp:quote -->',
-        html
-    )
-    # Nadpisy
-    html = re.sub(
-        r'(<h2[^>]*>.*?</h2>)',
-        r'<!-- wp:heading -->\n\1\n<!-- /wp:heading -->',
-        html
-    )
-    html = re.sub(
-        r'(<h3[^>]*>.*?</h3>)',
-        r'<!-- wp:heading {"level":3} -->\n\1\n<!-- /wp:heading -->',
-        html
-    )
-    # Oddělovače
-    html = re.sub(
-        r'(<hr[^>]*/>)',
-        r'<!-- wp:separator -->\n\1\n<!-- /wp:separator -->',
-        html
-    )
-    # Odstavce (poslední — nejčastější element)
-    html = re.sub(
-        r'(<p[^>]*>.*?</p>)',
-        r'<!-- wp:paragraph -->\n\1\n<!-- /wp:paragraph -->',
-        html,
-        flags=re.DOTALL
-    )
-    return html
+    """Převede surové HTML na Gutenberg block markup.
+
+    Používá BeautifulSoup → wrapuje pouze top-level elementy (přímé děti
+    kořene). Tím se zabrání obalení <p> uvnitř <li> nebo <blockquote>.
+    """
+    from bs4 import BeautifulSoup, NavigableString
+
+    # `html.parser` baseline — nevyžaduje lxml, neexpanduje boilerplate.
+    soup = BeautifulSoup(f'<div id="__root__">{html}</div>', 'html.parser')
+    root = soup.find('div', id='__root__')
+    if root is None:
+        return html
+
+    parts: List[str] = []
+    for child in list(root.children):
+        if isinstance(child, NavigableString):
+            text = str(child)
+            if text.strip():
+                parts.append(text)
+            continue
+        tag = child.name.lower() if child.name else ''
+        wrap = _GUTENBERG_WRAPS.get(tag)
+        if wrap:
+            open_tag, close_tag = wrap
+            parts.append(f"{open_tag}\n{child}\n{close_tag}")
+        else:
+            parts.append(str(child))
+    return '\n'.join(parts)
 
 
 def strip_first_heading(html):
@@ -254,7 +254,7 @@ def _find_existing_media(filename):
                 if search_name.lower() in slug or filename.lower() in src.lower():
                     return (item['id'], src)
     except Exception:
-        pass
+        log.exception("find_existing_media failed for filename=%s", filename)
     return (None, None)
 
 
@@ -398,61 +398,92 @@ def upload_media_file(file_data, filename, content_type, caption="", alt_text=""
         return (None, f"Media upload error: {str(e)}")
 
 
+def _slugify_tag(name: str) -> str:
+    """Přibližná replikace WP slugify — lowercase, mezery/podtržítka → dash, ne-alfanumerické pryč."""
+    s = name.strip().lower()
+    s = re.sub(r'[\s_]+', '-', s)
+    s = re.sub(r'[^a-z0-9\-]+', '', s)
+    s = re.sub(r'-+', '-', s).strip('-')
+    return s
+
+
 def _resolve_tag_ids(tag_names):
     """
     Převede seznam tag názvů na WP tag IDs.
-    Pokud tag neexistuje, vytvoří ho.
+    Optimalizace: batch GET (`?slug=a,b,c`) místo N×search; chybějící tagy
+    pak vytvoří POSTem. Z 2N callů → 1 + M (M = počet chybějících).
     Vrací (list_of_ids, None) nebo (None, error_string).
     """
     if not tag_names:
         return ([], None)
 
-    headers = _auth_headers()
-    tag_ids = []
+    cleaned = [t.strip() for t in tag_names if t and t.strip()]
+    if not cleaned:
+        return ([], None)
 
-    for tag_name in tag_names:
-        tag_name = tag_name.strip()
-        if not tag_name:
+    headers = _auth_headers()
+
+    # Mapuj slug → display name (zachovej pořadí přes seznam slugů)
+    slug_to_name: Dict[str, str] = {}
+    ordered_slugs: List[str] = []
+    for name in cleaned:
+        slug = _slugify_tag(name)
+        if not slug or slug in slug_to_name:
+            continue
+        slug_to_name[slug] = name
+        ordered_slugs.append(slug)
+
+    if not ordered_slugs:
+        return ([], None)
+
+    # Batch GET — WP REST API přijímá comma-separated slugs.
+    found_by_slug: Dict[str, int] = {}
+    try:
+        resp = requests.get(
+            _api_url('tags'),
+            headers=headers,
+            params={'slug': ','.join(ordered_slugs), 'per_page': 100},
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            for t in resp.json():
+                slug = t.get('slug', '')
+                if slug:
+                    found_by_slug[slug] = t['id']
+        else:
+            log.warning("Tag batch GET vrátil HTTP %s; spadám zpět na per-tag search", resp.status_code)
+    except Exception:
+        log.exception("Tag batch GET selhal pro slugs=%s", ordered_slugs[:5])
+
+    tag_ids: List[int] = []
+    for slug in ordered_slugs:
+        tag_id = found_by_slug.get(slug)
+        if tag_id is not None:
+            tag_ids.append(tag_id)
             continue
 
-        # Hledej existující tag
+        # Tag neexistuje — vytvoř.
         try:
-            resp = requests.get(
-                _api_url('tags'),
-                headers=headers,
-                params={'search': tag_name, 'per_page': 10},
-                timeout=10,
-            )
-
-            if resp.status_code == 200:
-                tags = resp.json()
-                # Přesná shoda (case-insensitive)
-                found = None
-                for t in tags:
-                    if t['name'].lower() == tag_name.lower():
-                        found = t
-                        break
-
-                if found:
-                    tag_ids.append(found['id'])
-                    continue
-
-            # Tag neexistuje — vytvoř ho
             resp = requests.post(
                 _api_url('tags'),
                 headers=headers,
-                json={'name': tag_name},
+                json={'name': slug_to_name[slug]},
                 timeout=10,
             )
-
             if resp.status_code in (200, 201):
                 tag_ids.append(resp.json()['id'])
+            elif resp.status_code == 400:
+                # term_exists — WP vrací existující ID v `data`
+                payload = resp.json() if resp.content else {}
+                existing_id = payload.get('data', {}).get('term_id')
+                if existing_id:
+                    tag_ids.append(existing_id)
+                else:
+                    log.warning("Tag '%s' POST 400 bez term_id: %s", slug_to_name[slug], payload)
             else:
-                # Pokud se nepodaří vytvořit tag, pokračuj bez něj
-                pass
-
+                log.warning("Tag '%s' POST vrátil HTTP %s", slug_to_name[slug], resp.status_code)
         except Exception:
-            # Tag se nepodařilo zpracovat, pokračuj
+            log.exception("Vytvoření tagu '%s' selhalo", slug_to_name[slug])
             continue
 
     return (tag_ids, None)
@@ -499,6 +530,7 @@ def get_top_tags(limit=30, force_refresh=False):
         _top_tags_cache['fetched_at'] = now
         return tags[:limit]
     except Exception:
+        log.exception("get_top_tags selhal")
         return []
 
 

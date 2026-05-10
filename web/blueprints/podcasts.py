@@ -6,7 +6,7 @@ import threading
 
 from flask import Blueprint, request
 
-from web.auth import require_auth
+from web.auth import require_auth, require_safe_origin
 from web.helpers import json_response
 import web.helpers as state
 from article_writer import generate_podcast_script
@@ -14,10 +14,20 @@ from article_writer import generate_podcast_script
 podcasts_bp = Blueprint('podcasts', __name__)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-OUTPUT_DIR = os.path.join(BASE_DIR, 'output')
+OUTPUT_DIR = os.path.realpath(os.path.join(BASE_DIR, 'output'))
+
+
+def _safe_run_dir(run_id: str):
+    if not re.match(r'^[\w\-]+$', run_id or ''):
+        return None
+    candidate = os.path.realpath(os.path.join(OUTPUT_DIR, run_id))
+    if os.path.commonpath([candidate, OUTPUT_DIR]) != OUTPUT_DIR:
+        return None
+    return candidate
 
 
 @podcasts_bp.route('/generate-podcast', methods=['POST'])
+@require_safe_origin
 @require_auth
 def generate_podcast_endpoint():
     try:
@@ -25,10 +35,14 @@ def generate_podcast_endpoint():
     except Exception:
         return json_response({'error': 'Invalid JSON'}), 400
     run_id = data.get('run_id', '')
-    topic_index = data.get('topic_index', 0)
+    try:
+        topic_index = int(data.get('topic_index', 0))
+    except (TypeError, ValueError):
+        return json_response({'error': 'topic_index must be an integer'}), 400
     lang = data.get('lang', 'cs')
 
-    if not re.match(r'^[\w\-]+$', run_id):
+    run_dir = _safe_run_dir(run_id)
+    if run_dir is None:
         return json_response({'error': 'Invalid run_id'}), 400
 
     if lang not in ['cs', 'en']:
@@ -38,7 +52,6 @@ def generate_podcast_endpoint():
         if state.podcast_writer_state['running']:
             return json_response({'error': 'Already generating podcast'}), 409
 
-    run_dir = os.path.join(OUTPUT_DIR, run_id)
     article_path = os.path.join(run_dir, f'article_{topic_index}_{lang}.html')
 
     if not os.path.exists(article_path):
@@ -87,6 +100,7 @@ def generate_podcast_endpoint():
 
 
 @podcasts_bp.route('/generate-podcast/output')
+@require_auth
 def generate_podcast_output():
     with state.podcast_writer_lock:
         s = dict(state.podcast_writer_state)
@@ -94,14 +108,16 @@ def generate_podcast_output():
 
 
 @podcasts_bp.route('/podcast/<run_id>/<int:topic_index>/<lang>')
+@require_auth
 def get_saved_podcast(run_id, topic_index, lang):
-    if not re.match(r'^[\w\-]+$', run_id):
+    run_dir = _safe_run_dir(run_id)
+    if run_dir is None:
         return json_response({'error': 'Invalid run_id'}), 400
 
     if lang not in ['cs', 'en']:
         return json_response({'error': 'Invalid lang'}), 400
 
-    script_path = os.path.join(OUTPUT_DIR, run_id, f'podcast_{topic_index}_{lang}.txt')
+    script_path = os.path.join(run_dir, f'podcast_{topic_index}_{lang}.txt')
 
     if not os.path.exists(script_path):
         return json_response({'error': 'Podcast script not found'}), 404

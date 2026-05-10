@@ -6,11 +6,61 @@
     <title>Gaming Content Agent</title>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/decisions.css') }}">
 </head>
 <body>
     <div class="container">
         <div class="main-grid">
           <div class="main-column">
+            <div class="view-tabs">
+                <button class="view-tab active" data-view="decision" onclick="switchView('decision')">DECISION_REPORT</button>
+                <button class="view-tab" data-view="trends" onclick="switchView('trends')">TRENDY</button>
+                <button class="view-tab" data-view="scoring" onclick="switchView('scoring')">SKORING</button>
+                <button class="view-tab" data-view="manual" onclick="switchView('manual')">MANUAL</button>
+            </div>
+
+            <!-- Decision Report (default) -->
+            <div class="view-section" id="viewDecision">
+                <div class="decision-header" id="decisionHeader">
+                    <div class="dh-loading">Načítám poslední běh…</div>
+                </div>
+                <div class="decision-topics" id="decisionTopics"></div>
+            </div>
+
+            <!-- Trendy -->
+            <div class="view-section" id="viewTrends" hidden>
+                <div class="trends-header">
+                    <h3>Posledních 14 dní</h3>
+                    <div class="trends-legend">
+                        <span class="lg lg-pub">█ published</span>
+                        <span class="lg lg-skip">█ skipped</span>
+                        <span class="lg lg-line">─ avg virality</span>
+                    </div>
+                </div>
+                <canvas id="trendsCanvas" width="900" height="280"></canvas>
+                <div class="skip-reasons-panel">
+                    <h3>Skip reasons (30 dní)</h3>
+                    <div id="skipReasonsList"></div>
+                </div>
+            </div>
+
+            <!-- Skoring -->
+            <div class="view-section" id="viewScoring" hidden>
+                <div class="scoring-header">
+                    <h3>Virality vs verdict (30 dní)</h3>
+                    <div class="scoring-legend">
+                        <span class="lg lg-pub">● published</span>
+                        <span class="lg lg-skip">● skipped</span>
+                    </div>
+                </div>
+                <canvas id="scoringCanvas" width="900" height="380"></canvas>
+                <div class="scoring-hint">
+                    Hover na bod ukáže topic + reason. Cílem je vidět, kde leží decision boundary mezi published a skipped (ideálně skip = malé virality + jasný důvod).
+                </div>
+            </div>
+
+            <!-- Manual (původní publish flow) -->
+            <div class="view-section" id="viewManual" hidden>
             <div class="topics-panel" id="topicsPanel">
                 <div class="panel-header">TOP TEMATA - WRITE_ARTICLE</div>
                 <div class="topics-grid" id="topicsGrid"></div>
@@ -53,6 +103,7 @@
                     </div>
                 </div>
             </div>
+            </div><!-- /viewManual -->
           </div>
 
             <div class="sidebar">
@@ -241,6 +292,8 @@
         </div>
     </div>
 
+    <script src="{{ url_for('static', filename='js/auth_bootstrap.js') }}"></script>
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/decisions.js') }}"></script>
 </body>
 </html>

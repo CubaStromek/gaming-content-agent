@@ -37,6 +37,7 @@ def create_app():
     from web.blueprints.feeds_api import feeds_api_bp
     from web.blueprints.wp_api import wp_api_bp
     from web.blueprints.rawg_api import rawg_api_bp
+    from web.blueprints.decisions import decisions_bp
 
     app.register_blueprint(core_bp)
     app.register_blueprint(history_bp)
@@ -45,5 +46,6 @@ def create_app():
     app.register_blueprint(feeds_api_bp)
     app.register_blueprint(wp_api_bp)
     app.register_blueprint(rawg_api_bp)
+    app.register_blueprint(decisions_bp)
 
     return app

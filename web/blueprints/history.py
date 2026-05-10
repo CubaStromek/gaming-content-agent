@@ -4,18 +4,31 @@ import os
 import re
 import json
 
+from typing import Optional
+
 from flask import Blueprint
 
+from web.auth import require_auth
 from web.helpers import json_response
 from article_writer import parse_topics_from_report
 
 history_bp = Blueprint('history', __name__)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-OUTPUT_DIR = os.path.join(BASE_DIR, 'output')
+OUTPUT_DIR = os.path.realpath(os.path.join(BASE_DIR, 'output'))
+
+
+def _safe_run_dir(run_id: str) -> Optional[str]:
+    if not re.match(r'^[\w\-]+$', run_id or ''):
+        return None
+    candidate = os.path.realpath(os.path.join(OUTPUT_DIR, run_id))
+    if os.path.commonpath([candidate, OUTPUT_DIR]) != OUTPUT_DIR:
+        return None
+    return candidate
 
 
 @history_bp.route('/history')
+@require_auth
 def get_history():
     runs = []
 
@@ -37,10 +50,11 @@ def get_history():
 
 
 @history_bp.route('/history/<run_id>')
+@require_auth
 def get_run(run_id):
-    if not re.match(r'^[\w\-]+$', run_id):
+    run_path = _safe_run_dir(run_id)
+    if run_path is None:
         return json_response({'error': 'Invalid run_id'}), 400
-    run_path = os.path.join(OUTPUT_DIR, run_id)
     result = {'id': run_id, 'report': None, 'articles_count': 0}
 
     report_path = os.path.join(run_path, 'report.txt')
@@ -62,8 +76,12 @@ def get_run(run_id):
     if os.path.exists(articles_path):
         try:
             with open(articles_path, 'r', encoding='utf-8') as f:
-                articles = json.load(f)
-                result['articles_count'] = len(articles)
+                data = json.load(f)
+            # rss_scraper.save_articles_to_json ukládá { "total_articles": N, "articles": [...], ... }
+            if isinstance(data, dict):
+                result['articles_count'] = data.get('total_articles', len(data.get('articles', [])))
+            elif isinstance(data, list):
+                result['articles_count'] = len(data)
         except Exception:
             pass
 
@@ -71,11 +89,13 @@ def get_run(run_id):
 
 
 @history_bp.route('/topics/<run_id>')
+@require_auth
 def get_topics(run_id):
-    if not re.match(r'^[\w\-]+$', run_id):
+    run_dir = _safe_run_dir(run_id)
+    if run_dir is None:
         return json_response({'error': 'Invalid run_id'}), 400
 
-    report_path = os.path.join(OUTPUT_DIR, run_id, 'report.txt')
+    report_path = os.path.join(run_dir, 'report.txt')
     if not os.path.exists(report_path):
         return json_response({'error': 'Report not found'}), 404
 
@@ -86,7 +106,6 @@ def get_topics(run_id):
         topics = parse_topics_from_report(report_text)
 
         topics_out = []
-        run_dir = os.path.join(OUTPUT_DIR, run_id)
         for i, t in enumerate(topics):
             has_article = os.path.exists(os.path.join(run_dir, f'article_{i}_cs.html'))
             topics_out.append({

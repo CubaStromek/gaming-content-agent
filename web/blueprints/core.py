@@ -155,13 +155,30 @@ def start():
 
 
 @core_bp.route('/output')
+@require_auth
 def get_output():
+    """Vrátí log řádky od daného offsetu (per-klient cursor přes ?since=N).
+
+    Když klient `since` nepošle, fallback na globální cursor (zpětná kompatibilita).
+    """
+    from flask import request as _req
+    since_param = _req.args.get('since')
     with state.output_lock:
-        new_lines = state.output_lines[state.sent_line_index:]
-        state.sent_line_index = len(state.output_lines)
+        total = len(state.output_lines)
+        if since_param is not None:
+            try:
+                since = max(0, min(int(since_param), total))
+            except ValueError:
+                since = 0
+        else:
+            since = state.sent_line_index
+            state.sent_line_index = total
+
+        new_lines = state.output_lines[since:total]
 
         return json_response({
             'lines': new_lines,
+            'cursor': total,
             'running': state.agent_running,
             'success': state.run_success,
             'articles': state.articles_count,
@@ -170,6 +187,7 @@ def get_output():
 
 
 @core_bp.route('/status')
+@require_auth
 def status():
     with state.output_lock:
         running = state.agent_running

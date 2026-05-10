@@ -10,8 +10,25 @@ import json
 from typing import List, Dict, Optional
 import config
 import topic_dedup
+import wp_publisher
 from logger import setup_logger
 from models import Topic, AnalysisResult
+
+
+def _format_existing_tags_for_prompt(limit: int = 30) -> str:
+    """
+    Vrátí blok pro prompt se seznamem top existujících tagů.
+    Claude je má preferovat, aby zabránil tag-inflation (nové překlepové/duplicitní tagy).
+    """
+    tags = wp_publisher.get_top_tags(limit=limit)
+    if not tags:
+        return ''
+    names = ', '.join(f"{t['name']} ({t['count']}×)" for t in tags)
+    return (
+        "\nEXISTUJÍCÍ TAGY (preferuj tyto, pokud jsou vhodné pro téma — je lepší sdílet tag "
+        "s dalšími články, než vymýšlet nový):\n"
+        f"{names}\n"
+    )
 
 log = setup_logger(__name__)
 
@@ -47,11 +64,11 @@ def _call_analysis_api(client, prompt):
 
 if _HAS_TENACITY:
     _call_analysis_api = retry(
-        stop=stop_after_attempt(5),
-        wait=wait_exponential(multiplier=4, min=15, max=120),
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(multiplier=4, min=15, max=60),
         retry=retry_if_exception(_is_retryable),
         before_sleep=lambda retry_state: log.warning(
-            "⚠️  API volání selhalo (HTTP %s), pokus %d/5, čekám...",
+            "⚠️  API volání selhalo (HTTP %s), pokus %d/2, čekám...",
             getattr(retry_state.outcome.exception(), 'status_code', '?'),
             retry_state.attempt_number
         ),
@@ -95,7 +112,7 @@ Pro každé téma napiš:
 - 🔥 VIRALITA: [hodnocení 1-100, jak virální může být]
 - 💡 PROČ TEĎKA: [proč je to aktuální, proč to napsat teď]
 - 🔗 ZDROJE: [PŘESNÉ URL adresy relevantních článků - zkopíruj celé URL z Link: polí výše]
-- 🏷️ SEO KLÍČOVÁ SLOVA: [3-5 klíčových slov pro SEO]
+- 🏷️ SEO KLÍČOVÁ SLOVA: [přesně 2-3 tagy, oddělené čárkou. POUZE z těchto kategorií: (1) název hry anglicky v kanonickém tvaru, např. "Grand Theft Auto VI" (ne "GTA 6"); (2) vývojářské studio, např. "Rockstar Games"; (3) herní série, např. "Resident Evil"; (4) platforma, JEN pokud je zcela klíčová (např. exkluzivita), např. "PlayStation 5". ZAKÁZÁNO: obecná slova jako "novinky", "hry", "trailer", "update", "leak", "news", "aktualizace", "zpráva", jména žánrů jako "RPG" nebo "střílečka", jednorázové popisky jako "kontroverzní patch". Cíl: tagy, které budou sdílet DESÍTKY článků — ne unikáty. Když si nejsi jistý, radši méně tagů než víc.]
 - 🕹️ NÁZEV HRY: [přesný anglický název hlavní hry v tématu, např. "The Elder Scrolls V: Skyrim" nebo "Grand Theft Auto VI". Pokud téma není o konkrétní hře, napiš "N/A"]
 - 📌 STATUS TAG: [vyber JEDEN z: news, update, leak, critical, success, indie, review, trailer, rumor, info, finance, tema, preview]
 
@@ -113,6 +130,7 @@ DŮLEŽITÉ:
 - Počet témat musí odpovídat počtu dostupných článků (max {max_topics})
 - STATUS TAG pravidla: "news" = běžná zpráva/oznámení, "update" = patch/aktualizace existující hry, "leak" = únik neoficiálních informací, "critical" = kritická/důležitá zpráva s velkým dopadem, "success" = prodejní rekord/milník/úspěch, "indie" = nezávislá hra, "review" = recenze, "trailer" = nový trailer/video, "rumor" = nepotvrzená spekulace, "info" = obecná informace/analýza, "finance" = finanční zpráva/akvizice/byznys, "tema" = tématický rozbor, "preview" = náhled/hands-on/preview. Defaultní je "news", ale snaž se vybrat co nejpřesnější tag.
 {topic_dedup.format_recent_topics_for_prompt(days=3)}
+{_format_existing_tags_for_prompt(limit=30)}
 ČLÁNKY K ANALÝZE:
 {articles_text}
 
@@ -139,8 +157,8 @@ VÝSTUP (seřaď od nejdůležitějšího, vytvoř PŘESNĚ {max_topics} témat 
 
         return result
 
-    except Exception as e:
-        log.error("❌ Chyba při volání Claude API: %s", e)
+    except Exception:
+        log.exception("❌ Chyba při volání Claude API")
         return None
 
 
@@ -171,7 +189,7 @@ def _build_analysis_tool(max_topics: int) -> dict:
                             "virality_score": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Hodnocení virality 1-100"},
                             "why_now": {"type": "string", "description": "Proč je to aktuální, proč to napsat teď"},
                             "sources": {"type": "array", "items": {"type": "string"}, "description": "Plné URL adresy zdrojových článků (https://...)"},
-                            "seo_keywords": {"type": "string", "description": "3-5 SEO klíčových slov oddělených čárkou"},
+                            "seo_keywords": {"type": "string", "description": "2-3 tagy oddělené čárkou, POUZE z kategorií: (1) kanonický anglický název hry, (2) vývojářské studio, (3) herní série, (4) platforma (jen pokud klíčová). ZAKÁZÁNO obecná slova (novinky, hry, trailer, update, news, aktualizace), žánry (RPG, střílečka) a jednorázové popisky."},
                             "game_name": {"type": "string", "description": "Přesný anglický název hlavní hry (např. 'Grand Theft Auto VI'), nebo 'N/A'"},
                             "status_tag": {"type": "string", "enum": ["news", "update", "leak", "critical", "success", "indie", "review", "trailer", "rumor", "info", "finance", "tema", "preview"], "description": "Typ článku — news=zpráva, update=patch/aktualizace, leak=únik info, critical=důležitá zpráva, success=rekord/milník, indie=indie hra, review=recenze, trailer=nový trailer, rumor=spekulace, info=analýza, finance=byznys, tema=tématický rozbor, preview=náhled"},
                         }
@@ -196,11 +214,11 @@ def _call_structured_api(client, prompt, tools):
 
 if _HAS_TENACITY:
     _call_structured_api = retry(
-        stop=stop_after_attempt(5),
-        wait=wait_exponential(multiplier=4, min=15, max=120),
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(multiplier=4, min=15, max=60),
         retry=retry_if_exception(_is_retryable),
         before_sleep=lambda retry_state: log.warning(
-            "⚠️  Structured API volání selhalo (HTTP %s), pokus %d/5, čekám...",
+            "⚠️  Structured API volání selhalo (HTTP %s), pokus %d/2, čekám...",
             getattr(retry_state.outcome.exception(), 'status_code', '?'),
             retry_state.attempt_number
         ),
@@ -269,6 +287,7 @@ PRAVIDLA:
 - Počet témat musí být PŘESNĚ {max_topics}
 - STATUS TAG pravidla: "news" = běžná zpráva/oznámení, "update" = patch/aktualizace existující hry, "leak" = únik neoficiálních informací, "critical" = kritická/důležitá zpráva s velkým dopadem, "success" = prodejní rekord/milník/úspěch, "indie" = nezávislá hra, "review" = recenze, "trailer" = nový trailer/video, "rumor" = nepotvrzená spekulace, "info" = obecná informace/analýza, "finance" = finanční zpráva/akvizice/byznys, "tema" = tématický rozbor, "preview" = náhled/hands-on/preview. Defaultní je "news", ale snaž se vybrat co nejpřesnější tag.
 {topic_dedup.format_recent_topics_for_prompt(days=3)}
+{_format_existing_tags_for_prompt(limit=30)}
 Použij tool submit_analysis k odeslání výsledků.
 
 ČLÁNKY K ANALÝZE:
@@ -312,8 +331,8 @@ Použij tool submit_analysis k odeslání výsledků.
 
         return {"text": report_text, "topics": topics}
 
-    except Exception as e:
-        log.error("❌ Chyba při strukturované analýze: %s", e)
+    except Exception:
+        log.exception("❌ Chyba při strukturované analýze")
         return None
 
 

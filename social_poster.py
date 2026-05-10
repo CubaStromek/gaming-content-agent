@@ -49,6 +49,7 @@ def is_slot_used(slot_name):
         ).fetchone()
         return (row[0] if row else 0) > 0
     except Exception:
+        log.exception("is_slot_used DB query failed for slot=%s", slot_name)
         return False
     finally:
         conn.close()
@@ -64,6 +65,7 @@ def get_today_social_count():
         ).fetchone()
         return row[0] if row else 0
     except Exception:
+        log.exception("get_today_social_count DB query failed")
         return 0
     finally:
         conn.close()
@@ -308,10 +310,33 @@ def post_to_threads(text, image_url=None):
 
         log.info("Threads container vytvořen: %s", container_id)
 
-        # Krok 2: Počkat na zpracování médií
-        wait_seconds = 30 if image_url else 5
-        log.info("Čekám %ds na zpracování Threads containeru...", wait_seconds)
-        time.sleep(wait_seconds)
+        # Krok 2: Polling na status containeru (FINISHED) místo statického sleepu.
+        # Threads API: GET /{container-id}?fields=status — vrací IN_PROGRESS / FINISHED / ERROR.
+        max_wait = 30 if image_url else 10
+        deadline = time.time() + max_wait
+        backoff = 2
+        while True:
+            try:
+                status_resp = requests.get(
+                    f"{base_url}/{container_id}",
+                    params={'fields': 'status', 'access_token': token},
+                    timeout=10,
+                )
+                container_status = status_resp.json().get('status', '') if status_resp.status_code == 200 else ''
+            except Exception:
+                log.exception("Threads status poll selhal — pokračuji s čekáním")
+                container_status = ''
+
+            if container_status == 'FINISHED':
+                break
+            if container_status == 'ERROR':
+                return None, "Threads container vrátil ERROR"
+            if time.time() >= deadline:
+                log.warning("Threads container nedosáhl FINISHED za %ds, přesto zkusím publish", max_wait)
+                break
+
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 8)
 
         # Krok 3: Publikace containeru
         publish_resp = requests.post(
@@ -336,7 +361,7 @@ def post_to_threads(text, image_url=None):
         return post_id, post_url
 
     except Exception as e:
-        log.error("Threads post selhal: %s", e)
+        log.exception("Threads post selhal")
         return None, str(e)
 
 

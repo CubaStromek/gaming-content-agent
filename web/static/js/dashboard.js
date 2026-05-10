@@ -5,6 +5,7 @@
         let articleResult = null;
         let currentArticleLang = 'cs';
         let articlePolling = null;
+        let outputCursor = 0;
 
         document.addEventListener('DOMContentLoaded', loadHistory);
 
@@ -24,6 +25,7 @@
             startTime = Date.now();
             timerInterval = setInterval(updateTimer, 1000);
 
+            outputCursor = 0;
             fetch('/start')
                 .then(r => r.json())
                 .then(data => {
@@ -34,9 +36,12 @@
         }
 
         function pollOutput() {
-            fetch('/output')
+            fetch('/output?since=' + outputCursor)
                 .then(r => r.json())
                 .then(data => {
+                    if (typeof data.cursor === 'number') {
+                        outputCursor = data.cursor;
+                    }
                     if (data.lines && data.lines.length > 0) {
                         for (const line of data.lines) {
                             appendLine(line);
@@ -133,7 +138,7 @@
                             ? `<span style="font-size:0.55rem;background:rgba(74,222,128,0.15);color:#4ade80;padding:0.1rem 0.3rem;border-radius:0.15rem;margin-left:0.4rem;">${run.articles} cl.</span>`
                             : '';
                         return `
-                        <div class="history-item" onclick="loadRun('${run.id}')">
+                        <div class="history-item" onclick="window.loadRunDecisionsFromHistory ? window.loadRunDecisionsFromHistory('${run.id}') : loadRun('${run.id}')">
                             <div>
                                 <div class="history-date">${run.date}${badge}</div>
                                 <div class="history-time">${run.time}</div>
@@ -538,23 +543,48 @@
                 return;
             }
 
+            // Pozor: name/url MUSÍ jít jen do textContent / atributu, NIKDY do
+            // inline onclick stringů — apostrof v názvu (např. "IGN's feed")
+            // by zlomil JS handler a otevřel XSS. Proto data-* + delegated click.
             list.innerHTML = feedsData.map(f => {
                 const langClass = f.lang === 'cs' ? 'feed-lang-cs' : 'feed-lang-en';
+                const safeId = escapeHtml(f.id);
                 return `
-                <div class="feed-row" id="feed-row-${f.id}">
+                <div class="feed-row" id="feed-row-${safeId}">
                     <label class="feed-toggle">
-                        <input type="checkbox" ${f.enabled ? 'checked' : ''} onchange="toggleFeed('${f.id}', this.checked)">
+                        <input type="checkbox" ${f.enabled ? 'checked' : ''}
+                               class="feed-toggle-input" data-feed-id="${safeId}">
                         <span class="feed-toggle-slider"></span>
                     </label>
                     <span class="feed-name">${escapeHtml(f.name)}</span>
                     <span class="feed-url" title="${escapeHtml(f.url)}">${escapeHtml(f.url)}</span>
                     <span class="feed-lang-badge ${langClass}">${f.lang}</span>
                     <div class="feed-actions">
-                        <button class="feed-btn" onclick="editFeed('${f.id}')">EDIT</button>
-                        <button class="feed-btn feed-btn-del" onclick="deleteFeed('${f.id}', '${escapeHtml(f.name)}')">DEL</button>
+                        <button class="feed-btn feed-action-edit"
+                                data-feed-id="${safeId}">EDIT</button>
+                        <button class="feed-btn feed-btn-del feed-action-delete"
+                                data-feed-id="${safeId}"
+                                data-feed-name="${escapeHtml(f.name)}">DEL</button>
                     </div>
                 </div>`;
             }).join('');
+
+            // Delegated handlers — feedsData je trusted (přišlo z naší /api/feeds),
+            // ale vyhneme se inline JS kvůli XSS robustnosti.
+            list.querySelectorAll('.feed-toggle-input').forEach(input => {
+                input.addEventListener('change', e => {
+                    toggleFeed(e.currentTarget.dataset.feedId, e.currentTarget.checked);
+                });
+            });
+            list.querySelectorAll('.feed-action-edit').forEach(btn => {
+                btn.addEventListener('click', e => editFeed(e.currentTarget.dataset.feedId));
+            });
+            list.querySelectorAll('.feed-action-delete').forEach(btn => {
+                btn.addEventListener('click', e => {
+                    const t = e.currentTarget;
+                    deleteFeed(t.dataset.feedId, t.dataset.feedName || '');
+                });
+            });
         }
 
         function toggleFeed(feedId, enabled) {
@@ -985,65 +1015,10 @@
             return data.media_id;
         }
 
-        async function wpPublishDraft() {
-            const btn = document.getElementById('wpBtnPublish');
-            btn.disabled = true;
-            btn.textContent = 'PUBLISHING...';
-
-            const lang = currentArticleLang === 'podcast' ? 'cs' : currentArticleLang;
-            const content = articleResult ? (lang === 'cs' ? articleResult.cs : articleResult.en) : '';
-
-            if (!content) {
-                wpShowResult('No content for language: ' + lang.toUpperCase(), true);
-                btn.disabled = false;
-                btn.textContent = 'PUBLISH DRAFT';
-                return;
-            }
-
-            try {
-                let mediaId = null;
-                if (wpSelectedImageUrl || (document.getElementById('wpImageFile').files && document.getElementById('wpImageFile').files[0])) {
-                    btn.textContent = 'UPLOADING IMAGE...';
-                    mediaId = await wpUploadImage();
-                }
-
-                const selectedCats = wpGetSelectedCategories(lang);
-
-                const resp = await fetch('/api/wp/publish', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        title: document.getElementById('wpTitle').value,
-                        content: content,
-                        categories: selectedCats,
-                        tags: document.getElementById('wpTags').value,
-                        status_tag: document.getElementById(lang === 'en' ? 'wpStatusTagEn' : 'wpStatusTagCs').value,
-                        lang: lang,
-                        featured_media_id: mediaId,
-                        score: parseInt(document.getElementById('wpScore').value) || 3,
-                        topic_meta: currentTopicData,
-                    })
-                });
-                const data = await resp.json();
-                btn.disabled = false;
-                btn.textContent = 'PUBLISH DRAFT';
-
-                if (data.error) {
-                    wpShowResult(data.error, true);
-                    return;
-                }
-
-                wpShowResult(
-                    'Draft created! <a href="' + escapeHtml(data.post.edit_url) + '" target="_blank">Edit in WP Admin</a>' +
-                    ' | <a href="' + escapeHtml(data.post.view_url) + '" target="_blank">Preview</a>',
-                    false
-                );
-            } catch (err) {
-                btn.disabled = false;
-                btn.textContent = 'PUBLISH DRAFT';
-                wpShowResult('Error: ' + err.message, true);
-            }
-        }
+        // wpPublishDraft() (single-language draft) odstraněn — UI už nemá tlačítko
+        // wpBtnPublish (publish flow je jen přes wpPublishBoth → CS+EN). Pokud
+        // by někdo single-jazyk draft potřeboval, /api/wp/publish endpoint
+        // pořád existuje.
 
         async function wpPublishBoth() {
             const btn = document.getElementById('wpBtnPublishBoth');
@@ -1119,39 +1094,19 @@
             }
         }
 
-        async function wpSkipArticle() {
-            const btn = document.getElementById('wpBtnSkip');
-            btn.disabled = true;
-            btn.textContent = 'SKIPPING...';
+        // wpSkipArticle() odstraněn — UI nemá tlačítko wpBtnSkip. /api/wp/log-skip
+        // se nadále používá z auto pipeline (publish_log.log_decision).
 
-            try {
-                const resp = await fetch('/api/wp/log-skip', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        topic_meta: currentTopicData,
-                    })
-                });
-                const data = await resp.json();
-                btn.disabled = false;
-                btn.textContent = 'SKIP';
-
-                if (data.error) {
-                    wpShowResult(data.error, true);
-                    return;
-                }
-
-                wpShowResult('Skipped — logged to publish_log.jsonl', false);
-            } catch (err) {
-                btn.disabled = false;
-                btn.textContent = 'SKIP';
-                wpShowResult('Error: ' + err.message, true);
-            }
-        }
-
-        function wpShowResult(html, isError) {
+        function wpShowResult(message, isError) {
+            // Success větev posílá HTML (links na WP edit/preview) → innerHTML.
+            // Error větev dostává raw text (data.error nebo err.message) →
+            // textContent, jinak by zlomyslný error string proběhl jako HTML/XSS.
             const el = document.getElementById('wpResult');
-            el.innerHTML = html;
+            if (isError) {
+                el.textContent = message;
+            } else {
+                el.innerHTML = message;
+            }
             el.classList.remove('success', 'error');
             el.classList.add('visible', isError ? 'error' : 'success');
         }

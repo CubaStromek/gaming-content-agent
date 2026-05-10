@@ -62,11 +62,11 @@ class TestAuth:
             })
             assert resp.status_code != 401
 
-    def test_auth_with_query_param(self, app_client):
-        """Token in query param works."""
+    def test_auth_query_param_rejected(self, app_client):
+        """Token v query stringu MUSÍ být odmítnut (logoval by se do access logu)."""
         with patch.object(config, 'DASHBOARD_TOKEN', 'secret-token-123'):
             resp = app_client.get('/start?token=secret-token-123')
-            assert resp.status_code != 401
+            assert resp.status_code == 401
 
     def test_auth_wrong_token(self, app_client):
         """Wrong token gets 401."""
@@ -112,3 +112,60 @@ class TestPublishStats:
         assert resp.status_code == 200
         data = json.loads(resp.data)
         assert 'total' in data
+
+
+class TestSafeOrigin:
+    def test_post_with_foreign_origin_rejected(self, app_client):
+        """POST z cizího Originu musí být odmítnut (CSRF defense-in-depth)."""
+        with patch.object(config, 'DASHBOARD_TOKEN', 'tok'):
+            resp = app_client.post(
+                '/api/feeds',
+                headers={
+                    'Authorization': 'Bearer tok',
+                    'Origin': 'https://evil.example',
+                    'Content-Type': 'application/json',
+                },
+                data='{}',
+            )
+            assert resp.status_code == 403
+
+    def test_post_with_same_origin_allowed(self, app_client):
+        """POST se stejným Originem jako Host header projde Origin checkem."""
+        with patch.object(config, 'DASHBOARD_TOKEN', 'tok'):
+            resp = app_client.post(
+                '/api/feeds',
+                headers={
+                    'Authorization': 'Bearer tok',
+                    'Origin': 'http://localhost',
+                    'Host': 'localhost',
+                    'Content-Type': 'application/json',
+                },
+                data='{}',
+            )
+            # 400 z aplikační logiky (chybí name/url) — ale prošlo přes Origin check.
+            assert resp.status_code != 403
+
+    def test_post_without_origin_allowed(self, app_client):
+        """Curl/legitimate non-browser klient bez Origin headeru projde (jen Bearer)."""
+        with patch.object(config, 'DASHBOARD_TOKEN', 'tok'):
+            resp = app_client.post(
+                '/api/feeds',
+                headers={
+                    'Authorization': 'Bearer tok',
+                    'Content-Type': 'application/json',
+                },
+                data='{}',
+            )
+            assert resp.status_code != 403
+
+
+class TestPathTraversal:
+    def test_run_id_traversal_rejected(self, app_client):
+        """Pokus o path traversal v run_id musí být odmítnut s 400."""
+        with patch.object(config, 'DASHBOARD_TOKEN', ''):
+            resp = app_client.post(
+                '/write-article',
+                headers={'Content-Type': 'application/json'},
+                data='{"run_id":"../../etc","topic_index":0}',
+            )
+            assert resp.status_code == 400

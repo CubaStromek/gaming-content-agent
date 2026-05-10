@@ -1,10 +1,66 @@
 """WordPress Publishing API: /api/wp/*."""
 
+import ipaddress
+import socket
+from urllib.parse import urlparse
+
 import requests as http_requests
 from flask import Blueprint, request
 from werkzeug.utils import secure_filename
 
-from web.auth import require_auth
+from web.auth import require_auth, require_safe_origin
+from logger import setup_logger
+
+log = setup_logger(__name__)
+
+
+def _is_safe_external_url(url: str) -> bool:
+    """Validuje URL proti SSRF: jen https, žádné lokální/privátní IP.
+
+    Resolvuje DNS a kontroluje všechny A/AAAA záznamy proti privátním rangeům.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    if parsed.scheme not in ('https',):
+        return False
+    if not parsed.hostname:
+        return False
+    host = parsed.hostname
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return False
+    for info in infos:
+        addr = info[4][0]
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            return False
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_multicast or ip.is_reserved or ip.is_unspecified):
+            return False
+    return True
+
+
+def _stream_download(url: str, max_bytes: int):
+    """Streamuje download s tvrdým limitem velikosti. Vrací (data, content_type, error)."""
+    try:
+        with http_requests.get(url, timeout=15, stream=True, allow_redirects=False) as resp:
+            if resp.status_code != 200:
+                return None, None, f'HTTP {resp.status_code}'
+            ctype = (resp.headers.get('Content-Type') or '').split(';')[0].strip().lower()
+            buf = bytearray()
+            for chunk in resp.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                buf.extend(chunk)
+                if len(buf) > max_bytes:
+                    return None, None, f'image > {max_bytes // (1024 * 1024)} MB'
+            return bytes(buf), ctype, None
+    except http_requests.RequestException as e:
+        return None, None, str(e)
 from web.helpers import json_response
 import wp_publisher
 import publish_log
@@ -17,6 +73,7 @@ MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
 @wp_api_bp.route('/api/wp/status')
+@require_auth
 def api_wp_status():
     return json_response({
         'configured': wp_publisher.is_configured(),
@@ -25,6 +82,7 @@ def api_wp_status():
 
 
 @wp_api_bp.route('/api/wp/categories')
+@require_auth
 def api_wp_categories():
     if not wp_publisher.is_configured():
         return json_response({'error': 'WordPress not configured'}), 400
@@ -39,6 +97,7 @@ def api_wp_categories():
 
 
 @wp_api_bp.route('/api/wp/status-tags')
+@require_auth
 def api_wp_status_tags():
     if not wp_publisher.is_configured():
         return json_response({'error': 'WordPress not configured'}), 400
@@ -52,6 +111,7 @@ def api_wp_status_tags():
 
 
 @wp_api_bp.route('/api/wp/upload-from-url', methods=['POST'])
+@require_safe_origin
 @require_auth
 def api_wp_upload_from_url():
     if not wp_publisher.is_configured():
@@ -65,17 +125,21 @@ def api_wp_upload_from_url():
     if not image_url:
         return json_response({'error': 'Missing URL'}), 400
 
-    img_resp = http_requests.get(image_url, timeout=15)
-    if img_resp.status_code != 200:
-        return json_response({'error': f'Cannot download image: HTTP {img_resp.status_code}'}), 502
+    if not _is_safe_external_url(image_url):
+        return json_response({'error': 'URL must be https and resolve to a public address'}), 400
 
-    content_type = img_resp.headers.get('Content-Type', 'image/jpeg')
+    file_data, content_type, err = _stream_download(image_url, MAX_UPLOAD_SIZE)
+    if err:
+        return json_response({'error': f'Cannot download image: {err}'}), 502
+    if content_type not in ALLOWED_MEDIA_TYPES:
+        return json_response({'error': f'Unsupported content type: {content_type}'}), 400
+
     filename = image_url.split('/')[-1].split('?')[0] or 'rawg-image.jpg'
     if '.' not in filename:
         filename = 'rawg-image.jpg'
 
     media_id, error = wp_publisher.upload_media_file(
-        file_data=img_resp.content,
+        file_data=file_data,
         filename=secure_filename(filename),
         content_type=content_type,
         caption=caption,
@@ -89,6 +153,7 @@ def api_wp_upload_from_url():
 
 
 @wp_api_bp.route('/api/wp/upload-media', methods=['POST'])
+@require_safe_origin
 @require_auth
 def api_wp_upload_media():
     if not wp_publisher.is_configured():
@@ -131,6 +196,7 @@ def api_wp_upload_media():
 
 
 @wp_api_bp.route('/api/wp/publish', methods=['POST'])
+@require_safe_origin
 @require_auth
 def api_wp_publish():
     if not wp_publisher.is_configured():
@@ -197,12 +263,13 @@ def api_wp_publish():
         }
         publish_log.log_decision(log_entry)
     except Exception:
-        pass
+        log.exception("Failed to log publish decision (run_id=%s)", topic_meta.get('run_id', ''))
 
     return json_response({'post': result})
 
 
 @wp_api_bp.route('/api/wp/publish-both', methods=['POST'])
+@require_safe_origin
 @require_auth
 def api_wp_publish_both():
     if not wp_publisher.is_configured():
@@ -287,7 +354,7 @@ def api_wp_publish_both():
         }
         publish_log.log_decision(log_entry)
     except Exception:
-        pass
+        log.exception("Failed to log publish-both decision (run_id=%s)", topic_meta.get('run_id', ''))
 
     return json_response({
         'post_cs': result_cs,
@@ -298,6 +365,7 @@ def api_wp_publish_both():
 
 
 @wp_api_bp.route('/api/wp/log-skip', methods=['POST'])
+@require_safe_origin
 @require_auth
 def api_wp_log_skip():
     try:
@@ -327,6 +395,7 @@ def api_wp_log_skip():
 
 
 @wp_api_bp.route('/api/wp/publish-stats')
+@require_auth
 def api_wp_publish_stats():
     try:
         stats = publish_log.get_stats()

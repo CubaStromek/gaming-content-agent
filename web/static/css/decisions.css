@@ -1,0 +1,317 @@
+/* Decision Transparency view styles. Doplněk k dashboard.css. */
+
+.view-tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.view-tab {
+  background: transparent;
+  border: none;
+  color: #9ca3af;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  padding: 0.55rem 1rem;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.12s, border-color 0.12s;
+}
+
+.view-tab:hover {
+  color: #e5e7eb;
+}
+
+.view-tab.active {
+  color: #4ade80;
+  border-bottom-color: #4ade80;
+}
+
+.view-section {
+  display: block;
+}
+
+.view-section[hidden] {
+  display: none;
+}
+
+/* Decision header */
+.decision-header {
+  background: rgba(17, 24, 39, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 0.4rem;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.dh-loading {
+  color: #9ca3af;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+}
+
+.dh-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem 2.5rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  color: #cbd5e1;
+}
+
+.dh-meta strong {
+  color: #f3f4f6;
+  font-size: 1.4rem;
+  font-weight: 700;
+  display: block;
+}
+
+.dh-meta-label {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6b7280;
+  margin-top: 0.15rem;
+}
+
+.dh-runid {
+  font-size: 0.7rem;
+  color: #6b7280;
+  margin-top: 0.6rem;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Topic cards */
+.decision-topics {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.topic-card {
+  display: grid;
+  grid-template-columns: 60px 1fr auto;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  background: rgba(17, 24, 39, 0.4);
+  border-left: 3px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.35rem;
+  align-items: start;
+}
+
+.topic-card.verdict-published { border-left-color: #4ade80; }
+.topic-card.verdict-skipped   { border-left-color: #f87171; }
+.topic-card.verdict-pending   { border-left-color: #9ca3af; }
+
+.topic-virality {
+  text-align: center;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.topic-virality .num {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #f3f4f6;
+}
+
+.topic-virality .bar {
+  width: 50px;
+  height: 4px;
+  margin: 0.25rem auto 0;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.topic-virality .bar-fill {
+  height: 100%;
+  background: #fbbf24;
+}
+
+.topic-main {
+  min-width: 0;
+}
+
+.topic-title {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #f3f4f6;
+  margin-bottom: 0.25rem;
+}
+
+.topic-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.7rem;
+  color: #9ca3af;
+  font-family: 'JetBrains Mono', monospace;
+  margin-bottom: 0.4rem;
+}
+
+.status-tag {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 0.25rem;
+  background: rgba(74, 222, 128, 0.12);
+  color: #86efac;
+  font-size: 0.62rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.topic-hook {
+  font-size: 0.78rem;
+  color: #cbd5e1;
+  line-height: 1.4;
+  margin-bottom: 0.35rem;
+}
+
+.topic-detail {
+  font-size: 0.7rem;
+  color: #9ca3af;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.topic-detail .label {
+  color: #6b7280;
+}
+
+.topic-detail .failed-src {
+  color: #f87171;
+}
+
+.topic-verdict {
+  text-align: right;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.verdict-badge {
+  display: inline-block;
+  padding: 0.25rem 0.7rem;
+  border-radius: 0.25rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.verdict-badge.published { background: rgba(74, 222, 128, 0.15); color: #86efac; }
+.verdict-badge.skipped   { background: rgba(248, 113, 113, 0.15); color: #fca5a5; }
+.verdict-badge.pending   { background: rgba(156, 163, 175, 0.15); color: #d1d5db; }
+
+.verdict-reason {
+  margin-top: 0.35rem;
+  color: #fca5a5;
+  font-size: 0.65rem;
+}
+
+.dedup-match {
+  margin-top: 0.35rem;
+  padding: 0.4rem 0.55rem;
+  background: rgba(248, 113, 113, 0.06);
+  border-left: 2px solid rgba(248, 113, 113, 0.4);
+  font-size: 0.68rem;
+  color: #d1d5db;
+  border-radius: 0 0.2rem 0.2rem 0;
+  text-align: left;
+}
+
+.dedup-match .sim {
+  color: #fbbf24;
+  font-weight: 600;
+}
+
+/* Trends */
+.trends-header, .scoring-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.trends-header h3, .scoring-header h3, .skip-reasons-panel h3 {
+  margin: 0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+  color: #e5e7eb;
+  font-weight: 600;
+}
+
+.trends-legend, .scoring-legend {
+  display: flex;
+  gap: 0.85rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+}
+
+.lg-pub  { color: #4ade80; }
+.lg-skip { color: #f87171; }
+.lg-line { color: #fbbf24; }
+
+#trendsCanvas, #scoringCanvas {
+  width: 100%;
+  height: auto;
+  background: rgba(17, 24, 39, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 0.4rem;
+}
+
+.scoring-hint {
+  margin-top: 0.6rem;
+  font-size: 0.7rem;
+  color: #9ca3af;
+  font-family: 'JetBrains Mono', monospace;
+  line-height: 1.45;
+}
+
+.skip-reasons-panel {
+  margin-top: 1.5rem;
+}
+
+.skip-reason-row {
+  display: grid;
+  grid-template-columns: 200px 60px 1fr;
+  gap: 1rem;
+  padding: 0.55rem 0.8rem;
+  background: rgba(17, 24, 39, 0.4);
+  border-radius: 0.3rem;
+  margin-top: 0.5rem;
+  align-items: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+}
+
+.skip-reason-row .reason {
+  color: #fca5a5;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.7rem;
+}
+
+.skip-reason-row .count {
+  color: #f3f4f6;
+  font-weight: 700;
+  font-size: 1rem;
+  text-align: right;
+}
+
+.skip-reason-row .examples {
+  color: #9ca3af;
+  font-size: 0.7rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* History list — decision-aware highlight */
+.history-item.has-decisions {
+  border-left: 2px solid rgba(74, 222, 128, 0.5);
+}

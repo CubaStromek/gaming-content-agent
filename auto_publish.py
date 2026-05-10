@@ -4,6 +4,8 @@ Automaticky stahne RSS, analyzuje, napise clanky a publikuje na GAMEfo.cz
 Spousteno 5x denne pres launchd (8:00, 11:00, 14:00, 17:00, 20:00)
 """
 
+import contextlib
+import fcntl
 import json
 import os
 import re
@@ -32,6 +34,36 @@ from logger import setup_logger
 from fb_generator.generate_fb_post import generate_fb_post
 
 log = setup_logger('auto_publish')
+
+
+_LOCK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', '.publish.lock')
+
+
+@contextlib.contextmanager
+def _publish_lock():
+    """Exclusivní lock — pokud je drží jiný proces, exit 0 + log.
+
+    Chrání před souběhem launchd slotu s manuálním spuštěním (`python main.py`)
+    nebo pomalým slotem překrývajícím další.
+    """
+    os.makedirs(os.path.dirname(_LOCK_PATH), exist_ok=True)
+    fp = open(_LOCK_PATH, 'w')
+    try:
+        try:
+            fcntl.flock(fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            log.info("Auto-publish lock drží jiný proces, končím (exit 0)")
+            fp.close()
+            sys.exit(0)
+        fp.write(f"{os.getpid()}\n")
+        fp.flush()
+        yield
+    finally:
+        try:
+            fcntl.flock(fp.fileno(), fcntl.LOCK_UN)
+        except Exception:
+            pass
+        fp.close()
 
 
 def search_rawg_image(game_name):
@@ -76,44 +108,19 @@ def _extract_excerpt(html_content, max_len=200):
     return ''
 
 
-def run():
-    """Hlavni pipeline: RSS -> analyza -> clanky -> publish."""
-    start_time = datetime.now()
-    log.info("=" * 60)
-    log.info("AUTO PUBLISH - %s", start_time.strftime('%d.%m.%Y %H:%M'))
-    log.info("=" * 60)
+def _pick_topics(articles, run_dir, run_id):
+    """Etapa 1: Claude analýza → seznam témat po deduplikaci.
 
-    # 1. Validace
-    if not config.validate_config():
-        log.error("Chybi konfigurace (CLAUDE_API_KEY)")
-        return
-
-    if not config.is_wp_configured():
-        log.error("WordPress neni nakonfigurovan (WP_URL, WP_USER, WP_APP_PASSWORD)")
-        return
-
-    # 2. Vytvoreni output slozky
-    run_dir = file_manager.create_run_directory()
-    log.info("Output: %s", run_dir)
-
-    # 3. Nacteni historie a stahnuti novych clanku
-    history = article_history.load_history()
-    processed_urls = article_history.get_processed_urls(history)
-
-    articles = rss_scraper.scrape_all_feeds(skip_urls=processed_urls)
-    if not articles:
-        log.info("Zadne nove clanky k analyze. Koncim.")
-        return
-
-    log.info("Stazeno %d novych clanku", len(articles))
-
-    # 4. Ulozeni clanku
-    rss_scraper.save_articles_to_json(articles, run_dir)
-
-    # 5. Claude analyza -> TOP 2 temata (strukturovaný výstup s fallbackem)
-    #    Retry: pokud API vrátí 529 (Overloaded), čekáme 30 min a zkusíme znovu (max 3 pokusy)
+    Loguje do publish_log:
+    - `proposed`: kompletní seznam témat, co Claude navrhl (decision-transparency)
+    - `skipped` s reason=duplicate_topic: každé téma odfiltrované dedup, vč. detailu shody
+    Vrací list(topic) nebo None pokud nelze pokračovat.
+    """
     articles_text = rss_scraper.format_articles_for_analysis(articles)
 
+    # Retry strategie: pokud Claude API spadne, je obvykle dole desítky minut.
+    # Krátké retry žere input tokeny na promptu bez šance uspět — proto raději
+    # 30 min sleep a max 3 pokusy (=1h). Schválně dlouhé.
     MAX_ANALYSIS_RETRIES = 3
     RETRY_WAIT_MINUTES = 30
     analysis = None
@@ -133,40 +140,150 @@ def run():
             topics = article_writer.parse_topics_from_report(analysis)
             break
 
-        # Obě metody selhaly — retry pokud nejsme na posledním pokusu
         if attempt < MAX_ANALYSIS_RETRIES:
             log.warning("⏳ Claude API nedostupná (pokus %d/%d). Čekám %d minut před dalším pokusem...",
                         attempt, MAX_ANALYSIS_RETRIES, RETRY_WAIT_MINUTES)
             time.sleep(RETRY_WAIT_MINUTES * 60)
         else:
             log.error("❌ Claude analýza selhala po %d pokusech. Končím.", MAX_ANALYSIS_RETRIES)
-            return
+            return None
 
     file_manager.save_report(analysis, claude_analyzer.extract_key_insights(articles), run_dir, articles)
 
     if not topics:
         log.error("Zadna temata k publikaci")
-        return
+        return None
 
     log.info("Nalezeno %d temat", len(topics))
 
-    # 6. Deduplikace témat (kontrola proti publish_log)
+    # Decision transparency: zaloguj VŠECHNA navržená témata, než cokoli skipneme.
+    publish_log.log_decision({
+        'action': 'proposed',
+        'run_id': run_id,
+        'rss_articles_count': len(articles),
+        'topics': [
+            {
+                'topic': t.get('topic', ''),
+                'title': t.get('title', ''),
+                'virality_score': t.get('virality_score', 0),
+                'status_tag': t.get('status_tag', ''),
+                'game_name': t.get('game_name', ''),
+                'sources_count': len(t.get('sources', [])),
+            }
+            for t in topics
+        ],
+    })
+
     topics, dup_topics = topic_dedup.filter_duplicate_topics(topics)
     for dup in dup_topics:
         publish_log.log_decision({
             'action': 'skipped',
             'reason': 'duplicate_topic',
+            'run_id': run_id,
             'topic': dup.get('topic', ''),
             'score': dup.get('virality_score', 0),
+            'dedup_match': dup.get('_dedup_match'),
         })
 
     if not topics:
         log.info("Všechna témata jsou duplicitní. Končím.")
-        return
+        return None
 
     log.info("Po deduplikaci: %d témat k publikaci", len(topics))
+    return topics
 
-    # 7. Pro kazde tema: napsat clanek + publikovat
+
+def _collect_source_texts(topic, articles):
+    """Stáhne plné texty zdrojů (max 3 + fallback z RSS).
+
+    Vrací (texts, valid_urls, failed_sources) — failed_sources je list dictů
+    `{url, reason}` (reason = error message z scrape_full_article), pro
+    decision-transparency log.
+    """
+    topic_name = topic.get('topic', 'Neznámé')
+    source_urls_in = topic.get('sources', [])
+    source_texts = []
+    valid_source_urls = []
+    failed_sources = []
+    for url in source_urls_in[:3]:
+        text = article_writer.scrape_full_article(url)
+        if not text.startswith('[Chyba'):
+            source_texts.append(text)
+            valid_source_urls.append(url)
+        else:
+            log.warning("Zdroj nedostupný, nebude v odkazech: %s", url[:80])
+            failed_sources.append({'url': url, 'reason': text[:120]})
+
+    if source_texts:
+        return source_texts, valid_source_urls, failed_sources
+
+    log.warning("Všechny zdroje selhaly pro '%s', hledám alternativní URL z RSS...", topic_name)
+    topic_keywords = set(topic_name.lower().split())
+    topic_keywords -= {'a', 'the', 'of', 'in', 'for', 'on', 'to', 'is', '-', '–', 'and', 'pro',
+                       'nový', 'nová', 'nové', 'že', 'se', 'na', 'je', 'z', 'do', 'od', 'při', 'za'}
+    fallback_urls = []
+    for art in articles:
+        art_text = f"{art.get('title', '')} {art.get('summary', '')}".lower()
+        matches = sum(1 for kw in topic_keywords if kw in art_text)
+        if matches >= min(2, len(topic_keywords)) and art['link'] not in valid_source_urls:
+            fallback_urls.append(art['link'])
+
+    if fallback_urls:
+        log.info("Nalezeno %d alternativních URL, zkouším stáhnout...", len(fallback_urls))
+        for url in fallback_urls[:5]:
+            text = article_writer.scrape_full_article(url)
+            if not text.startswith('[Chyba'):
+                source_texts.append(text)
+                valid_source_urls.append(url)
+                log.info("Fallback zdroj OK: %s", url[:80])
+                if len(source_texts) >= 2:
+                    break
+            else:
+                log.warning("Fallback zdroj nedostupný: %s", url[:80])
+                failed_sources.append({'url': url, 'reason': text[:120], 'fallback': True})
+
+    return source_texts, valid_source_urls, failed_sources
+
+
+def run():
+    """Hlavni pipeline: RSS -> analyza -> clanky -> publish."""
+    start_time = datetime.now()
+    log.info("=" * 60)
+    log.info("AUTO PUBLISH - %s", start_time.strftime('%d.%m.%Y %H:%M'))
+    log.info("=" * 60)
+
+    # 1. Validace
+    if not config.validate_config():
+        log.error("Chybi konfigurace (CLAUDE_API_KEY)")
+        return
+
+    if not config.is_wp_configured():
+        log.error("WordPress neni nakonfigurovan (WP_URL, WP_USER, WP_APP_PASSWORD)")
+        return
+
+    # 2. Vytvoreni output slozky
+    run_dir = file_manager.create_run_directory()
+    run_id = os.path.basename(run_dir.rstrip(os.sep))
+    log.info("Output: %s (run_id=%s)", run_dir, run_id)
+
+    # 3. Nacteni historie a stahnuti novych clanku
+    history = article_history.load_history()
+    processed_urls = article_history.get_processed_urls(history)
+
+    articles = rss_scraper.scrape_all_feeds(skip_urls=processed_urls)
+    if not articles:
+        log.info("Zadne nove clanky k analyze. Koncim.")
+        return
+
+    log.info("Stazeno %d novych clanku", len(articles))
+    rss_scraper.save_articles_to_json(articles, run_dir)
+
+    # 4. Etapa „pick_topics": Claude analýza + dedup
+    topics = _pick_topics(articles, run_dir, run_id)
+    if not topics:
+        return
+
+    # 5. Etapa „produce_articles + publish_and_promote": pro každé téma napsat + publikovat
     published_count = 0
     for i, topic in enumerate(topics, 1):
         topic_name = topic.get('topic', 'Neznámé')
@@ -176,52 +293,17 @@ def run():
         log.info("-" * 40)
         log.info("TEMA %d/%d: %s (viralita: %d)", i, len(topics), topic_name, virality)
 
-        # Stahnuti zdrojovych clanku (+ filtrování nefunkčních URL)
-        source_urls = topic.get('sources', [])
-        source_texts = []
-        valid_source_urls = []
-        for url in source_urls[:3]:  # max 3 zdroje
-            text = article_writer.scrape_full_article(url)
-            if not text.startswith('[Chyba'):
-                source_texts.append(text)
-                valid_source_urls.append(url)
-            else:
-                log.warning("Zdroj nedostupný, nebude v odkazech: %s", url[:80])
-        source_urls = valid_source_urls
-
-        # Fallback: pokud všechny zdroje selhaly, zkus najít alternativní URL z RSS článků
-        if not source_texts:
-            log.warning("Všechny zdroje selhaly pro '%s', hledám alternativní URL z RSS...", topic_name)
-            topic_keywords = set(topic_name.lower().split())
-            # Odfiltruj stopwords
-            topic_keywords -= {'a', 'the', 'of', 'in', 'for', 'on', 'to', 'is', '-', '–', 'and', 'pro', 'nový', 'nová', 'nové', 'že', 'se', 'na', 'je', 'z', 'do', 'od', 'při', 'za'}
-            fallback_urls = []
-            for art in articles:
-                art_text = f"{art.get('title', '')} {art.get('summary', '')}".lower()
-                # Článek je relevantní pokud obsahuje alespoň 2 klíčová slova z názvu tématu
-                matches = sum(1 for kw in topic_keywords if kw in art_text)
-                if matches >= min(2, len(topic_keywords)) and art['link'] not in [u for u in source_urls]:
-                    fallback_urls.append(art['link'])
-            if fallback_urls:
-                log.info("Nalezeno %d alternativních URL, zkouším stáhnout...", len(fallback_urls))
-                for url in fallback_urls[:5]:  # max 5 pokusů
-                    text = article_writer.scrape_full_article(url)
-                    if not text.startswith('[Chyba'):
-                        source_texts.append(text)
-                        source_urls.append(url)
-                        log.info("Fallback zdroj OK: %s", url[:80])
-                        if len(source_texts) >= 2:
-                            break
-                    else:
-                        log.warning("Fallback zdroj nedostupný: %s", url[:80])
+        source_texts, source_urls, failed_sources = _collect_source_texts(topic, articles)
 
         if not source_texts:
             log.warning("Zadne zdrojove texty pro '%s' (ani po fallbacku), preskakuji", topic_name)
             publish_log.log_decision({
                 'action': 'skipped',
                 'reason': 'no_source_texts',
+                'run_id': run_id,
                 'topic': topic_name,
                 'score': virality,
+                'failed_sources': failed_sources,
             })
             continue
 
@@ -233,8 +315,11 @@ def run():
             publish_log.log_decision({
                 'action': 'skipped',
                 'reason': 'write_error',
+                'run_id': run_id,
                 'topic': topic_name,
+                'score': virality,
                 'error': article['error'],
+                'failed_sources': failed_sources,
             })
             continue
 
@@ -285,7 +370,9 @@ def run():
             publish_log.log_decision({
                 'action': 'skipped',
                 'reason': 'wp_unavailable',
+                'run_id': run_id,
                 'topic': topic_name,
+                'score': virality,
             })
             continue
 
@@ -365,7 +452,9 @@ def run():
             publish_log.log_decision({
                 'action': 'skipped',
                 'reason': 'wp_error_cs',
+                'run_id': run_id,
                 'topic': topic_name,
+                'score': virality,
                 'error': cs_err,
             })
             continue
@@ -428,11 +517,10 @@ def run():
                 else:
                     log.warning("Propojeni selhalo: %s", link_err)
 
-        # Generovani FB post obrazku (CZ + EN)
+        # Generovani FB post obrazku (CZ + EN). Cleanup garantován i při výjimce.
         if image_url:
+            local_thumb = f"/tmp/fb_thumb_{datetime.now().strftime('%H%M%S')}.jpg"
             try:
-                # Stahni thumbnail lokalne
-                local_thumb = f"/tmp/fb_thumb_{datetime.now().strftime('%H%M%S')}.jpg"
                 thumb_resp = requests.get(image_url, timeout=15)
                 with open(local_thumb, 'wb') as f:
                     f.write(thumb_resp.content)
@@ -440,7 +528,6 @@ def run():
                 safe_name = "".join(c if c.isalnum() or c in '-_ ' else '' for c in game_name).strip().replace(' ', '_')
                 date_str = datetime.now().strftime('%Y-%m-%d')
 
-                # CZ verze
                 fb_output_cs = os.path.join(os.path.dirname(__file__), 'output', 'fb-posts', f'{date_str}_{safe_name}_CZ.png')
                 fb_path_cs = generate_fb_post(
                     thumbnail_path=local_thumb,
@@ -450,10 +537,8 @@ def run():
                 )
                 log.info("FB post obrazek CZ vygenerovan: %s", fb_path_cs)
 
-                # EN verze (pokud existuje anglicky clanek)
                 if article.get('en') and en_title:
                     fb_output_en = os.path.join(os.path.dirname(__file__), 'output', 'fb-posts', f'{date_str}_{safe_name}_EN.png')
-                    # Pro EN obrázek: title = anglický název hry (z analyzeru), ne český topic
                     en_fb_title = game_name_raw if (game_name_raw and game_name_raw != 'N/A') else ''
                     fb_path_en = generate_fb_post(
                         thumbnail_path=local_thumb,
@@ -462,12 +547,14 @@ def run():
                         output_path=fb_output_en,
                     )
                     log.info("FB post obrazek EN vygenerovan: %s", fb_path_en)
-
-                # Cleanup temp souboru
+            except Exception:
+                log.exception("FB post generovani selhalo")
+            finally:
                 if os.path.exists(local_thumb):
-                    os.remove(local_thumb)
-            except Exception as e:
-                log.warning("FB post generovani selhalo: %s", e)
+                    try:
+                        os.remove(local_thumb)
+                    except OSError:
+                        log.warning("Nepodařilo se smazat temp thumbnail: %s", local_thumb)
 
         # Social media posting
         social_results = {}
@@ -506,20 +593,24 @@ def run():
                 image_url=image_url,
             )
             log.info("Social posting: %s", social_results)
-        except Exception as e:
-            log.warning("Social posting selhalo: %s", e)
+        except Exception:
+            log.exception("Social posting selhalo")
 
         # Log
         publish_log.log_decision({
             'action': 'published',
+            'run_id': run_id,
             'topic': topic_name,
             'title': title,
             'score': virality,
+            'status_tag': status_tag,
+            'game_name': game_name,
             'cs_post_id': cs_result['id'],
             'en_post_id': en_result['id'] if en_result else None,
             'cs_url': cs_result['view_url'],
             'en_url': en_result['view_url'] if en_result else None,
             'sources': source_urls,
+            'failed_sources': failed_sources,
             'cost': article.get('cost', '?'),
             'social': social_results,
         })
@@ -540,10 +631,13 @@ def run():
 
 if __name__ == '__main__':
     try:
-        run()
+        with _publish_lock():
+            run()
     except KeyboardInterrupt:
         log.warning("Preruseno uzivatelem")
         sys.exit(0)
-    except Exception as e:
-        log.error("Neocekavana chyba: %s", e, exc_info=True)
+    except SystemExit:
+        raise
+    except Exception:
+        log.exception("Neocekavana chyba")
         sys.exit(1)

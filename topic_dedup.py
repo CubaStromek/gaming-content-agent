@@ -61,7 +61,8 @@ def get_recent_published_topics(days: int = DEDUP_WINDOW_DAYS) -> List[Dict]:
 def check_topic_duplicate(topic: Dict, recent_topics: List[Dict]) -> Tuple[bool, Optional[Dict]]:
     """
     Zkontroluje, jestli je téma duplicitní vůči nedávno publikovaným.
-    Vrací (is_duplicate, matching_entry).
+    Vrací (is_duplicate, match_info) kde match_info je dict s klíči
+    `topic, title, timestamp, sim_score, match_type` ('game_name' nebo 'jaccard').
     """
     if not recent_topics:
         return (False, None)
@@ -85,20 +86,38 @@ def check_topic_duplicate(topic: Dict, recent_topics: List[Dict]) -> Tuple[bool,
                         "DUPLICITA (game match): '%.60s' ~ '%.60s' (sim=%.2f, game='%s')",
                         new_topic_text, existing['topic'], similarity, new_game,
                     )
-                    return (True, existing)
+                    return (True, {
+                        'topic': existing['topic'],
+                        'title': existing['title'],
+                        'timestamp': existing['timestamp'],
+                        'sim_score': round(similarity, 3),
+                        'match_type': 'game_name',
+                        'matched_game': new_game,
+                    })
 
         if similarity >= SIMILARITY_THRESHOLD:
             log.info(
                 "DUPLICITA: '%.60s' ~ '%.60s' (sim=%.2f)",
                 new_topic_text, existing['topic'], similarity,
             )
-            return (True, existing)
+            return (True, {
+                'topic': existing['topic'],
+                'title': existing['title'],
+                'timestamp': existing['timestamp'],
+                'sim_score': round(similarity, 3),
+                'match_type': 'jaccard',
+            })
 
     return (False, None)
 
 
 def filter_duplicate_topics(topics: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
-    """Odfiltruje duplicitní témata. Vrací (unique, duplicates)."""
+    """Odfiltruje duplicitní témata.
+
+    Vrací (unique, duplicates). Každé téma v `duplicates` má pod klíčem
+    `_dedup_match` detail shody (sim_score, matched_topic, timestamp,
+    match_type) — slouží pro decision-transparency log.
+    """
     recent = get_recent_published_topics()
     unique = []
     duplicates = []
@@ -107,12 +126,15 @@ def filter_duplicate_topics(topics: List[Dict]) -> Tuple[List[Dict], List[Dict]]
         is_dup, match = check_topic_duplicate(topic, recent)
         if is_dup:
             log.warning(
-                "Přeskakuji duplicitní téma: '%s' (podobné: '%s' z %s)",
+                "Přeskakuji duplicitní téma: '%s' (podobné: '%s' z %s, sim=%.2f)",
                 topic.get('topic', '?'),
                 match['topic'] if match else '?',
                 match['timestamp'] if match else '?',
+                match['sim_score'] if match else 0.0,
             )
-            duplicates.append(topic)
+            enriched = dict(topic)
+            enriched['_dedup_match'] = match
+            duplicates.append(enriched)
         else:
             unique.append(topic)
 

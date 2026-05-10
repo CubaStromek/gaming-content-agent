@@ -263,3 +263,78 @@ class TestLinkTranslations:
         result, error = wp_publisher.link_translations(42, 43)
         assert result is None
         assert error is not None
+
+
+class TestSlugifyTag:
+    def test_lowercase_dashes(self):
+        assert wp_publisher._slugify_tag('GTA 6') == 'gta-6'
+
+    def test_strips_diacritics_only_via_filter(self):
+        # Aktuální implementace neodstraňuje diakritiku — jen mezery a non-alfanum.
+        # Testujeme jen co implementace skutečně dělá: čeština se "ztratí" (ne-ASCII pryč).
+        assert wp_publisher._slugify_tag('Hra Roku') == 'hra-roku'
+
+    def test_collapses_dashes(self):
+        assert wp_publisher._slugify_tag('  a   b ') == 'a-b'
+
+
+class TestResolveTagIdsBatch:
+    @patch('wp_publisher.requests.post')
+    @patch('wp_publisher.requests.get')
+    @patch('wp_publisher._auth_headers')
+    @patch('wp_publisher.config')
+    def test_batch_get_resolves_existing(self, mock_config, mock_auth, mock_get, mock_post):
+        mock_config.WP_URL = "https://blog.example.com"
+        mock_auth.return_value = {'Authorization': 'Basic xxx'}
+
+        # Batch GET vrátí oba tagy → POST se nesmí zavolat.
+        mock_get_resp = MagicMock()
+        mock_get_resp.status_code = 200
+        mock_get_resp.json.return_value = [
+            {'id': 1, 'slug': 'gta-6'},
+            {'id': 2, 'slug': 'rockstar'},
+        ]
+        mock_get.return_value = mock_get_resp
+
+        ids, err = wp_publisher._resolve_tag_ids(['GTA 6', 'Rockstar'])
+        assert err is None
+        assert sorted(ids) == [1, 2]
+        # Pouze jeden GET, žádný POST.
+        assert mock_get.call_count == 1
+        assert mock_post.call_count == 0
+
+    @patch('wp_publisher.requests.post')
+    @patch('wp_publisher.requests.get')
+    @patch('wp_publisher._auth_headers')
+    @patch('wp_publisher.config')
+    def test_creates_missing_tags(self, mock_config, mock_auth, mock_get, mock_post):
+        mock_config.WP_URL = "https://blog.example.com"
+        mock_auth.return_value = {'Authorization': 'Basic xxx'}
+
+        # Batch GET vrátí jen jeden z dvou.
+        mock_get_resp = MagicMock()
+        mock_get_resp.status_code = 200
+        mock_get_resp.json.return_value = [{'id': 5, 'slug': 'existuje'}]
+        mock_get.return_value = mock_get_resp
+
+        # POST pro vytvoření chybějícího tagu.
+        mock_post_resp = MagicMock()
+        mock_post_resp.status_code = 201
+        mock_post_resp.json.return_value = {'id': 99}
+        mock_post.return_value = mock_post_resp
+
+        ids, err = wp_publisher._resolve_tag_ids(['existuje', 'novy'])
+        assert err is None
+        assert ids == [5, 99]
+        assert mock_get.call_count == 1
+        assert mock_post.call_count == 1
+
+    def test_empty_input(self):
+        ids, err = wp_publisher._resolve_tag_ids([])
+        assert ids == []
+        assert err is None
+
+    def test_whitespace_only_filtered(self):
+        ids, err = wp_publisher._resolve_tag_ids(['  ', ''])
+        assert ids == []
+        assert err is None
