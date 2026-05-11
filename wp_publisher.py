@@ -82,7 +82,7 @@ def _to_gutenberg_blocks(html: str) -> str:
     Používá BeautifulSoup → wrapuje pouze top-level elementy (přímé děti
     kořene). Tím se zabrání obalení <p> uvnitř <li> nebo <blockquote>.
     """
-    from bs4 import BeautifulSoup, NavigableString
+    from bs4 import BeautifulSoup, NavigableString, Comment
 
     # `html.parser` baseline — nevyžaduje lxml, neexpanduje boilerplate.
     soup = BeautifulSoup(f'<div id="__root__">{html}</div>', 'html.parser')
@@ -92,6 +92,12 @@ def _to_gutenberg_blocks(html: str) -> str:
 
     parts: List[str] = []
     for child in list(root.children):
+        # Comment je subclass NavigableString — musí jít první, jinak by
+        # str(child) vrátil obsah bez `<!-- -->` delimitérů a Gutenberg block
+        # markup (např. <!-- wp:embed ... -->) by se rozpadl na holý text.
+        if isinstance(child, Comment):
+            parts.append(f"<!--{child}-->")
+            continue
         if isinstance(child, NavigableString):
             text = str(child)
             if text.strip():
