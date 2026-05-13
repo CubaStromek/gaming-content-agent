@@ -365,6 +365,24 @@ def post_to_threads(text, image_url=None):
         return None, str(e)
 
 
+def _post_with_retry(label, fn, *args, **kwargs):
+    """Zavolá post_to_<platform>; pokud vrátí (None, err), počká 30s a zkusí 1× znovu.
+
+    Důvod: pozorované přechodné síťové chyby (Starlink/CGNAT) — ConnectionResetError
+    od X.com a Read timeout od Graph API. Jedno opakování po 30s zachrání většinu
+    případů bez nutnosti čekat na další slot (3 h).
+    """
+    post_id, post_url_or_err = fn(*args, **kwargs)
+    if post_id is None:
+        log.warning("%s 1. pokus selhal (%s), čekám 30s a zkouším znovu",
+                    label, post_url_or_err)
+        time.sleep(30)
+        post_id, post_url_or_err = fn(*args, **kwargs)
+        if post_id is None:
+            log.error("%s 2. pokus selhal: %s", label, post_url_or_err)
+    return post_id, post_url_or_err
+
+
 def post_to_all(title, excerpt, image_path, url, hashtags=None,
                 en_title=None, en_excerpt=None, en_image_path=None, en_url=None,
                 image_url=None):
@@ -395,7 +413,8 @@ def post_to_all(title, excerpt, image_path, url, hashtags=None,
     if config.is_twitter_configured() or config.SOCIAL_DRY_RUN:
         try:
             tw_text = _build_post_text(title, excerpt, url, hashtags, max_len=280, include_url=False)
-            tw_id, tw_url = post_to_twitter(tw_text, image_path=image_path, url=url)
+            tw_id, tw_url = _post_with_retry('Twitter', post_to_twitter,
+                                             tw_text, image_path=image_path, url=url)
             results['twitter'] = {'id': tw_id, 'url': tw_url}
             if tw_id:
                 log_social_post('twitter', tw_id, title)
@@ -420,7 +439,8 @@ def post_to_all(title, excerpt, image_path, url, hashtags=None,
     if config.is_facebook_configured('cs') or config.SOCIAL_DRY_RUN:
         try:
             fb_text = _build_post_text(title, excerpt, url, hashtags)
-            fb_id, fb_url = post_to_facebook(fb_text, image_path=image_path, lang='cs')
+            fb_id, fb_url = _post_with_retry('Facebook CS', post_to_facebook,
+                                             fb_text, image_path=image_path, lang='cs')
             results['facebook_cs'] = {'id': fb_id, 'url': fb_url}
             if fb_id:
                 log_social_post('facebook_cs', fb_id, title)
@@ -432,7 +452,8 @@ def post_to_all(title, excerpt, image_path, url, hashtags=None,
     if en_title and en_url and (config.is_facebook_configured('en') or config.SOCIAL_DRY_RUN):
         try:
             fb_en_text = _build_post_text(en_title, en_excerpt or '', en_url, hashtags)
-            fb_en_id, fb_en_url = post_to_facebook(fb_en_text, image_path=en_image_path, lang='en')
+            fb_en_id, fb_en_url = _post_with_retry('Facebook EN', post_to_facebook,
+                                                   fb_en_text, image_path=en_image_path, lang='en')
             results['facebook_en'] = {'id': fb_en_id, 'url': fb_en_url}
             if fb_en_id:
                 log_social_post('facebook_en', fb_en_id, title)
@@ -441,10 +462,18 @@ def post_to_all(title, excerpt, image_path, url, hashtags=None,
             results['facebook_en'] = {'id': None, 'url': str(e)}
 
     # Zaloguj využití časového slotu (1 článek = 1 slot: ráno/odpoledne/večer)
+    # Slot označíme jen když aspoň jedna platforma uspěla — jinak by další článek
+    # v tomtéž slotu social posting přeskočil i přes to, že nic neproletělo.
     if results and 'skipped' not in results:
+        any_success = any(
+            isinstance(v, dict) and v.get('id')
+            for v in results.values()
+        )
         slot = get_current_slot()
-        if slot:
+        if any_success and slot:
             log_social_post(f'_slot_{slot}', None, title)
+        elif slot:
+            log.warning("Slot '%s' NEoznačen — žádná platforma neuspěla (Twitter/FB CS/FB EN selhaly)", slot)
 
     if not results:
         log.info("Žádná sociální síť není nakonfigurována, přeskakuji social posting")
