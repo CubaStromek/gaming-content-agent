@@ -32,16 +32,13 @@ def _is_retryable(exc):
     return False
 
 
-def _call_api(client, model, max_tokens, temperature, prompt):
-    """Volání Claude API."""
+def _call_api(client, model, max_tokens, temperature, messages):
+    """Volání Claude API. messages je list zpráv (může obsahovat multi-block content s cache_control)."""
     return client.messages.create(
         model=model,
         max_tokens=max_tokens,
         temperature=temperature,
-        messages=[{
-            "role": "user",
-            "content": prompt
-        }]
+        messages=messages,
     )
 
 
@@ -218,16 +215,7 @@ def write_article(topic: Dict, source_texts: List[str], length: str = 'medium') 
     else:
         length_instruction = "Článek musí mít 700-1000 slov (střední analýza, 7-10 odstavců). MINIMUM je 600 slov kvůli Rank Math SEO skóre."
 
-    prompt = f"""Napíš ANALYTICKÝ herní článek s vlastním úhlem pohledu. Toto NENÍ přepis zprávy — je to komentář redaktora, který zpravodajskou událost zasazuje do kontextu a říká, CO TO ZNAMENÁ.
-
-TÉMA: {topic.get('topic', '')}
-NAVRŽENÝ TITULEK: {topic.get('title', '')}
-ÚHEL POHLEDU: {topic.get('angle', '')}
-KONTEXT: {topic.get('context', '')}
-SEO KLÍČOVÁ SLOVA: {topic.get('seo_keywords', '')}
-
-ZDROJOVÉ TEXTY (použij JEN pro fakta, ne jako šablonu):
-{sources_combined}
+    static_prompt = """Napíš ANALYTICKÝ herní článek s vlastním úhlem pohledu. Toto NENÍ přepis zprávy — je to komentář redaktora, který zpravodajskou událost zasazuje do kontextu a říká, CO TO ZNAMENÁ.
 
 === FILOZOFIE ČLÁNKU (KRITICKÉ) ===
 Zdrojové weby (IGN, PC Gamer...) už napsaly CO se stalo. Náš úkol je říct PROČ TO VADÍ / PROČ TO STOJÍ ZA POZORNOST. Google i čtenáři už tu novinku četli jinde. Pokud článek jen převypráví fakta, NEMÁ DŮVOD EXISTOVAT.
@@ -315,7 +303,7 @@ NIC z následujícího se v článku nesmí objevit. Pokud něco napíšeš, sma
 
 === PRAVIDLA ===
 - Piš VLASTNÍMI SLOVY, ze zdrojů přebírej JEN fakta a čísla, nikdy ne formulace
-- {length_instruction}
+- Délkové požadavky najdeš v sekci ZADÁNÍ níže
 - Formát: ČISTÉ HTML (<h2>, <p>, <strong>)
 - NEPOUŽÍVEJ markdown! Žádné ```, ---, #, ** — POUZE HTML tagy
 - Styl: analytický, s názorem. NE neutrální zpravodajský tón. Nebojí se mít postoj.
@@ -361,15 +349,38 @@ POSTUP:
 1. Nejdřív napiš článek v ČEŠTINĚ (BEZ sekce zdrojů) — s úhlem, s názorem, ne neutrální referát. Cílové publikum: čeští hráči.
 2. Potom vytvoř ANGLICKOU verzi (zachovej úhel, tón a strukturu, ale LOKALIZUJ pro mezinárodní publikum). Není to doslovný překlad — odkazy na "české hráče / český trh / Českou republiku" nahraď obecnějšími pojmy ("players", "PC gamers", "Western players", "the audience" apod.). V EN verzi se ČR nezmiňuje vůbec, pokud to není fakticky podstatné téma (např. české studio jako Warhorse).
 
+FORMÁT VÝSTUPU:
 === ČESKY ===
 <článek v češtině jako HTML>
 
 === ENGLISH ===
 <přesný překlad českého článku výše>"""
 
+    dynamic_prompt = f"""=== ZADÁNÍ ===
+TÉMA: {topic.get('topic', '')}
+NAVRŽENÝ TITULEK: {topic.get('title', '')}
+ÚHEL POHLEDU: {topic.get('angle', '')}
+KONTEXT: {topic.get('context', '')}
+SEO KLÍČOVÁ SLOVA: {topic.get('seo_keywords', '')}
+
+DÉLKA ČLÁNKU: {length_instruction}
+
+ZDROJOVÉ TEXTY (použij JEN pro fakta, ne jako šablonu):
+{sources_combined}
+
+Vygeneruj nyní výstup ve formátu popsaném výše (KEYWORD/TITULEK/META/STORY_CARDS metadata, pak === ČESKY === a === ENGLISH === sekce)."""
+
+    messages = [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": static_prompt, "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": dynamic_prompt},
+        ],
+    }]
+
     try:
         max_tokens = 8192 if length == 'long' else 4096
-        message = _call_api(client, config.ARTICLE_MODEL, max_tokens, 0.7, prompt)
+        message = _call_api(client, config.ARTICLE_MODEL, max_tokens, 0.7, messages)
 
         result_text = message.content[0].text
 
@@ -445,16 +456,28 @@ POSTUP:
         if en_html:
             en_html = _strip_generated_sources(en_html)
 
-        # Odhad ceny (Claude Sonnet 4 pricing: $3.00/MTok input, $15.00/MTok output)
+        # Odhad ceny (Sonnet 4.6: $3/MTok in, $15/MTok out, cache read $0.30, cache write $3.75)
+        _cr = getattr(message.usage, "cache_read_input_tokens", 0)
+        _cw = getattr(message.usage, "cache_creation_input_tokens", 0)
+        cache_read = _cr if isinstance(_cr, int) else 0
+        cache_write = _cw if isinstance(_cw, int) else 0
         cost_input = (message.usage.input_tokens / 1_000_000) * 3.00
         cost_output = (message.usage.output_tokens / 1_000_000) * 15.00
-        total_cost = cost_input + cost_output
+        cost_cache_read = (cache_read / 1_000_000) * 0.30
+        cost_cache_write = (cache_write / 1_000_000) * 3.75
+        total_cost = cost_input + cost_output + cost_cache_read + cost_cache_write
+
+        log.info("Article tokens: in=%d (cache read=%d, write=%d), out=%d, $%.4f",
+                 message.usage.input_tokens, cache_read, cache_write,
+                 message.usage.output_tokens, total_cost)
 
         result = {
             'cs': cs_html,
             'en': en_html,
             'tokens_in': message.usage.input_tokens,
             'tokens_out': message.usage.output_tokens,
+            'cache_read': cache_read,
+            'cache_write': cache_write,
             'cost': f"${total_cost:.4f}"
         }
         if corrected_title:
@@ -500,10 +523,7 @@ def generate_podcast_script(article_html: str, lang: str = 'cs') -> Dict:
     article_text = soup.get_text(separator='\n', strip=True)
 
     if lang == 'cs':
-        prompt = f"""Vytvoř podcast script ze následujícího článku. Formát: konverzace dvou moderátorů (ALEX a MAYA).
-
-ČLÁNEK:
-{article_text}
+        static_prompt = """Vytvoř podcast script ze článku přiloženého níže. Formát: konverzace dvou moderátorů (ALEX a MAYA).
 
 PRAVIDLA PRO SCRIPT:
 - Styl: přátelský, informativní, jako NotebookLM podcast
@@ -524,12 +544,10 @@ ALEX: [text]
 ...
 
 Začni přímo scriptem, bez úvodu."""
+        dynamic_prompt = f"ČLÁNEK:\n{article_text}"
 
     else:
-        prompt = f"""Create a podcast script from the following article. Format: conversation between two hosts (ALEX and MAYA).
-
-ARTICLE:
-{article_text}
+        static_prompt = """Create a podcast script from the article provided below. Format: conversation between two hosts (ALEX and MAYA).
 
 SCRIPT RULES:
 - Style: friendly, informative, NotebookLM podcast style
@@ -550,21 +568,38 @@ ALEX: [text]
 ...
 
 Start directly with the script, no preamble."""
+        dynamic_prompt = f"ARTICLE:\n{article_text}"
+
+    messages = [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": static_prompt, "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": dynamic_prompt},
+        ],
+    }]
 
     try:
-        message = _call_api(client, config.ARTICLE_MODEL, 4000, 0.8, prompt)
+        message = _call_api(client, config.ARTICLE_MODEL, 4000, 0.8, messages)
 
         script = message.content[0].text.strip()
 
-        # Odhad ceny (Claude Sonnet 4 pricing: $3.00/MTok input, $15.00/MTok output)
+        # Odhad ceny (Sonnet 4.6: $3/MTok in, $15/MTok out, cache read $0.30, cache write $3.75)
+        _cr = getattr(message.usage, "cache_read_input_tokens", 0)
+        _cw = getattr(message.usage, "cache_creation_input_tokens", 0)
+        cache_read = _cr if isinstance(_cr, int) else 0
+        cache_write = _cw if isinstance(_cw, int) else 0
         cost_input = (message.usage.input_tokens / 1_000_000) * 3.00
         cost_output = (message.usage.output_tokens / 1_000_000) * 15.00
-        total_cost = cost_input + cost_output
+        cost_cache_read = (cache_read / 1_000_000) * 0.30
+        cost_cache_write = (cache_write / 1_000_000) * 3.75
+        total_cost = cost_input + cost_output + cost_cache_read + cost_cache_write
 
         return {
             'script': script,
             'tokens_in': message.usage.input_tokens,
             'tokens_out': message.usage.output_tokens,
+            'cache_read': cache_read,
+            'cache_write': cache_write,
             'cost': f"${total_cost:.4f}"
         }
 

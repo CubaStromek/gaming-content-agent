@@ -88,8 +88,9 @@ MIN_VIRALITY_SCORE = int(os.getenv("MIN_VIRALITY_SCORE", "50"))
 # Model pro generování článků
 ARTICLE_MODEL = "claude-sonnet-4-6"
 
-# Model pro analýzu (přepisovatelný přes .env)
-ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "claude-sonnet-4-6")
+# Model pro analýzu (přepisovatelný přes .env). Haiku 4.5 je 5× levnější než Sonnet
+# a pro výběr top témat z RSS feedů plně dostačuje.
+ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "claude-haiku-4-5-20251001")
 
 # Maximální délka summary při scrapování RSS (znaky)
 SUMMARY_MAX_LENGTH = int(os.getenv("SUMMARY_MAX_LENGTH", "500"))

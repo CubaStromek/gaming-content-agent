@@ -48,16 +48,13 @@ def _is_retryable(exc):
     return False
 
 
-def _call_analysis_api(client, prompt):
-    """Volání Claude API."""
+def _call_analysis_api(client, messages):
+    """Volání Claude API. messages je list zpráv (může obsahovat multi-block content s cache_control)."""
     message = client.messages.create(
         model=config.ANALYSIS_MODEL,
         max_tokens=4000,
         temperature=0.7,
-        messages=[{
-            "role": "user",
-            "content": prompt
-        }]
+        messages=messages,
     )
     return message
 
@@ -93,7 +90,7 @@ def analyze_gaming_articles(articles_text: str) -> str:
     article_count = articles_text.count("ČLÁNEK ")
     max_topics = min(2, max(1, article_count))
 
-    prompt = f"""Analyzuj tyto herní články z dnešního dne a vytvoř report pro českého herního blogera.
+    static_prompt = f"""Analyzuj tyto herní články z dnešního dne a vytvoř report pro českého herního blogera.
 
 ÚKOL:
 1. Identifikuj TOP {max_topics} nejvíce relevantních témat pro český herní blog (POUZE {max_topics} - NE VÍCE!)
@@ -128,8 +125,9 @@ DŮLEŽITÉ:
 - NIKDY nevytvářej prázdná témata! Každé téma musí mít kompletní obsah všech sekcí
 - FAKTICKÁ PŘESNOST: NIKDY nepřipisuj hře českou/slovenskou origin, pokud to není faktem. Neoznačuj hry jako "český", "česká hra", "od českých tvůrců" apod., pokud vývojářské studio skutečně není z ČR/SR. Psaní pro české publikum NEZNAMENÁ, že máš hry falešně vydávat za české!
 - Počet témat musí odpovídat počtu dostupných článků (max {max_topics})
-- STATUS TAG pravidla: "news" = běžná zpráva/oznámení, "update" = patch/aktualizace existující hry, "leak" = únik neoficiálních informací, "critical" = kritická/důležitá zpráva s velkým dopadem, "success" = prodejní rekord/milník/úspěch, "indie" = nezávislá hra, "review" = recenze, "trailer" = nový trailer/video, "rumor" = nepotvrzená spekulace, "info" = obecná informace/analýza, "finance" = finanční zpráva/akvizice/byznys, "tema" = tématický rozbor, "preview" = náhled/hands-on/preview. Defaultní je "news", ale snaž se vybrat co nejpřesnější tag.
-{topic_dedup.format_recent_topics_for_prompt(days=3)}
+- STATUS TAG pravidla: "news" = běžná zpráva/oznámení, "update" = patch/aktualizace existující hry, "leak" = únik neoficiálních informací, "critical" = kritická/důležitá zpráva s velkým dopadem, "success" = prodejní rekord/milník/úspěch, "indie" = nezávislá hra, "review" = recenze, "trailer" = nový trailer/video, "rumor" = nepotvrzená spekulace, "info" = obecná informace/analýza, "finance" = finanční zpráva/akvizice/byznys, "tema" = tématický rozbor, "preview" = náhled/hands-on/preview. Defaultní je "news", ale snaž se vybrat co nejpřesnější tag."""
+
+    dynamic_prompt = f"""{topic_dedup.format_recent_topics_for_prompt(days=3)}
 {_format_existing_tags_for_prompt(limit=30)}
 ČLÁNKY K ANALÝZE:
 {articles_text}
@@ -138,20 +136,39 @@ DŮLEŽITÉ:
 
 VÝSTUP (seřaď od nejdůležitějšího, vytvoř PŘESNĚ {max_topics} témat s kompletním obsahem):"""
 
+    messages = [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": static_prompt, "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": dynamic_prompt},
+        ],
+    }]
+
     try:
-        message = _call_analysis_api(client, prompt)
+        message = _call_analysis_api(client, messages)
 
         result = message.content[0].text
 
         # Statistiky použití
+        _cr = getattr(message.usage, "cache_read_input_tokens", 0)
+        _cw = getattr(message.usage, "cache_creation_input_tokens", 0)
+        cache_read = _cr if isinstance(_cr, int) else 0
+        cache_write = _cw if isinstance(_cw, int) else 0
         log.info("✅ Analýza dokončena")
-        log.info("   📊 Input tokeny: %d", message.usage.input_tokens)
+        log.info("   📊 Input tokeny: %d (cache read: %d, cache write: %d)",
+                 message.usage.input_tokens, cache_read, cache_write)
         log.info("   📊 Output tokeny: %d", message.usage.output_tokens)
 
-        # Odhad ceny (Claude Sonnet 4 pricing: $3.00/MTok input, $15.00/MTok output)
-        cost_input = (message.usage.input_tokens / 1_000_000) * 3.00
-        cost_output = (message.usage.output_tokens / 1_000_000) * 15.00
-        total_cost = cost_input + cost_output
+        # Odhad ceny — odvozeno z modelu (Haiku 4.5: $1/$5 in/out, Sonnet 4.6: $3/$15)
+        if "haiku" in config.ANALYSIS_MODEL.lower():
+            p_in, p_out, p_cr, p_cw = 1.00, 5.00, 0.10, 1.25
+        else:
+            p_in, p_out, p_cr, p_cw = 3.00, 15.00, 0.30, 3.75
+        cost_input = (message.usage.input_tokens / 1_000_000) * p_in
+        cost_output = (message.usage.output_tokens / 1_000_000) * p_out
+        cost_cache_read = (cache_read / 1_000_000) * p_cr
+        cost_cache_write = (cache_write / 1_000_000) * p_cw
+        total_cost = cost_input + cost_output + cost_cache_read + cost_cache_write
 
         log.info("   💰 Odhadovaná cena: $%.4f", total_cost)
 
@@ -200,15 +217,15 @@ def _build_analysis_tool(max_topics: int) -> dict:
     }
 
 
-def _call_structured_api(client, prompt, tools):
-    """Volání Claude API se strukturovaným výstupem (tool_use)."""
+def _call_structured_api(client, messages, tools):
+    """Volání Claude API se strukturovaným výstupem (tool_use). messages je list pro multi-block s cache_control."""
     return client.messages.create(
         model=config.ANALYSIS_MODEL,
         max_tokens=4000,
         temperature=0.7,
         tools=tools,
         tool_choice={"type": "tool", "name": "submit_analysis"},
-        messages=[{"role": "user", "content": prompt}]
+        messages=messages,
     )
 
 
@@ -267,7 +284,7 @@ def analyze_articles_structured(articles_text: str) -> Optional[dict]:
     article_count = articles_text.count("ČLÁNEK ")
     max_topics = min(2, max(1, article_count))
 
-    prompt = f"""Analyzuj tyto herní články z dnešního dne a vytvoř report pro českého herního blogera.
+    static_prompt = f"""Analyzuj tyto herní články z dnešního dne a vytvoř report pro českého herního blogera.
 
 ÚKOL:
 1. Identifikuj TOP {max_topics} nejvíce relevantních témat pro český herní blog (PŘESNĚ {max_topics})
@@ -286,16 +303,28 @@ PRAVIDLA:
 - FAKTICKÁ PŘESNOST: NIKDY nepřipisuj hře českou/slovenskou origin, pokud to není faktem
 - Počet témat musí být PŘESNĚ {max_topics}
 - STATUS TAG pravidla: "news" = běžná zpráva/oznámení, "update" = patch/aktualizace existující hry, "leak" = únik neoficiálních informací, "critical" = kritická/důležitá zpráva s velkým dopadem, "success" = prodejní rekord/milník/úspěch, "indie" = nezávislá hra, "review" = recenze, "trailer" = nový trailer/video, "rumor" = nepotvrzená spekulace, "info" = obecná informace/analýza, "finance" = finanční zpráva/akvizice/byznys, "tema" = tématický rozbor, "preview" = náhled/hands-on/preview. Defaultní je "news", ale snaž se vybrat co nejpřesnější tag.
-{topic_dedup.format_recent_topics_for_prompt(days=3)}
-{_format_existing_tags_for_prompt(limit=30)}
-Použij tool submit_analysis k odeslání výsledků.
 
+Použij tool submit_analysis k odeslání výsledků."""
+
+    dynamic_prompt = f"""{topic_dedup.format_recent_topics_for_prompt(days=3)}
+{_format_existing_tags_for_prompt(limit=30)}
 ČLÁNKY K ANALÝZE:
 {articles_text}"""
 
+    messages = [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": static_prompt, "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": dynamic_prompt},
+        ],
+    }]
+
     try:
         tool = _build_analysis_tool(max_topics)
-        message = _call_structured_api(client, prompt, [tool])
+        # Cache i tool definici (stabilní, ~stejná napříč voláními pro daný max_topics)
+        tool_with_cache = dict(tool)
+        tool_with_cache["cache_control"] = {"type": "ephemeral"}
+        message = _call_structured_api(client, messages, [tool_with_cache])
 
         # Extrahuj tool_use blok
         topics_data = None
@@ -320,13 +349,24 @@ Použij tool submit_analysis k odeslání výsledků.
         report_text = format_topics_as_report(topics)
 
         # Statistiky
+        _cr = getattr(message.usage, "cache_read_input_tokens", 0)
+        _cw = getattr(message.usage, "cache_creation_input_tokens", 0)
+        cache_read = _cr if isinstance(_cr, int) else 0
+        cache_write = _cw if isinstance(_cw, int) else 0
         log.info("✅ Strukturovaná analýza dokončena (%d témat)", len(topics))
-        log.info("   📊 Input tokeny: %d", message.usage.input_tokens)
+        log.info("   📊 Input tokeny: %d (cache read: %d, cache write: %d)",
+                 message.usage.input_tokens, cache_read, cache_write)
         log.info("   📊 Output tokeny: %d", message.usage.output_tokens)
 
-        cost_input = (message.usage.input_tokens / 1_000_000) * 3.00
-        cost_output = (message.usage.output_tokens / 1_000_000) * 15.00
-        total_cost = cost_input + cost_output
+        if "haiku" in config.ANALYSIS_MODEL.lower():
+            p_in, p_out, p_cr, p_cw = 1.00, 5.00, 0.10, 1.25
+        else:
+            p_in, p_out, p_cr, p_cw = 3.00, 15.00, 0.30, 3.75
+        cost_input = (message.usage.input_tokens / 1_000_000) * p_in
+        cost_output = (message.usage.output_tokens / 1_000_000) * p_out
+        cost_cache_read = (cache_read / 1_000_000) * p_cr
+        cost_cache_write = (cache_write / 1_000_000) * p_cw
+        total_cost = cost_input + cost_output + cost_cache_read + cost_cache_write
         log.info("   💰 Odhadovaná cena: $%.4f", total_cost)
 
         return {"text": report_text, "topics": topics}
