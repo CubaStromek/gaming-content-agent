@@ -28,6 +28,7 @@ import publish_log
 import youtube_embed
 import section_images
 import social_poster
+import brand_logos
 import topic_dedup
 import internal_linking
 from logger import setup_logger
@@ -391,6 +392,13 @@ def run():
                 log.info("Featured image uploaded (ID: %d)", media_id)
             else:
                 log.warning("Upload image selhal: %s", err)
+
+        # Fallback: pokud RAWG nedodal nic, zkus brand logo (PlayStation, Xbox, ...)
+        if not featured_image_id:
+            brand_logo_id = brand_logos.resolve_brand_logo(game_name, title)
+            if brand_logo_id:
+                featured_image_id = brand_logo_id
+                log.info("RAWG nenasel image, pouzivam brand logo (ID: %d)", brand_logo_id)
 
         # SEO keywords jako tagy
         seo_keywords = topic.get('seo_keywords', '')

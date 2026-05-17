@@ -29,6 +29,7 @@ import youtube_embed
 import section_images
 import publish_log
 import internal_linking
+import brand_logos
 from logger import setup_logger
 from auto_publish import search_rawg_image, _extract_excerpt
 from fb_generator.generate_fb_post import generate_fb_post
@@ -160,6 +161,13 @@ def publish_manual_article(topic_name, game_name, source_urls, title=None,
             log.info("Featured image uploaded (ID: %d)", media_id)
         else:
             log.warning("Upload image selhal: %s", err)
+
+    # Fallback: pokud RAWG nedodal nic, zkus brand logo (PlayStation, Xbox, ...)
+    if not featured_image_id:
+        brand_logo_id = brand_logos.resolve_brand_logo(game_name, title)
+        if brand_logo_id:
+            featured_image_id = brand_logo_id
+            log.info("RAWG nenasel image, pouzivam brand logo (ID: %d)", brand_logo_id)
 
     # 7. SEO keywords jako tagy
     tag_names = list(seo_keywords) if seo_keywords else None
