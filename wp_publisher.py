@@ -264,10 +264,18 @@ def _find_existing_media(filename):
     return (None, None)
 
 
-def upload_media(image_url, title="", custom_filename=""):
+def upload_media(image_url, title="", custom_filename="", alt_text=""):
     """
     Stáhne obrázek z URL a uploadne ho do WP media library.
     Pokud media se stejným filename už existuje, vrátí existující.
+
+    Args:
+        image_url: URL obrázku ke stažení
+        title: Title pro WP media (název v library, používaný pro Story Mode dedup)
+        custom_filename: Volitelný custom filename (jinak z URL)
+        alt_text: Alt text pro <img alt="..."> (pro SEO/a11y). Když není uveden,
+                  fallback na title (zachová zpětnou kompatibilitu).
+
     Vrací (media_id, source_url, None) nebo (None, None, error_string).
     """
     try:
@@ -318,16 +326,20 @@ def upload_media(image_url, title="", custom_filename=""):
         source_url = media_data.get('source_url', '')
 
         # Nastav title a alt_text — kritické pro budoucí dedup ve Story Mode.
+        # alt_text je oddělený od title: title = identifikátor pro dedup,
+        # alt_text = SEO/a11y popis (per-image unikátní, ne keyword spam).
         # Při selhání rollback uploadu (smaž media), aby se neudělal "sirotek" bez title,
         # který by se příště nedohledal a způsobil další duplikát.
         if title:
+            # Fallback: pokud volající nepředal alt_text, použij title (původní chování)
+            effective_alt = alt_text.strip() if alt_text else title
             title_set = False
             for attempt in range(2):
                 try:
                     title_resp = requests.post(
                         _api_url(f'media/{media_id}'),
                         headers=_auth_headers(),
-                        json={'title': title, 'alt_text': title},
+                        json={'title': title, 'alt_text': effective_alt},
                         timeout=10,
                     )
                     if title_resp.status_code in (200, 201):

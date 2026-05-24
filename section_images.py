@@ -162,9 +162,18 @@ def get_or_fetch_screenshots(game_name, max_count=5):
 
     uploaded = []
     slug = _slugify(game_name)
+    total = len(urls)
     for i, sc_url in enumerate(urls, 1):
         fname = f"{slug}-screenshot-{i}.jpg"
-        sc_id, sc_src, sc_err = wp_publisher.upload_media(sc_url, title=game_name, custom_filename=fname)
+        # Per-image unique alt — zabráni keyword stuffing patternu,
+        # kdy by všechny screenshoty stejné hry měly identický alt.
+        alt = f"{game_name} — screenshot {i} of {total}"
+        sc_id, sc_src, sc_err = wp_publisher.upload_media(
+            sc_url,
+            title=game_name,
+            custom_filename=fname,
+            alt_text=alt,
+        )
         if sc_id and sc_src:
             uploaded.append((sc_id, sc_src))
         else:
