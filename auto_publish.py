@@ -280,6 +280,21 @@ def run():
     log.info("Stazeno %d novych clanku", len(articles))
     rss_scraper.save_articles_to_json(articles, run_dir)
 
+    # Rané pre-flight gate: když je WP dole už teď, nemá smysl ani platit za
+    # Claude analýzu (Haiku). Zastav před jakoukoliv útratou. Záruka: WP dole =>
+    # nulová útrata za API. (Scraping je zdarma; per-téma gate níž řeší mid-run pád.)
+    if not wp_publisher.check_wp_available():
+        log.error("WP nedostupný před analýzou — končím běh (nulová útrata za API).")
+        telegram_alert.send_alert(
+            "⚠️ <b>GAMEfo autopublish ZASTAVEN</b>\n\n"
+            "WordPress (gamefo.cz) je nedostupný — běh ukončen ještě před analýzou, "
+            "žádná útrata za API.\n\n"
+            "🔧 Nejpravděpodobnější příčina: <b>spadlá NordVPN</b> "
+            "(Starlink IP na Webglobe blacklistu).\n"
+            "➡️ Zapni VPN; další běh proběhne v plánovaný čas."
+        )
+        return
+
     # 4. Etapa „pick_topics": Claude analýza + dedup
     topics = _pick_topics(articles, run_dir, run_id)
     if not topics:
