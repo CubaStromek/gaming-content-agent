@@ -31,6 +31,7 @@ import social_poster
 import brand_logos
 import topic_dedup
 import internal_linking
+import telegram_alert
 from logger import setup_logger
 from fb_generator.generate_fb_post import generate_fb_post
 
@@ -293,6 +294,32 @@ def run():
 
         log.info("-" * 40)
         log.info("TEMA %d/%d: %s (viralita: %d)", i, len(topics), topic_name, virality)
+
+        # Pre-flight: WP musí být dostupný PŘED drahým generováním. Jinak bychom
+        # zaplatili Claude za článek, který nejde publikovat (spadlá VPN / Webglobe
+        # blacklist). Když je WP dole, je dole pro všechna témata → zastav celý běh
+        # a pošli alert na telefon, ať uživatel zapne VPN.
+        if not wp_publisher.check_wp_available():
+            log.error(
+                "WP nedostupný PŘED generováním — zastavuji běh (prevence placeného "
+                "generování do koše). Pravděpodobně spadlá VPN / Webglobe blacklist."
+            )
+            publish_log.log_decision({
+                'action': 'aborted',
+                'reason': 'wp_unavailable_preflight',
+                'run_id': run_id,
+                'topic': topic_name,
+                'score': virality,
+            })
+            telegram_alert.send_alert(
+                "⚠️ <b>GAMEfo autopublish ZASTAVEN</b>\n\n"
+                "WordPress (gamefo.cz) je nedostupný — běh zastaven PŘED generováním, "
+                "aby se neplatilo za nepublikovatelné články.\n\n"
+                "🔧 Nejpravděpodobnější příčina: <b>spadlá NordVPN</b> "
+                "(Starlink IP je na Webglobe blacklistu).\n"
+                "➡️ Zapni VPN; další běh proběhne v plánovaný čas."
+            )
+            break
 
         source_texts, source_urls, failed_sources = _collect_source_texts(topic, articles)
 

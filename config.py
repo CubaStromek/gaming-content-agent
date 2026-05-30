@@ -25,6 +25,10 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 
+# Telegram alerty (znovupoužívá bota @Cubajs_bot) — upozornění při zastavení běhu
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+
 # WordPress publishing
 WP_URL = os.getenv("WP_URL", "")
 WP_USER = os.getenv("WP_USER", "")
