@@ -33,13 +33,22 @@ def _is_retryable(exc):
 
 
 def _call_api(client, model, max_tokens, temperature, messages):
-    """Volání Claude API. messages je list zpráv (může obsahovat multi-block content s cache_control)."""
-    return client.messages.create(
+    """Volání Claude API přes STREAMING.
+
+    Streaming drží spojení trvale živé (tokeny tečou průběžně po stovkách ms),
+    takže ho nezabije NAT/CGNAT/VPN idle-timeout u dlouhých requestů (>180s) —
+    což byla příčina APIConnectionError přes NordVPN/Starlink (placený výstup
+    do koše). get_final_message() vrací stejný Message objekt jako
+    messages.create(), takže call-sites (.content / .usage) zůstávají beze změny.
+    messages je list zpráv (může obsahovat multi-block content s cache_control).
+    """
+    with client.messages.stream(
         model=model,
         max_tokens=max_tokens,
         temperature=temperature,
         messages=messages,
-    )
+    ) as stream:
+        return stream.get_final_message()
 
 
 if _HAS_TENACITY:
@@ -197,7 +206,8 @@ def write_article(topic: Dict, source_texts: List[str], length: str = 'medium') 
     Returns:
         {"cs": "<html>...", "en": "<html>..."} nebo {"error": "..."}
     """
-    client = anthropic.Anthropic(api_key=config.CLAUDE_API_KEY)
+    # max_retries=1: tenacity řeší vyšší retry; nižší SDK retry brání násobení nákladů
+    client = anthropic.Anthropic(api_key=config.CLAUDE_API_KEY, max_retries=1)
 
     # Pripravi zdrojove texty
     sources_combined = ""
@@ -515,7 +525,8 @@ def generate_podcast_script(article_html: str, lang: str = 'cs') -> Dict:
     Returns:
         {"script": "...", "tokens_in": ..., "tokens_out": ..., "cost": "..."} nebo {"error": "..."}
     """
-    client = anthropic.Anthropic(api_key=config.CLAUDE_API_KEY)
+    # max_retries=1: tenacity řeší vyšší retry; nižší SDK retry brání násobení nákladů
+    client = anthropic.Anthropic(api_key=config.CLAUDE_API_KEY, max_retries=1)
 
     # Odstran HTML tagy pro citelnejsi vstup
     from bs4 import BeautifulSoup
