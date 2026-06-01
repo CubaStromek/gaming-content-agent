@@ -14,6 +14,16 @@ log = setup_logger(__name__)
 
 DEDUP_WINDOW_DAYS = 7
 SIMILARITY_THRESHOLD = 0.45
+ENTITY_MATCH_DAYS = 3          # okno, ve kterém se shoda hry/entity bere přísně
+ENTITY_MATCH_THRESHOLD = 0.18  # když game_name přesně sedí a téma je čerstvé, stačí malý překryv slov
+
+
+def _age_days(timestamp: str) -> float:
+    """Stáří záznamu ve dnech. Při chybě parsování vrací 0 (= ber jako čerstvé, raději blokuj)."""
+    try:
+        return (datetime.now() - datetime.fromisoformat(timestamp)).total_seconds() / 86400
+    except Exception:
+        return 0.0
 
 
 def _normalize(text: str) -> set:
@@ -77,14 +87,19 @@ def check_topic_duplicate(topic: Dict, recent_topics: List[Dict]) -> Tuple[bool,
         existing_words = _normalize(f"{existing['topic']} {existing['title']}")
         similarity = _jaccard_similarity(new_words, existing_words)
 
-        # Přímá shoda game_name = silný signál → snížený práh
+        # Přímá shoda game_name = silný signál → snížený práh. Pro čerstvá témata
+        # (< ENTITY_MATCH_DAYS) ještě přísněji: Claude tutéž novinku rád přeformuluje
+        # jinými slovy (sim spadne pod 0.3), takže stačí malý překryv. Po pár dnech
+        # se práh vrátí na normál, ať se o populární hře zase může psát.
         if new_game and new_game != 'N/A':
             game_lower = new_game.lower()
             if game_lower in existing['topic'].lower() or game_lower in existing['title'].lower():
-                if similarity >= SIMILARITY_THRESHOLD * 0.7:
+                fresh = _age_days(existing.get('timestamp', '')) < ENTITY_MATCH_DAYS
+                game_threshold = ENTITY_MATCH_THRESHOLD if fresh else SIMILARITY_THRESHOLD * 0.7
+                if similarity >= game_threshold:
                     log.info(
-                        "DUPLICITA (game match): '%.60s' ~ '%.60s' (sim=%.2f, game='%s')",
-                        new_topic_text, existing['topic'], similarity, new_game,
+                        "DUPLICITA (game match%s): '%.60s' ~ '%.60s' (sim=%.2f, game='%s')",
+                        ", čerstvé" if fresh else "", new_topic_text, existing['topic'], similarity, new_game,
                     )
                     return (True, {
                         'topic': existing['topic'],
