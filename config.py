@@ -96,6 +96,10 @@ ARTICLE_MODEL = "claude-sonnet-4-6"
 # a pro výběr top témat z RSS feedů plně dostačuje.
 ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "claude-haiku-4-5-20251001")
 
+# Model pro sémantický dedup (druhá vrstva po lexikálním filtru). Haiku stačí —
+# rozhoduje jen ANO/NE, jestli jde o tutéž novinku i při přejmenované entitě.
+DEDUP_MODEL = os.getenv("DEDUP_MODEL", "claude-haiku-4-5-20251001")
+
 # Maximální délka summary při scrapování RSS (znaky)
 SUMMARY_MAX_LENGTH = int(os.getenv("SUMMARY_MAX_LENGTH", "500"))
 

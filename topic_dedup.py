@@ -58,9 +58,15 @@ def get_recent_published_topics(days: int = DEDUP_WINDOW_DAYS) -> List[Dict]:
 
         results = []
         for row in rows:
+            game = ''
+            try:
+                game = (json.loads(row['data_json']) or {}).get('game_name', '') or ''
+            except (TypeError, ValueError):
+                pass
             results.append({
                 'topic': row['topic'] or '',
                 'title': row['title'] or '',
+                'game_name': game,
                 'timestamp': row['timestamp'],
             })
         return results
@@ -152,6 +158,113 @@ def filter_duplicate_topics(topics: List[Dict]) -> Tuple[List[Dict], List[Dict]]
             duplicates.append(enriched)
         else:
             unique.append(topic)
+
+    return (unique, duplicates)
+
+
+def _is_retryable(exc) -> bool:
+    """Stejná retry politika jako claude_analyzer: overload/rate-limit/5xx/connection."""
+    import anthropic
+    if isinstance(exc, (anthropic.APIConnectionError, anthropic.APITimeoutError)):
+        return True
+    if isinstance(exc, anthropic.APIStatusError):
+        return exc.status_code in (429, 500, 502, 503, 529)
+    return False
+
+
+def _llm_is_same_story(client, new_topic: Dict, recent: List[Dict]) -> Optional[int]:
+    """Zeptá se Haiku, jestli `new_topic` popisuje tutéž novinku jako některé z `recent`.
+
+    Vrací 1-based index do `recent` při shodě, jinak None. Při chybě API/parsování
+    vrací None (fail-open — lexikální filtr už proběhl, raději pustit než blokovat vše).
+    """
+    import config
+
+    listing = "\n".join(
+        f"{i + 1}. {r['topic']} — {r['title']}"
+        + (f" (hra: {r['game_name']})" if r.get('game_name') else "")
+        for i, r in enumerate(recent)
+    )
+    new_line = (
+        f"{new_topic.get('topic', '')} — {new_topic.get('title', '')}"
+        + (f" (hra: {new_topic.get('game_name', '')})" if new_topic.get('game_name') else "")
+    )
+
+    prompt = (
+        "Jsi dedup filtr herního zpravodajského webu. Rozhodni, jestli NOVÉ téma "
+        "popisuje TUTÉŽ konkrétní novinku jako některé z již publikovaných témat — "
+        "i kdyby bylo jinak pojmenované (hra mezitím dostala oficiální název) nebo "
+        "jinak formulované.\n\n"
+        f"NOVÉ TÉMA:\n{new_line}\n\n"
+        f"JIŽ PUBLIKOVANÁ TÉMATA:\n{listing}\n\n"
+        "Pravidla:\n"
+        "- Stejná novinka = stejná hra/událost a stejné jádro zprávy "
+        "(oznámení, odklad, update, leak...).\n"
+        "- Různé novinky o stejné hře = NENÍ duplicita (např. oznámení vs. recenze).\n\n"
+        "Odpověz POUZE jedním řádkem:\n"
+        "- \"DUPLICITA: <číslo>\" pokud jde o tutéž novinku jako téma <číslo>\n"
+        "- \"OK\" pokud je nové téma jiná novinka"
+    )
+
+    try:
+        msg = client.messages.create(
+            model=config.DEDUP_MODEL,
+            max_tokens=20,
+            temperature=0,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = "".join(b.text for b in msg.content if getattr(b, 'type', '') == 'text').strip()
+    except Exception as exc:
+        log.warning("LLM dedup pass selhal (%s) — propouštím téma bez sémantické kontroly", exc)
+        return None
+
+    m = re.search(r'DUPLICITA:?\s*(\d+)', text, re.IGNORECASE)
+    if not m:
+        return None
+    idx = int(m.group(1))
+    if 1 <= idx <= len(recent):
+        return idx
+    return None
+
+
+def llm_filter_duplicate_topics(topics: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
+    """Sémantická druhá vrstva dedupu (po lexikálním `filter_duplicate_topics`).
+
+    Chytá případy, kdy se entita mezi běhy přejmenuje (ráno „bezejmenná závodní hra
+    Maverick Games", odpoledne „Clutch") — na to lexikální shoda jména ani Jaccard
+    nestačí. Vrací (unique, duplicates) se stejným `_dedup_match` formátem.
+    """
+    if not topics:
+        return (topics, [])
+
+    recent = get_recent_published_topics()
+    if not recent:
+        return (topics, [])
+
+    import anthropic
+    import config
+    client = anthropic.Anthropic(api_key=config.CLAUDE_API_KEY, max_retries=2)
+
+    unique, duplicates = [], []
+    for topic in topics:
+        idx = _llm_is_same_story(client, topic, recent)
+        if idx is None:
+            unique.append(topic)
+            continue
+        match = recent[idx - 1]
+        log.warning(
+            "LLM DUPLICITA: '%s' ~ '%s' z %s",
+            topic.get('topic', '?'), match['topic'], match['timestamp'],
+        )
+        enriched = dict(topic)
+        enriched['_dedup_match'] = {
+            'topic': match['topic'],
+            'title': match['title'],
+            'timestamp': match['timestamp'],
+            'sim_score': None,
+            'match_type': 'llm',
+        }
+        duplicates.append(enriched)
 
     return (unique, duplicates)
 

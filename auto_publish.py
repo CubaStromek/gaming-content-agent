@@ -177,6 +177,10 @@ def _pick_topics(articles, run_dir, run_id):
     })
 
     topics, dup_topics = topic_dedup.filter_duplicate_topics(topics)
+    # Sémantická druhá vrstva: chytí přejmenované entity (ráno bezejmenná hra,
+    # odpoledne s oficiálním názvem), na které lexikální shoda nestačí.
+    topics, llm_dups = topic_dedup.llm_filter_duplicate_topics(topics)
+    dup_topics.extend(llm_dups)
     for dup in dup_topics:
         publish_log.log_decision({
             'action': 'skipped',
