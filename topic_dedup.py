@@ -172,11 +172,18 @@ def _is_retryable(exc) -> bool:
     return False
 
 
-def _llm_is_same_story(client, new_topic: Dict, recent: List[Dict]) -> Optional[int]:
+def _llm_is_same_story(client, new_topic: Dict, recent: List[Dict]) -> Tuple[Optional[int], str]:
     """Zeptá se Haiku, jestli `new_topic` popisuje tutéž novinku jako některé z `recent`.
 
-    Vrací 1-based index do `recent` při shodě, jinak None. Při chybě API/parsování
-    vrací None (fail-open — lexikální filtr už proběhl, raději pustit než blokovat vše).
+    Vrací (1-based index do `recent` při shodě jinak None, krátké zdůvodnění modelu).
+    Při chybě API/parsování vrací (None, ...) — fail-open (lexikální filtr už proběhl,
+    raději pustit než blokovat vše).
+
+    Model nejdřív uvažuje a teprve pak hlásí VÝROK na posledním řádku — bare-verdict
+    režim (max_tokens=20) svádí Haiku k mělkému „stejné jméno = duplicita" snapu a pak
+    si halucinuje zdůvodnění; různé novinky o téže hře (rozpočet vs. změna vydavatele)
+    se tím nesprávně slévaly do jedné. Proto: úvaha první, dost tokenů, parsuj poslední
+    VÝROK (ne první výskyt slova „DUPLICITA" uvnitř úvahy).
     """
     import config
 
@@ -191,40 +198,56 @@ def _llm_is_same_story(client, new_topic: Dict, recent: List[Dict]) -> Optional[
     )
 
     prompt = (
-        "Jsi dedup filtr herního zpravodajského webu. Rozhodni, jestli NOVÉ téma "
-        "popisuje TUTÉŽ konkrétní novinku jako některé z již publikovaných témat — "
-        "i kdyby bylo jinak pojmenované (hra mezitím dostala oficiální název) nebo "
-        "jinak formulované.\n\n"
+        "Jsi přísný dedup filtr herního zpravodajského webu. Chytni JEN případy, kdy "
+        "NOVÉ téma popisuje TUTÉŽ konkrétní novinku jako něco už publikovaného — typicky "
+        "když se entita mezitím přejmenovala (dostala oficiální název) nebo se tatáž "
+        "zpráva přeformulovala jinými slovy.\n\n"
         f"NOVÉ TÉMA:\n{new_line}\n\n"
         f"JIŽ PUBLIKOVANÁ TÉMATA:\n{listing}\n\n"
         "Pravidla:\n"
-        "- Stejná novinka = stejná hra/událost a stejné jádro zprávy "
-        "(oznámení, odklad, update, leak...).\n"
-        "- Různé novinky o stejné hře = NENÍ duplicita (např. oznámení vs. recenze).\n\n"
-        "Odpověz POUZE jedním řádkem:\n"
-        "- \"DUPLICITA: <číslo>\" pokud jde o tutéž novinku jako téma <číslo>\n"
-        "- \"OK\" pokud je nové téma jiná novinka"
+        "- Duplicita = stejná hra A tentýž konkrétní fakt/událost (totéž oznámení, "
+        "tentýž odklad na totéž datum, tentýž leak/reveal).\n"
+        "- RŮZNÉ novinky o stejné hře NEJSOU duplicita, i když jdou po sobě. "
+        "Rozpočet × změna vydavatele × odklad × gameplay reveal × prodeje × recenze "
+        "jsou samostatné články.\n"
+        "- Pouhá zmínka hry ve velkém souhrnu (roundup, např. State of Play) NENÍ "
+        "duplicita vůči dedikovanému článku o té hře, pokud nový článek nepřináší "
+        "tentýž jediný fakt jako své jádro.\n"
+        "- Když si nejsi jistý → OK (raději pusť než zablokuj).\n\n"
+        "Nejdřív 1 větou zdůvodni. Pak na ÚPLNĚ POSLEDNÍM řádku napiš jen "
+        "\"VÝROK: DUPLICITA: <číslo>\" nebo \"VÝROK: OK\"."
     )
 
     try:
         msg = client.messages.create(
             model=config.DEDUP_MODEL,
-            max_tokens=20,
+            max_tokens=250,
             temperature=0,
             messages=[{"role": "user", "content": prompt}],
         )
         text = "".join(b.text for b in msg.content if getattr(b, 'type', '') == 'text').strip()
     except Exception as exc:
         log.warning("LLM dedup pass selhal (%s) — propouštím téma bez sémantické kontroly", exc)
-        return None
+        return (None, "")
 
-    m = re.search(r'DUPLICITA:?\s*(\d+)', text, re.IGNORECASE)
-    if not m:
-        return None
-    idx = int(m.group(1))
+    # Poslední VÝROK je závazný; úvaha výše může slovo „DUPLICITA" obsahovat jen jako rozbor.
+    matches = list(re.finditer(r'VÝROK:\s*(?:DUPLICITA:?\s*(\d+)|(OK))', text, re.IGNORECASE))
+    # Zdůvodnění = poslední smysluplný řádek před VÝROK (přeskoč prázdné a markdown hlavičky).
+    head = text[:matches[-1].start()] if matches else text
+    meaningful = [
+        ln.strip(" *#") for ln in head.splitlines()
+        if ln.strip(" *#") and not ln.strip().lower().startswith(('analýza', '**analýza'))
+    ]
+    reason = meaningful[-1] if meaningful else ""
+    if not matches:
+        return (None, reason)  # truncated/nesrozumitelné → fail-open
+    last = matches[-1]
+    if not last.group(1):  # explicit OK
+        return (None, reason)
+    idx = int(last.group(1))
     if 1 <= idx <= len(recent):
-        return idx
-    return None
+        return (idx, reason)
+    return (None, reason)
 
 
 def llm_filter_duplicate_topics(topics: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
@@ -247,14 +270,14 @@ def llm_filter_duplicate_topics(topics: List[Dict]) -> Tuple[List[Dict], List[Di
 
     unique, duplicates = [], []
     for topic in topics:
-        idx = _llm_is_same_story(client, topic, recent)
+        idx, reason = _llm_is_same_story(client, topic, recent)
         if idx is None:
             unique.append(topic)
             continue
         match = recent[idx - 1]
         log.warning(
-            "LLM DUPLICITA: '%s' ~ '%s' z %s",
-            topic.get('topic', '?'), match['topic'], match['timestamp'],
+            "LLM DUPLICITA: '%s' ~ '%s' z %s | důvod: %s",
+            topic.get('topic', '?'), match['topic'], match['timestamp'], reason or '(bez úvahy)',
         )
         enriched = dict(topic)
         enriched['_dedup_match'] = {
