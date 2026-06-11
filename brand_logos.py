@@ -15,6 +15,7 @@ BRAND_LOGOS = {
     'xbox': 6189,
     'ea': 6544,
     'fromsoftware': 7263,
+    'steam': 8905,
 }
 
 # Keyword → brand key. Multi-word keys are checked as substrings; single-word
@@ -36,6 +37,10 @@ _KEYWORD_TO_BRAND = {
     'xbox game pass': 'xbox',
     'game pass': 'xbox',
     'microsoft': 'xbox',
+    # Steam / Valve
+    'steam': 'steam',
+    'valve': 'steam',
+    'steam deck': 'steam',
     # Publishers
     'electronic arts': 'ea',
     'ea sports': 'ea',
@@ -46,6 +51,16 @@ _KEYWORD_TO_BRAND = {
 _MULTI_WORD = [(kw, brand) for kw, brand in _KEYWORD_TO_BRAND.items() if ' ' in kw]
 _SINGLE_WORD = {kw: brand for kw, brand in _KEYWORD_TO_BRAND.items() if ' ' not in kw}
 
+# Tokens that may appear in a game_name that is *itself* a brand/platform topic
+# ("PlayStation 5 Pro", "Xbox Series X", "Steam Deck") without disqualifying it
+# from the strict brand-first match.
+_BRAND_TOKENS = {tok for kw in _KEYWORD_TO_BRAND for tok in kw.split()}
+_GENERIC_TOKENS = {
+    'plus', 'pro', 'slim', 'series', 'x', 's', 'one', 'deck', 'game', 'pass',
+    'store', 'network', 'direct', 'live', 'machine', 'frame', 'controller',
+    'vr', 'vr2', 'portal', 'edition',
+}
+
 
 def _normalize(text: str) -> str:
     if not text:
@@ -53,6 +68,24 @@ def _normalize(text: str) -> str:
     text = unicodedata.normalize('NFKD', text)
     text = ''.join(c for c in text if not unicodedata.combining(c))
     return text.lower()
+
+
+def resolve_brand_logo_strict(game_name: str) -> Optional[int]:
+    """Return brand logo media ID only when game_name IS the brand/platform itself.
+
+    Used as a brand-first gate before the RAWG search: "Steam", "PlayStation 5",
+    "Xbox Game Pass" → logo; "Microsoft Flight Simulator" → None (a real game
+    that merely contains a brand token must keep its RAWG image).
+    """
+    norm = _normalize(game_name)
+    tokens = re.findall(r'[a-z0-9]+', norm)
+    if not tokens:
+        return None
+    for tok in tokens:
+        if tok.isdigit() or tok in _BRAND_TOKENS or tok in _GENERIC_TOKENS:
+            continue
+        return None
+    return resolve_brand_logo(game_name)
 
 
 def resolve_brand_logo(*texts) -> Optional[int]:

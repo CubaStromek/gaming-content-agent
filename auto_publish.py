@@ -423,28 +423,36 @@ def run():
             })
             continue
 
-        # RAWG screenshoty → WP meta pro Story Mode v appce (ne inline v HTML)
-        # Nejdřív hledá existující ve WP, fallback na RAWG API + upload
-        section_images_meta = section_images.get_or_fetch_screenshots(game_name)
+        # Brand-first: kdyz je tema samotna platforma/firma (Steam, PlayStation,
+        # Xbox...), RAWG by vratil nahodnou hru — pouzij rovnou brand logo
+        # a RAWG (featured i Story Mode screenshoty) preskoc.
+        featured_image_id = brand_logos.resolve_brand_logo_strict(game_name)
+        section_images_meta = None
+        if featured_image_id:
+            log.info("Brand tema '%s' → brand logo (ID: %d), RAWG preskocen",
+                     game_name, featured_image_id)
+        else:
+            # RAWG screenshoty → WP meta pro Story Mode v appce (ne inline v HTML)
+            # Nejdřív hledá existující ve WP, fallback na RAWG API + upload
+            section_images_meta = section_images.get_or_fetch_screenshots(game_name)
 
-        # Hledani featured image pres RAWG (pouzij cisty nazev hry)
-        featured_image_id = None
-        image_url = search_rawg_image(game_name)
-        if image_url:
-            log.info("RAWG image nalezen, uploaduji...")
-            media_id, _, err = wp_publisher.upload_media(image_url, title=title)
-            if media_id:
-                featured_image_id = media_id
-                log.info("Featured image uploaded (ID: %d)", media_id)
-            else:
-                log.warning("Upload image selhal: %s", err)
+            # Hledani featured image pres RAWG (pouzij cisty nazev hry)
+            image_url = search_rawg_image(game_name)
+            if image_url:
+                log.info("RAWG image nalezen, uploaduji...")
+                media_id, _, err = wp_publisher.upload_media(image_url, title=title)
+                if media_id:
+                    featured_image_id = media_id
+                    log.info("Featured image uploaded (ID: %d)", media_id)
+                else:
+                    log.warning("Upload image selhal: %s", err)
 
-        # Fallback: pokud RAWG nedodal nic, zkus brand logo (PlayStation, Xbox, ...)
-        if not featured_image_id:
-            brand_logo_id = brand_logos.resolve_brand_logo(game_name, title)
-            if brand_logo_id:
-                featured_image_id = brand_logo_id
-                log.info("RAWG nenasel image, pouzivam brand logo (ID: %d)", brand_logo_id)
+            # Fallback: pokud RAWG nedodal nic, zkus brand logo (PlayStation, Xbox, ...)
+            if not featured_image_id:
+                brand_logo_id = brand_logos.resolve_brand_logo(game_name, title)
+                if brand_logo_id:
+                    featured_image_id = brand_logo_id
+                    log.info("RAWG nenasel image, pouzivam brand logo (ID: %d)", brand_logo_id)
 
         # SEO keywords jako tagy
         seo_keywords = topic.get('seo_keywords', '')
