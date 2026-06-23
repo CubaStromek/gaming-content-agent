@@ -249,6 +249,9 @@ def format_topics_as_report(topics: list) -> str:
     """
     parts = []
     for i, topic in enumerate(topics, 1):
+        if not isinstance(topic, dict):
+            log.warning("⚠️  Přeskakuji téma #%d — není dict (%s)", i, type(topic).__name__)
+            continue
         sources_text = "\n".join(topic.get("sources", []))
         parts.append(
             f"🎮 TÉMA {i}: {topic['topic']}\n"
@@ -336,6 +339,16 @@ Použij tool submit_analysis k odeslání výsledků."""
         if not topics_data or not topics_data.get("topics"):
             log.warning("⚠️  Strukturovaný výstup neobsahuje témata, fallback na text")
             return None
+
+        # Coerce: Claude občas vrátí "topics" jako stringovaný JSON místo listu
+        if isinstance(topics_data.get("topics"), str):
+            try:
+                topics_data = dict(topics_data)
+                topics_data["topics"] = json.loads(topics_data["topics"])
+                log.info("ℹ️  'topics' přišlo jako string, převedeno z JSON na list")
+            except (json.JSONDecodeError, TypeError) as e:
+                log.warning("⚠️  'topics' je string a nejde parsovat jako JSON: %s, fallback na text", e)
+                return None
 
         # Validace přes Pydantic
         try:
