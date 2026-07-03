@@ -30,30 +30,43 @@ def log_decision(data: dict):
 
 
 def get_stats() -> dict:
-    """Vrátí statistiky z publish_log tabulky."""
+    """Vrátí statistiky z publish_log tabulky (agregace v SQL, ne v Pythonu)."""
     conn = get_db()
     try:
-        published = conn.execute("SELECT COUNT(*) FROM publish_log WHERE action = 'published'").fetchone()[0]
-        skipped = conn.execute("SELECT COUNT(*) FROM publish_log WHERE action = 'skipped'").fetchone()[0]
+        counts = conn.execute(
+            "SELECT "
+            "  SUM(CASE WHEN action = 'published' THEN 1 ELSE 0 END), "
+            "  SUM(CASE WHEN action = 'skipped' THEN 1 ELSE 0 END), "
+            "  AVG(CASE WHEN score > 0 THEN score END) "
+            "FROM publish_log"
+        ).fetchone()
+        published = counts[0] or 0
+        skipped = counts[1] or 0
+        avg_score = round(counts[2], 1) if counts[2] else 0
 
-        row = conn.execute("SELECT AVG(score) FROM publish_log WHERE score > 0").fetchone()
-        avg_score = round(row[0], 1) if row[0] else 0
+        # Top sources: json_each rozbalí pole $.sources přímo v SQLite —
+        # do Pythonu jdou jen agregované URL (ne celá tabulka JSONů).
+        # Subquery s json_valid chrání json_each před malformed JSONem.
+        try:
+            rows = conn.execute(
+                "SELECT je.value AS url, COUNT(*) AS cnt "
+                "FROM (SELECT data_json FROM publish_log "
+                "      WHERE data_json IS NOT NULL AND json_valid(data_json)) p, "
+                "     json_each(p.data_json, '$.sources') AS je "
+                "WHERE json_type(p.data_json, '$.sources') = 'array' "
+                "GROUP BY je.value"
+            ).fetchall()
+        except Exception:
+            rows = []
 
-        # Top sources z data_json
-        source_counts = {}
-        rows = conn.execute("SELECT data_json FROM publish_log WHERE data_json IS NOT NULL").fetchall()
+        source_counts: Dict[str, int] = {}
         for row in rows:
             try:
-                entry = json.loads(row[0])
-            except (json.JSONDecodeError, TypeError):
+                domain = urlparse(row['url']).netloc
+            except Exception:
                 continue
-            for src in entry.get('sources', []):
-                try:
-                    domain = urlparse(src).netloc
-                    if domain:
-                        source_counts[domain] = source_counts.get(domain, 0) + 1
-                except Exception:
-                    pass
+            if domain:
+                source_counts[domain] = source_counts.get(domain, 0) + row['cnt']
 
         top_sources = sorted(source_counts.items(), key=lambda x: x[1], reverse=True)[:10]
 

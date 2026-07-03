@@ -27,16 +27,27 @@ def api_rawg_search():
     if resp.status_code != 200:
         return json_response({'error': f'RAWG API error {resp.status_code}'}), 502
 
-    data = resp.json()
+    try:
+        data = resp.json()
+    except ValueError:
+        return json_response({'error': 'RAWG API returned invalid JSON'}), 502
+    if not isinstance(data, dict):
+        return json_response({'error': 'RAWG API returned unexpected payload'}), 502
+
     results = []
-    for game in data.get('results', []):
-        screenshots = [s['image'] for s in (game.get('short_screenshots') or []) if s.get('image')]
+    games = data.get('results') or []
+    if not isinstance(games, list):
+        games = []
+    for game in games:
+        if not isinstance(game, dict) or game.get('id') is None:
+            continue
+        screenshots = [s['image'] for s in (game.get('short_screenshots') or []) if isinstance(s, dict) and s.get('image')]
         if not screenshots and game.get('background_image'):
             screenshots = [game['background_image']]
         if not screenshots:
             continue
         results.append({
-            'id': game['id'],
+            'id': game.get('id'),
             'name': game.get('name', ''),
             'background': game.get('background_image', ''),
             'screenshots': screenshots[:6],

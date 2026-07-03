@@ -9,7 +9,6 @@ import os
 import sys
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-os.chdir(BASE_DIR)
 
 from database import get_db, init_db, DB_PATH
 from logger import setup_logger
@@ -62,6 +61,14 @@ def migrate_publish_log():
 
     conn = get_db()
     try:
+        # Idempotence: opakované spuštění by záznamy zduplikovalo
+        # (publish_log nemá přirozený unikátní klíč) — pokud už tabulka
+        # obsahuje záznamy, migraci logu přeskočíme.
+        existing = conn.execute("SELECT COUNT(*) FROM publish_log").fetchone()[0]
+        if existing:
+            log.info("publish_log už obsahuje %d záznamů — migraci logu přeskakuji (už proběhla?)", existing)
+            return 0
+
         count = 0
         with open(jsonl_path, 'r', encoding='utf-8') as f:
             for line in f:
@@ -129,6 +136,10 @@ def migrate_feed_health():
 
 
 def main():
+    # cwd nastavujeme až tady (ne jako import side-effect) — kvůli
+    # relativním cestám (data/, logs/) při spuštění z jiného adresáře.
+    os.chdir(BASE_DIR)
+
     log.info("=" * 60)
     log.info("MIGRACE JSON → SQLite")
     log.info("Databáze: %s", DB_PATH)

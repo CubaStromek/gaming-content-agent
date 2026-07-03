@@ -3,7 +3,9 @@ Email sender
 Posílá denní reporty emailem
 """
 
+import html
 import smtplib
+import ssl
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
@@ -12,15 +14,17 @@ from logger import setup_logger
 
 log = setup_logger(__name__)
 
+SMTP_TIMEOUT = 30  # sekundy
+
 
 def _build_html_body(analysis: str, stats: dict) -> str:
     """Sestaví HTML tělo emailu s dark theme stylem."""
-    sources = ', '.join(stats.get('sources', {}).keys())
+    sources = html.escape(', '.join(stats.get('sources', {}).keys()))
     total = stats.get('total_articles', 0)
     date_str = datetime.now().strftime('%d.%m.%Y v %H:%M')
 
-    # Nahraď newlines za <br> v analýze
-    analysis_html = analysis.replace('\n', '<br>\n')
+    # Escapuj HTML (analýza může obsahovat <, >, & z titulků her) a až pak <br>
+    analysis_html = html.escape(analysis).replace('\n', '<br>\n')
 
     return f"""<!DOCTYPE html>
 <html>
@@ -72,7 +76,7 @@ def send_email_report(analysis: str, stats: dict) -> bool:
 
     # Kontrola nastavení
     if not config.EMAIL_TO:
-        log.warning("⚠️  EMAIL_TO není nastaven - report se neuloží jen do konzole")
+        log.warning("⚠️  EMAIL_TO není nastaven — email se neodešle, report bude jen v konzoli/souboru")
         return False
 
     # Vytvoření emailu
@@ -127,19 +131,18 @@ Pro změnu nastavení uprav soubor .env
         html_body = _build_html_body(analysis, stats)
         msg.attach(MIMEText(html_body, 'html', 'utf-8'))
 
-        # Připojení k SMTP serveru
+        # Připojení k SMTP serveru — context manager zajistí quit() i při chybě
         log.info("   Připojuji se k %s:%d...", config.SMTP_HOST, config.SMTP_PORT)
-        server = smtplib.SMTP(config.SMTP_HOST, config.SMTP_PORT)
-        server.starttls()
+        with smtplib.SMTP(config.SMTP_HOST, config.SMTP_PORT, timeout=SMTP_TIMEOUT) as server:
+            server.starttls(context=ssl.create_default_context())
 
-        # Přihlášení
-        log.info("   Přihlašuji se jako %s...", config.SMTP_USER)
-        server.login(config.SMTP_USER, config.SMTP_PASSWORD)
+            # Přihlášení
+            log.info("   Přihlašuji se jako %s...", config.SMTP_USER)
+            server.login(config.SMTP_USER, config.SMTP_PASSWORD)
 
-        # Odeslání
-        log.info("   Odesílám email na %s...", config.EMAIL_TO)
-        server.send_message(msg)
-        server.quit()
+            # Odeslání
+            log.info("   Odesílám email na %s...", config.EMAIL_TO)
+            server.send_message(msg)
 
         log.info("✅ Email úspěšně odeslán!")
         return True

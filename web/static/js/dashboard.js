@@ -26,7 +26,7 @@
             timerInterval = setInterval(updateTimer, 1000);
 
             outputCursor = 0;
-            fetch('/start')
+            fetch('/start', { method: 'POST' })
                 .then(r => r.json())
                 .then(data => {
                     if (data.status === 'started') {
@@ -90,6 +90,28 @@
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        function sanitizeArticleHtml(html) {
+            // LLM-generovaný HTML článku NESMÍ jít raw do innerHTML (XSS).
+            // Klientský sanitizer: odstraní aktivní elementy a on* / javascript:
+            // atributy. DOMParser neexekuuje skripty při parsování.
+            const doc = new DOMParser().parseFromString(html || '', 'text/html');
+            doc.querySelectorAll('script, iframe, object, embed, style, link, meta, base, form').forEach(el => el.remove());
+            doc.querySelectorAll('*').forEach(el => {
+                for (const attr of Array.from(el.attributes)) {
+                    const name = attr.name.toLowerCase();
+                    // strip whitespace/control znaky ("java\tscript:" trik)
+                    const value = (attr.value || '').replace(/[\s\u0000-\u001f]/g, '').toLowerCase();
+                    if (name.startsWith('on')
+                        || name === 'srcdoc'
+                        || ((name === 'href' || name === 'src' || name === 'xlink:href' || name === 'formaction' || name === 'action')
+                            && (value.startsWith('javascript:') || value.startsWith('data:text/html') || value.startsWith('vbscript:')))) {
+                        el.removeAttribute(attr.name);
+                    }
+                }
+            });
+            return doc.body.innerHTML;
         }
 
         function linkifyUrls(text) {
@@ -364,7 +386,9 @@
                     }
                 } else {
                     const html = lang === 'cs' ? articleResult.cs : articleResult.en;
-                    document.getElementById('articleBody').innerHTML = html || '<div class="generating-overlay">Verze neni k dispozici</div>';
+                    document.getElementById('articleBody').innerHTML = html
+                        ? sanitizeArticleHtml(html)
+                        : '<div class="generating-overlay">Verze neni k dispozici</div>';
                 }
             }
         }

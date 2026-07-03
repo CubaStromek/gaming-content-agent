@@ -4,7 +4,8 @@ anthropic==0.76.0
 # Web scraping
 feedparser==6.0.11
 beautifulsoup4==4.12.3
-requests==2.31.0
+# >=2.32.4 kvůli CVE-2024-35195 a CVE-2024-47081
+requests>=2.32.4
 aiohttp>=3.9.0
 
 # Email
@@ -28,3 +29,9 @@ pydantic>=2.0.0
 
 # Social media posting (X.com/Twitter)
 tweepy>=4.14.0
+
+# FB post image generator (fb_generator/)
+Pillow>=10.0.0
+
+# Denní souhrn reel — stahování videí (dayreel.py)
+yt-dlp>=2024.8.6

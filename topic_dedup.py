@@ -99,7 +99,10 @@ def check_topic_duplicate(topic: Dict, recent_topics: List[Dict]) -> Tuple[bool,
         # se práh vrátí na normál, ať se o populární hře zase může psát.
         if new_game and new_game != 'N/A':
             game_lower = new_game.lower()
-            if game_lower in existing['topic'].lower() or game_lower in existing['title'].lower():
+            existing_game = (existing.get('game_name') or '').lower()
+            if (game_lower in existing['topic'].lower()
+                    or game_lower in existing['title'].lower()
+                    or (existing_game and game_lower == existing_game)):
                 fresh = _age_days(existing.get('timestamp', '')) < ENTITY_MATCH_DAYS
                 game_threshold = ENTITY_MATCH_THRESHOLD if fresh else SIMILARITY_THRESHOLD * 0.7
                 if similarity >= game_threshold:

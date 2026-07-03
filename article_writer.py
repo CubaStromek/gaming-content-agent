@@ -12,6 +12,7 @@ from typing import List, Dict, Optional
 
 import config
 from logger import setup_logger
+from models import VALID_STATUS_TAGS
 from urllib.parse import urlparse
 
 log = setup_logger(__name__)
@@ -62,6 +63,40 @@ if _HAS_TENACITY:
             retry_state.attempt_number
         ),
     )(_call_api)
+
+
+# Ceník per model (input, output, cache read, cache write $/MTok) — match
+# podle substringu v config.ARTICLE_MODEL. Dřív byl Sonnet hardcoded, takže
+# při přepnutí modelu byly cost logy řádově vedle.
+_MODEL_PRICING = {
+    'opus': (15.00, 75.00, 1.50, 18.75),
+    'sonnet': (3.00, 15.00, 0.30, 3.75),
+    'haiku': (1.00, 5.00, 0.10, 1.25),
+}
+
+
+def _estimate_cost(usage, model):
+    """Odhad ceny volání z usage objektu. Vrací (total_cost, cache_read, cache_write)."""
+    pricing = None
+    for key, p in _MODEL_PRICING.items():
+        if key in model:
+            pricing = p
+            break
+    if pricing is None:
+        pricing = _MODEL_PRICING['sonnet']
+    p_in, p_out, p_cr, p_cw = pricing
+
+    _cr = getattr(usage, "cache_read_input_tokens", 0)
+    _cw = getattr(usage, "cache_creation_input_tokens", 0)
+    cache_read = _cr if isinstance(_cr, int) else 0
+    cache_write = _cw if isinstance(_cw, int) else 0
+    total = (
+        (usage.input_tokens / 1_000_000) * p_in
+        + (usage.output_tokens / 1_000_000) * p_out
+        + (cache_read / 1_000_000) * p_cr
+        + (cache_write / 1_000_000) * p_cw
+    )
+    return total, cache_read, cache_write
 
 
 # Postprocess funkce přesunuty do article_postprocess.py (testovatelné bez sítě).
@@ -177,9 +212,8 @@ def parse_topics_from_report(report_text: str) -> List[Dict]:
         topic['virality_score'] = int(virality_match.group(1)) if virality_match else 0
 
         # Validace status_tag — musí být z povolených hodnot
-        valid_status_tags = {'news', 'update', 'leak', 'critical', 'success', 'indie', 'review', 'trailer', 'rumor', 'info', 'finance', 'tema', 'preview'}
         raw_tag = topic.get('status_tag', 'news').lower().strip()
-        topic['status_tag'] = raw_tag if raw_tag in valid_status_tags else 'news'
+        topic['status_tag'] = raw_tag if raw_tag in VALID_STATUS_TAGS else 'news'
 
         # Parsuj zdroje (URL na samostatnych radcich)
         sources_section = re.search(r'\*{0,2}🔗\s*\*{0,2}\s*ZDROJE\*{0,2}\s*:\s*\*{0,2}\s*\n?([\s\S]*?)(?=\*{0,2}🏷️|$)', block)
@@ -389,8 +423,15 @@ Vygeneruj nyní výstup ve formátu popsaném výše (KEYWORD/TITULEK/META/STORY
     }]
 
     try:
-        max_tokens = 8192 if length == 'long' else 4096
+        # Velkorysý strop — max_tokens je jen cap, negenerované tokeny nic
+        # nestojí. Dřívější 4096 pro medium (CZ+EN článek + metadata + story
+        # cards ≈ 3500-4500 tokenů) občas tiše usekl EN verzi.
+        max_tokens = 16384 if length == 'long' else 8192
         message = _call_api(client, config.ARTICLE_MODEL, max_tokens, 0.7, messages)
+
+        if message.stop_reason == 'max_tokens':
+            log.error("Výstup useknut na max_tokens (%d) — článek by byl neúplný", max_tokens)
+            return {'error': f'Output truncated at max_tokens={max_tokens}'}
 
         result_text = message.content[0].text
 
@@ -466,16 +507,7 @@ Vygeneruj nyní výstup ve formátu popsaném výše (KEYWORD/TITULEK/META/STORY
         if en_html:
             en_html = _strip_generated_sources(en_html)
 
-        # Odhad ceny (Sonnet 4.6: $3/MTok in, $15/MTok out, cache read $0.30, cache write $3.75)
-        _cr = getattr(message.usage, "cache_read_input_tokens", 0)
-        _cw = getattr(message.usage, "cache_creation_input_tokens", 0)
-        cache_read = _cr if isinstance(_cr, int) else 0
-        cache_write = _cw if isinstance(_cw, int) else 0
-        cost_input = (message.usage.input_tokens / 1_000_000) * 3.00
-        cost_output = (message.usage.output_tokens / 1_000_000) * 15.00
-        cost_cache_read = (cache_read / 1_000_000) * 0.30
-        cost_cache_write = (cache_write / 1_000_000) * 3.75
-        total_cost = cost_input + cost_output + cost_cache_read + cost_cache_write
+        total_cost, cache_read, cache_write = _estimate_cost(message.usage, config.ARTICLE_MODEL)
 
         log.info("Article tokens: in=%d (cache read=%d, write=%d), out=%d, $%.4f",
                  message.usage.input_tokens, cache_read, cache_write,
@@ -594,16 +626,7 @@ Start directly with the script, no preamble."""
 
         script = message.content[0].text.strip()
 
-        # Odhad ceny (Sonnet 4.6: $3/MTok in, $15/MTok out, cache read $0.30, cache write $3.75)
-        _cr = getattr(message.usage, "cache_read_input_tokens", 0)
-        _cw = getattr(message.usage, "cache_creation_input_tokens", 0)
-        cache_read = _cr if isinstance(_cr, int) else 0
-        cache_write = _cw if isinstance(_cw, int) else 0
-        cost_input = (message.usage.input_tokens / 1_000_000) * 3.00
-        cost_output = (message.usage.output_tokens / 1_000_000) * 15.00
-        cost_cache_read = (cache_read / 1_000_000) * 0.30
-        cost_cache_write = (cache_write / 1_000_000) * 3.75
-        total_cost = cost_input + cost_output + cost_cache_read + cost_cache_write
+        total_cost, cache_read, cache_write = _estimate_cost(message.usage, config.ARTICLE_MODEL)
 
         return {
             'script': script,

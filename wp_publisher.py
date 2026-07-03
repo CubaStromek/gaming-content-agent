@@ -246,7 +246,7 @@ def _find_existing_media(filename):
     Vrací (media_id, source_url) nebo (None, None).
     """
     try:
-        search_name = filename.rsplit('.', 1)[0] if '.' in filename else filename
+        search_name = (filename.rsplit('.', 1)[0] if '.' in filename else filename).lower()
         resp = requests.get(
             _api_url('media'),
             headers=_auth_headers(),
@@ -257,7 +257,16 @@ def _find_existing_media(filename):
             for item in resp.json():
                 slug = item.get('slug', '')
                 src = item.get('source_url', '')
-                if search_name.lower() in slug or filename.lower() in src.lower():
+                # Přesná shoda — substring match ('gta' in 'gta-6-screenshot-1')
+                # dřív vracel média jiné hry jako featured image. Povolený je
+                # jen WP dedup suffix (slug-2, slug-3...).
+                src_basename = src.rsplit('/', 1)[-1].lower() if src else ''
+                slug_matches = (
+                    slug == search_name
+                    or (slug.startswith(search_name + '-')
+                        and slug[len(search_name) + 1:].isdigit())
+                )
+                if slug_matches or src_basename == filename.lower():
                     return (item['id'], src)
     except Exception:
         log.exception("find_existing_media failed for filename=%s", filename)
@@ -552,6 +561,46 @@ def get_top_tags(limit=30, force_refresh=False):
         return []
 
 
+def _find_recent_post_by_title(title, lang=None, max_age_seconds=600):
+    """Hledá čerstvě vytvořený post s přesně stejným titulkem.
+
+    Používá se po timeoutu POSTu na /posts — WP request často reálně dokončí
+    (post vznikne), ale klient dostane výjimku. Bez této kontroly by se téma
+    publikovalo znovu = duplicitní článek.
+    Vrací post dict nebo None.
+    """
+    try:
+        import html as html_module
+        from datetime import datetime, timezone
+
+        params = {'search': title, 'per_page': 5, 'status': 'publish,draft', 'orderby': 'date', 'order': 'desc'}
+        if lang:
+            params['lang'] = lang
+        resp = requests.get(
+            _api_url('posts'),
+            headers=_auth_headers(),
+            params=params,
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return None
+        for post in resp.json():
+            rendered = post.get('title', {}).get('rendered', '')
+            # WP entity-enkóduje titulky, porovnej normalizovaně
+            if html_module.unescape(rendered).strip() != title.strip():
+                continue
+            date_gmt = post.get('date_gmt')
+            if date_gmt:
+                created = datetime.fromisoformat(date_gmt).replace(tzinfo=timezone.utc)
+                age = (datetime.now(timezone.utc) - created).total_seconds()
+                if age > max_age_seconds:
+                    continue
+            return post
+    except Exception:
+        log.exception("Kontrola existence postu po timeoutu selhala pro '%s'", title[:60])
+    return None
+
+
 def create_draft(title, content, category_ids=None, tag_names=None, lang=None, featured_image_id=None, status_tag=None, source_info=None, status='draft', focus_keyword=None, section_images=None, meta_description=None, story_cards=None):
     """
     Vytvoří draft post na WP.
@@ -561,9 +610,7 @@ def create_draft(title, content, category_ids=None, tag_names=None, lang=None, f
         # Resolve tagy
         tag_ids = []
         if tag_names:
-            tag_ids, tag_error = _resolve_tag_ids(tag_names)
-            if tag_error:
-                return (None, tag_error)
+            tag_ids, _ = _resolve_tag_ids(tag_names)
 
         # Převeď HTML na Gutenberg bloky (aby WP nevyžadoval "Převést na bloky")
         content = _to_gutenberg_blocks(content)
@@ -599,12 +646,28 @@ def create_draft(title, content, category_ids=None, tag_names=None, lang=None, f
         if lang:
             post_data['lang'] = lang
 
-        resp = requests.post(
-            _api_url('posts'),
-            headers=_auth_headers(),
-            json=post_data,
-            timeout=15,
-        )
+        try:
+            resp = requests.post(
+                _api_url('posts'),
+                headers=_auth_headers(),
+                json=post_data,
+                timeout=30,
+            )
+        except requests.exceptions.Timeout:
+            # Timeout ≠ post nevznikl — WP request často doběhne na serveru.
+            # Ověř, jestli post s tímto titulkem právě nevznikl (idempotence).
+            log.warning("POST /posts timeout — ověřuji, jestli post '%s' přesto nevznikl", title[:60])
+            existing = _find_recent_post_by_title(title, lang=lang)
+            if existing:
+                post_id = existing['id']
+                log.info("Post po timeoutu nalezen (ID: %d) — pokračuji s ním", post_id)
+                wp_base = config.WP_URL.rstrip('/')
+                return ({
+                    'id': post_id,
+                    'edit_url': f"{wp_base}/wp-admin/post.php?post={post_id}&action=edit",
+                    'view_url': existing.get('link', f"{wp_base}/?p={post_id}"),
+                }, None)
+            return (None, "WP API timeout")
 
         if resp.status_code not in (200, 201):
             return (None, f"WP API error {resp.status_code}: {resp.text[:300]}")
@@ -615,7 +678,8 @@ def create_draft(title, content, category_ids=None, tag_names=None, lang=None, f
         # Debug: log sent vs assigned categories
         assigned_cats = post.get('categories', [])
         if category_ids and set(category_ids) != set(assigned_cats):
-            print(f"[WP] Category mismatch for post {post_id}: sent={category_ids}, assigned={assigned_cats}, lang={lang}")
+            log.warning("Category mismatch for post %d: sent=%s, assigned=%s, lang=%s",
+                        post_id, category_ids, assigned_cats, lang)
 
         # Rank Math meta (focus keyword + description) přes Rank Math REST API
         rm_meta = {}
@@ -638,11 +702,12 @@ def create_draft(title, content, category_ids=None, tag_names=None, lang=None, f
                 )
                 if rm_resp.status_code == 200:
                     fields = ', '.join(k.replace('rank_math_', '') for k in rm_meta.keys())
-                    print(f"[WP] Rank Math meta set ({fields}) for post {post_id}")
+                    log.info("Rank Math meta set (%s) for post %d", fields, post_id)
                 else:
-                    print(f"[WP] Rank Math meta failed ({rm_resp.status_code}): {rm_resp.text[:200]}")
+                    log.warning("Rank Math meta failed (%d) for post %d: %s",
+                                rm_resp.status_code, post_id, rm_resp.text[:200])
             except Exception as e:
-                print(f"[WP] Rank Math meta error: {e}")
+                log.warning("Rank Math meta error for post %d: %s", post_id, e)
 
         # Sestav URLs
         wp_base = config.WP_URL.rstrip('/')

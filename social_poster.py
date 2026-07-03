@@ -60,8 +60,11 @@ def get_today_social_count():
     today = datetime.now().strftime('%Y-%m-%d')
     conn = get_db()
     try:
+        # POZOR: '_' je v SQL LIKE wildcard — bez ESCAPE by matchoval
+        # i běžné platformy ('twitter' apod.), proto escapujeme.
         row = conn.execute(
-            "SELECT COUNT(*) FROM social_posts WHERE date = ? AND platform LIKE '_slot_%'", (today,)
+            "SELECT COUNT(*) FROM social_posts WHERE date = ? AND platform LIKE '\\_slot\\_%' ESCAPE '\\'",
+            (today,),
         ).fetchone()
         return row[0] if row else 0
     except Exception:
@@ -89,7 +92,8 @@ def log_social_post(platform, post_id, article_title):
 
 
 def can_post_social():
-    """Zkontroluje, jestli aktuální časový slot ještě nemá social post.
+    """Zkontroluje, jestli aktuální časový slot ještě nemá social post
+    a jestli není vyčerpaný denní limit (config.SOCIAL_DAILY_LIMIT).
     Rozloží posty přes den: 1x ráno, 1x odpoledne, 1x večer."""
     slot = get_current_slot()
     if not slot:
@@ -101,7 +105,13 @@ def can_post_social():
         return False
 
     count = get_today_social_count()
-    log.info("Social posting: slot '%s' volný (%d/3 dnes)", slot, count)
+    if count >= config.SOCIAL_DAILY_LIMIT:
+        log.info("Denní limit social postů dosažen (%d/%d), přeskakuji",
+                 count, config.SOCIAL_DAILY_LIMIT)
+        return False
+
+    log.info("Social posting: slot '%s' volný (%d/%d dnes)",
+             slot, count, config.SOCIAL_DAILY_LIMIT)
     return True
 
 
@@ -149,9 +159,11 @@ def _build_post_text(title, excerpt, url, hashtags, max_len=None, include_url=Tr
     return '\n\n'.join(parts)
 
 
-def post_to_twitter(text, image_path=None, url=None):
+def post_to_twitter(text, image_path=None):
     """
     Postne tweet s textem a volitelně obrázkem.
+    Tweety ZÁMĚRNĚ neobsahují link na článek — X downrankuje posty
+    s externími odkazy (proto _build_post_text s include_url=False).
     Vrací (tweet_id, tweet_url) nebo (None, error_message).
     """
     if not config.is_twitter_configured():
@@ -414,7 +426,7 @@ def post_to_all(title, excerpt, image_path, url, hashtags=None,
         try:
             tw_text = _build_post_text(title, excerpt, url, hashtags, max_len=280, include_url=False)
             tw_id, tw_url = _post_with_retry('Twitter', post_to_twitter,
-                                             tw_text, image_path=image_path, url=url)
+                                             tw_text, image_path=image_path)
             results['twitter'] = {'id': tw_id, 'url': tw_url}
             if tw_id:
                 log_social_post('twitter', tw_id, title)

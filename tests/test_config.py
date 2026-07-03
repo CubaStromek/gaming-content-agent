@@ -41,6 +41,29 @@ class TestConfigValues:
         assert isinstance(config.DASHBOARD_TOKEN, str)
 
 
+class TestEnvInt:
+    def test_valid_value(self):
+        with patch.dict(os.environ, {"TEST_ENV_INT": "42"}):
+            assert config._env_int("TEST_ENV_INT", 7) == 42
+
+    def test_missing_returns_default(self):
+        os.environ.pop("TEST_ENV_INT_MISSING", None)
+        assert config._env_int("TEST_ENV_INT_MISSING", 7) == 7
+
+    def test_empty_returns_default(self):
+        with patch.dict(os.environ, {"TEST_ENV_INT": "   "}):
+            assert config._env_int("TEST_ENV_INT", 7) == 7
+
+    def test_invalid_returns_default_without_raising(self):
+        # Překlep v .env nesmí shodit import — vrací default
+        with patch.dict(os.environ, {"TEST_ENV_INT": "58x7"}):
+            assert config._env_int("TEST_ENV_INT", 587) == 587
+
+    def test_strips_whitespace(self):
+        with patch.dict(os.environ, {"TEST_ENV_INT": " 15 "}):
+            assert config._env_int("TEST_ENV_INT", 7) == 15
+
+
 class TestIsWpConfigured:
     def test_configured(self):
         with patch.object(config, 'WP_URL', 'https://test.com'), \

@@ -41,40 +41,66 @@ class TestHistory:
 
 
 class TestAuth:
-    def test_no_auth_required_when_token_empty(self, app_client):
-        """When DASHBOARD_TOKEN is empty, auth is disabled."""
+    def test_readonly_get_allowed_when_token_empty(self, app_client):
+        """Bez DASHBOARD_TOKEN musí read-only GET fungovat (lokální dashboard)."""
         with patch.object(config, 'DASHBOARD_TOKEN', ''):
-            resp = app_client.get('/start')
-            # Should not return 401 (might return started or already_running)
-            assert resp.status_code != 401
+            resp = app_client.get('/status')
+            assert resp.status_code == 200
+
+    def test_mutating_forbidden_when_token_empty(self, app_client):
+        """Fail-closed: bez DASHBOARD_TOKEN musí mutace/spouštění vrátit 403."""
+        with patch.object(config, 'DASHBOARD_TOKEN', ''):
+            resp = app_client.post('/start')
+            assert resp.status_code == 403
+            data = json.loads(resp.data)
+            assert 'DASHBOARD_TOKEN' in data['error']
 
     def test_auth_required_when_token_set(self, app_client):
         """When DASHBOARD_TOKEN is set, requests without token get 401."""
         with patch.object(config, 'DASHBOARD_TOKEN', 'secret-token-123'):
-            resp = app_client.get('/start')
+            resp = app_client.post('/start')
             assert resp.status_code == 401
 
     def test_auth_with_bearer_header(self, app_client):
         """Bearer token in Authorization header works."""
         with patch.object(config, 'DASHBOARD_TOKEN', 'secret-token-123'):
-            resp = app_client.get('/start', headers={
+            resp = app_client.post('/start', headers={
                 'Authorization': 'Bearer secret-token-123'
             })
-            assert resp.status_code != 401
+            assert resp.status_code == 200
+            data = json.loads(resp.data)
+            assert data['status'] in ('started', 'already_running')
 
     def test_auth_query_param_rejected(self, app_client):
         """Token v query stringu MUSÍ být odmítnut (logoval by se do access logu)."""
         with patch.object(config, 'DASHBOARD_TOKEN', 'secret-token-123'):
-            resp = app_client.get('/start?token=secret-token-123')
+            resp = app_client.post('/start?token=secret-token-123')
             assert resp.status_code == 401
 
     def test_auth_wrong_token(self, app_client):
         """Wrong token gets 401."""
         with patch.object(config, 'DASHBOARD_TOKEN', 'secret-token-123'):
-            resp = app_client.get('/start', headers={
+            resp = app_client.post('/start', headers={
                 'Authorization': 'Bearer wrong-token'
             })
             assert resp.status_code == 401
+
+
+class TestStart:
+    def test_get_method_not_allowed(self, app_client):
+        """/start je jen POST — GET (např. z prefetche prohlížeče) vrátí 405."""
+        resp = app_client.get('/start')
+        assert resp.status_code == 405
+
+    def test_start_reserves_running_state(self, app_client):
+        """Handler musí rezervovat běh už v locku (TOCTOU) — druhý okamžitý
+        /start smí buď vrátit already_running, nebo started až po dokončení
+        prvního (fake) běhu; nikdy nesmí běžet dva agenty naráz."""
+        with patch.object(config, 'DASHBOARD_TOKEN', 'tok'):
+            headers = {'Authorization': 'Bearer tok'}
+            resp = app_client.post('/start', headers=headers)
+            assert resp.status_code == 200
+            assert json.loads(resp.data)['status'] in ('started', 'already_running')
 
 
 class TestHistoryRunId:
@@ -90,19 +116,23 @@ class TestHistoryRunId:
 
 
 class TestJsonSafety:
+    # Pozn.: mutace bez DASHBOARD_TOKEN jsou nyní fail-closed (403),
+    # proto testy posílají Bearer token.
     def test_invalid_json_on_write_article(self, app_client):
-        with patch.object(config, 'DASHBOARD_TOKEN', ''):
+        with patch.object(config, 'DASHBOARD_TOKEN', 'tok'):
             resp = app_client.post('/write-article',
                                    data='not valid json{{{',
-                                   content_type='application/json')
+                                   content_type='application/json',
+                                   headers={'Authorization': 'Bearer tok'})
             # Should get 400, not 500
             assert resp.status_code == 400
 
     def test_invalid_json_on_publish(self, app_client):
-        with patch.object(config, 'DASHBOARD_TOKEN', ''):
+        with patch.object(config, 'DASHBOARD_TOKEN', 'tok'):
             resp = app_client.post('/api/wp/publish',
                                    data='broken json',
-                                   content_type='application/json')
+                                   content_type='application/json',
+                                   headers={'Authorization': 'Bearer tok'})
             assert resp.status_code == 400
 
 
@@ -129,20 +159,50 @@ class TestSafeOrigin:
             )
             assert resp.status_code == 403
 
-    def test_post_with_same_origin_allowed(self, app_client):
-        """POST se stejným Originem jako Host header projde Origin checkem."""
+    def test_post_with_whitelisted_origin_allowed(self, app_client):
+        """POST z whitelistovaného originu projde Origin checkem."""
         with patch.object(config, 'DASHBOARD_TOKEN', 'tok'):
             resp = app_client.post(
                 '/api/feeds',
                 headers={
                     'Authorization': 'Bearer tok',
-                    'Origin': 'http://localhost',
-                    'Host': 'localhost',
+                    'Origin': 'http://127.0.0.1:5000',
                     'Content-Type': 'application/json',
                 },
                 data='{}',
             )
             # 400 z aplikační logiky (chybí name/url) — ale prošlo přes Origin check.
+            assert resp.status_code != 403
+
+    def test_host_header_not_trusted(self, app_client):
+        """Origin shodný s Host headerem NESMÍ projít (DNS rebinding) —
+        whitelist je pevný a Host header se nesmí echovat."""
+        with patch.object(config, 'DASHBOARD_TOKEN', 'tok'):
+            resp = app_client.post(
+                '/api/feeds',
+                headers={
+                    'Authorization': 'Bearer tok',
+                    'Origin': 'http://evil.example',
+                    'Host': 'evil.example',
+                    'Content-Type': 'application/json',
+                },
+                data='{}',
+            )
+            assert resp.status_code == 403
+
+    def test_env_allowed_origins_extends_whitelist(self, app_client, monkeypatch):
+        """DASHBOARD_ALLOWED_ORIGINS (čárkou oddělené) rozšiřuje whitelist."""
+        monkeypatch.setenv('DASHBOARD_ALLOWED_ORIGINS', 'https://dash.example.com, http://192.168.1.10:5000')
+        with patch.object(config, 'DASHBOARD_TOKEN', 'tok'):
+            resp = app_client.post(
+                '/api/feeds',
+                headers={
+                    'Authorization': 'Bearer tok',
+                    'Origin': 'https://dash.example.com',
+                    'Content-Type': 'application/json',
+                },
+                data='{}',
+            )
             assert resp.status_code != 403
 
     def test_post_without_origin_allowed(self, app_client):
@@ -162,10 +222,13 @@ class TestSafeOrigin:
 class TestPathTraversal:
     def test_run_id_traversal_rejected(self, app_client):
         """Pokus o path traversal v run_id musí být odmítnut s 400."""
-        with patch.object(config, 'DASHBOARD_TOKEN', ''):
+        with patch.object(config, 'DASHBOARD_TOKEN', 'tok'):
             resp = app_client.post(
                 '/write-article',
-                headers={'Content-Type': 'application/json'},
+                headers={
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer tok',
+                },
                 data='{"run_id":"../../etc","topic_index":0}',
             )
             assert resp.status_code == 400

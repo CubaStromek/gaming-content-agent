@@ -17,6 +17,8 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 _SENSITIVE_PATTERNS = [
     # Anthropic API klíče
     (re.compile(r'sk-ant-[a-zA-Z0-9\-_]{10,}'), 'sk-ant-***'),
+    # Telegram bot tokeny (např. v URL api.telegram.org/bot<token>/...)
+    (re.compile(r'bot\d+:[A-Za-z0-9_-]{20,}'), 'bot***'),
     # Obecné API klíče / tokeny v key=value formátu
     (re.compile(r'(?i)(api[_-]?key|password|token|secret|app[_-]?password)\s*[=:]\s*\S+'),
      lambda m: f'{m.group(1)}=***'),
@@ -27,8 +29,30 @@ _SENSITIVE_PATTERNS = [
 ]
 
 
+def _sanitize(text):
+    """Zamaskuje citlivé údaje v textu podle _SENSITIVE_PATTERNS."""
+    for pattern, replacement in _SENSITIVE_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+class SanitizingFormatter(logging.Formatter):
+    """Formatter, který maskuje citlivé údaje ve VÝSLEDNÉM formátovaném stringu.
+
+    Na rozdíl od filtru na record.msg/args tak pokryje i tracebacky
+    z exc_info (URL s tokeny ve stack trace apod.).
+    """
+
+    def format(self, record):
+        return _sanitize(super().format(record))
+
+
 class SanitizingFilter(logging.Filter):
-    """Filtr, který maskuje citlivé údaje v log zprávách."""
+    """Filtr maskující msg/args (ponecháno pro zpětnou kompatibilitu).
+
+    Nepokrývá text výjimek z exc_info — hlavní sanitizaci dělá
+    SanitizingFormatter nad výsledným stringem.
+    """
 
     def filter(self, record):
         if isinstance(record.msg, str):
@@ -48,12 +72,7 @@ class SanitizingFilter(logging.Filter):
 
     @staticmethod
     def _sanitize(text):
-        for pattern, replacement in _SENSITIVE_PATTERNS:
-            if callable(replacement):
-                text = pattern.sub(replacement, text)
-            else:
-                text = pattern.sub(replacement, text)
-        return text
+        return _sanitize(text)
 
 
 def setup_logger(name: str) -> logging.Logger:
@@ -74,11 +93,10 @@ def setup_logger(name: str) -> logging.Logger:
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
 
-    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    # Sanitizace přes Formatter — pokrývá i tracebacky z exc_info,
+    # které by filtr na msg/args minul.
+    formatter = SanitizingFormatter("%(asctime)s [%(levelname)s] %(message)s")
     handler.setFormatter(formatter)
-
-    # Přidat sanitizační filtr
-    handler.addFilter(SanitizingFilter())
 
     logger.addHandler(handler)
     logger.propagate = False

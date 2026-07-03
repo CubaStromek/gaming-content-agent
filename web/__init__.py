@@ -16,19 +16,6 @@ def create_app():
         static_folder=os.path.join(os.path.dirname(__file__), 'static'),
     )
 
-    # Rate limiting (optional)
-    try:
-        from flask_limiter import Limiter
-        from flask_limiter.util import get_remote_address
-        Limiter(
-            get_remote_address,
-            app=app,
-            default_limits=[],
-            storage_uri="memory://",
-        )
-    except ImportError:
-        pass
-
     # Register blueprints
     from web.blueprints.core import core_bp
     from web.blueprints.history import history_bp

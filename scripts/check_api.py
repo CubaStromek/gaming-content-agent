@@ -1,11 +1,19 @@
-"""Test Claude API"""
+"""Smoke check Claude API — ruční diagnostický skript (NENÍ pytest test).
+
+Volá ostré API (stojí tokeny). Spouštět ručně:
+    venv/bin/python scripts/check_api.py
+"""
 import anthropic
 import sys
 import io
+import os
 
 # Fix pro Windows konzoli
 if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+
+# Skript žije ve scripts/ — přidej projektový root do sys.path kvůli `import config`
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
 

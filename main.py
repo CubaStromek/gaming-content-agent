@@ -93,15 +93,12 @@ def main():
     log.info("✅ Připraveno %d článků", len(articles))
 
     # 5. Analýza pomocí Claude AI
-    try:
-        analysis = claude_analyzer.analyze_gaming_articles(articles_text)
+    # analyze_gaming_articles výjimky polyká a při selhání vrací None —
+    # try/except tady byl mrtvá větev, stačí kontrola None.
+    analysis = claude_analyzer.analyze_gaming_articles(articles_text, article_count=len(articles))
 
-        if not analysis:
-            log.error("❌ Nepodařilo se analyzovat články!")
-            sys.exit(1)
-
-    except Exception as e:
-        log.error("❌ Chyba při analýze: %s", e)
+    if not analysis:
+        log.error("❌ Nepodařilo se analyzovat články!")
         sys.exit(1)
 
     # 6. Extrakce statistik

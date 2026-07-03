@@ -48,6 +48,99 @@ def _is_retryable(exc):
     return False
 
 
+def _with_retry(fn):
+    """Sdílený retry dekorátor pro Claude API volání (no-op bez tenacity)."""
+    if not _HAS_TENACITY:
+        return fn
+    return retry(
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(multiplier=4, min=15, max=60),
+        retry=retry_if_exception(_is_retryable),
+        before_sleep=lambda retry_state: log.warning(
+            "⚠️  API volání selhalo (HTTP %s), pokus %d/2, čekám...",
+            getattr(retry_state.outcome.exception(), 'status_code', '?'),
+            retry_state.attempt_number
+        ),
+    )(fn)
+
+
+# Jediný zdroj pravdy pro SEO keywords pravidla (prompt i tool schema)
+SEO_KEYWORDS_RULES = (
+    'přesně 2-3 tagy, oddělené čárkou. POUZE z těchto kategorií: (1) název hry anglicky '
+    'v kanonickém tvaru, např. "Grand Theft Auto VI" (ne "GTA 6"); (2) vývojářské studio, '
+    'např. "Rockstar Games"; (3) herní série, např. "Resident Evil"; (4) platforma, JEN pokud '
+    'je zcela klíčová (např. exkluzivita), např. "PlayStation 5". ZAKÁZÁNO: obecná slova jako '
+    '"novinky", "hry", "trailer", "update", "leak", "news", "aktualizace", "zpráva", jména žánrů '
+    'jako "RPG" nebo "střílečka", jednorázové popisky jako "kontroverzní patch". Cíl: tagy, které '
+    'budou sdílet DESÍTKY článků — ne unikáty. Když si nejsi jistý, radši méně tagů než víc.'
+)
+
+
+def _build_status_tag_rules() -> str:
+    """Jediný zdroj pravdy pro STATUS TAG pravidla (sdíleno oběma prompty)."""
+    return (
+        'STATUS TAG pravidla: "news" = běžná zpráva/oznámení, "update" = patch/aktualizace '
+        'existující hry, "leak" = únik neoficiálních informací, "critical" = kritická/důležitá '
+        'zpráva s velkým dopadem, "success" = prodejní rekord/milník/úspěch, "indie" = nezávislá '
+        'hra, "review" = recenze, "trailer" = nový trailer/video, "rumor" = nepotvrzená spekulace, '
+        '"info" = obecná informace/analýza, "finance" = finanční zpráva/akvizice/byznys, '
+        '"tema" = tématický rozbor, "preview" = náhled/hands-on/preview. Defaultní je "news", '
+        'ale snaž se vybrat co nejpřesnější tag.'
+    )
+
+
+def _build_common_rules(max_topics: int) -> str:
+    """Sdílená (detailnější) pravidla analýzy pro textový i strukturovaný prompt."""
+    return f"""- Zaměř se na témata zajímavá pro ČESKÉ publikum
+- Preferuj témata, která jsou AKTUÁLNÍ (dnes/tento týden)
+- Ignoruj témata starší než 3 dny (pokud nejsou viral)
+- Dej přednost news a analýzám před recenzemi
+- Pokud jsou tam oznámení nových her, dej jim prioritu
+- V sekci ZDROJE musíš uvést PLNÉ URL adresy (začínající https://), ne čísla článků!
+- ZDROJE: Ke každému tématu přiřaď VŠECHNY relevantní URL ze vstupních článků, které se tématu týkají. MINIMUM 2 zdroje, ideálně 3+. Různé weby často píšou o stejném tématu — najdi je všechny! Nikdy nepřiřazuj jen 1 zdroj, pokud existují další.
+- KONTEXT musí obsahovat konkrétní fakta a čísla, ne obecné fráze
+- NIKDY nevytvářej prázdná témata! Každé téma musí mít kompletní obsah všech sekcí
+- FAKTICKÁ PŘESNOST: NIKDY nepřipisuj hře českou/slovenskou origin, pokud to není faktem. Neoznačuj hry jako "český", "česká hra", "od českých tvůrců" apod., pokud vývojářské studio skutečně není z ČR/SR. Psaní pro české publikum NEZNAMENÁ, že máš hry falešně vydávat za české!
+- Počet témat musí odpovídat počtu dostupných článků (max {max_topics})
+- {_build_status_tag_rules()}"""
+
+
+def _log_usage_and_cost(message, model: str) -> float:
+    """Zaloguje token statistiky a odhad ceny API volání. Vrací odhad v USD.
+
+    Ceník odvozen z modelu (Haiku 4.5: $1/$5 in/out, jinak Sonnet: $3/$15).
+    """
+    _cr = getattr(message.usage, "cache_read_input_tokens", 0)
+    _cw = getattr(message.usage, "cache_creation_input_tokens", 0)
+    cache_read = _cr if isinstance(_cr, int) else 0
+    cache_write = _cw if isinstance(_cw, int) else 0
+
+    log.info("   📊 Input tokeny: %d (cache read: %d, cache write: %d)",
+             message.usage.input_tokens, cache_read, cache_write)
+    log.info("   📊 Output tokeny: %d", message.usage.output_tokens)
+
+    if "haiku" in model.lower():
+        p_in, p_out, p_cr, p_cw = 1.00, 5.00, 0.10, 1.25
+    else:
+        p_in, p_out, p_cr, p_cw = 3.00, 15.00, 0.30, 3.75
+    total_cost = (
+        (message.usage.input_tokens / 1_000_000) * p_in
+        + (message.usage.output_tokens / 1_000_000) * p_out
+        + (cache_read / 1_000_000) * p_cr
+        + (cache_write / 1_000_000) * p_cw
+    )
+    log.info("   💰 Odhadovaná cena: $%.4f", total_cost)
+    return total_cost
+
+
+def _resolve_article_count(articles_text: str, article_count: Optional[int]) -> int:
+    """Počet článků: preferuj explicitní parametr, fallback na křehký count() v textu."""
+    if article_count is not None and article_count > 0:
+        return article_count
+    return articles_text.count("ČLÁNEK ")
+
+
+@_with_retry
 def _call_analysis_api(client, messages):
     """Volání Claude API. messages je list zpráv (může obsahovat multi-block content s cache_control)."""
     message = client.messages.create(
@@ -59,25 +152,14 @@ def _call_analysis_api(client, messages):
     return message
 
 
-if _HAS_TENACITY:
-    _call_analysis_api = retry(
-        stop=stop_after_attempt(2),
-        wait=wait_exponential(multiplier=4, min=15, max=60),
-        retry=retry_if_exception(_is_retryable),
-        before_sleep=lambda retry_state: log.warning(
-            "⚠️  API volání selhalo (HTTP %s), pokus %d/2, čekám...",
-            getattr(retry_state.outcome.exception(), 'status_code', '?'),
-            retry_state.attempt_number
-        ),
-    )(_call_analysis_api)
-
-
-def analyze_gaming_articles(articles_text: str) -> str:
+def analyze_gaming_articles(articles_text: str, article_count: Optional[int] = None) -> str:
     """
     Pošle články Claude AI k analýze
 
     Args:
         articles_text: Naformátované články jako text
+        article_count: Volitelný přesný počet článků (spolehlivější než
+                       počítání "ČLÁNEK " v textu — to zůstává jako fallback)
 
     Returns:
         Analýza a nápady od Claude
@@ -86,9 +168,7 @@ def analyze_gaming_articles(articles_text: str) -> str:
 
     client = anthropic.Anthropic(api_key=config.CLAUDE_API_KEY)
 
-    # Spočítej počet článků pro dynamický prompt
-    article_count = articles_text.count("ČLÁNEK ")
-    max_topics = min(2, max(1, article_count))
+    max_topics = min(2, max(1, _resolve_article_count(articles_text, article_count)))
 
     static_prompt = f"""Analyzuj tyto herní články z dnešního dne a vytvoř report pro českého herního blogera.
 
@@ -109,23 +189,12 @@ Pro každé téma napiš:
 - 🔥 VIRALITA: [hodnocení 1-100, jak virální může být]
 - 💡 PROČ TEĎKA: [proč je to aktuální, proč to napsat teď]
 - 🔗 ZDROJE: [PŘESNÉ URL adresy relevantních článků - zkopíruj celé URL z Link: polí výše]
-- 🏷️ SEO KLÍČOVÁ SLOVA: [přesně 2-3 tagy, oddělené čárkou. POUZE z těchto kategorií: (1) název hry anglicky v kanonickém tvaru, např. "Grand Theft Auto VI" (ne "GTA 6"); (2) vývojářské studio, např. "Rockstar Games"; (3) herní série, např. "Resident Evil"; (4) platforma, JEN pokud je zcela klíčová (např. exkluzivita), např. "PlayStation 5". ZAKÁZÁNO: obecná slova jako "novinky", "hry", "trailer", "update", "leak", "news", "aktualizace", "zpráva", jména žánrů jako "RPG" nebo "střílečka", jednorázové popisky jako "kontroverzní patch". Cíl: tagy, které budou sdílet DESÍTKY článků — ne unikáty. Když si nejsi jistý, radši méně tagů než víc.]
+- 🏷️ SEO KLÍČOVÁ SLOVA: [{SEO_KEYWORDS_RULES}]
 - 🕹️ NÁZEV HRY: [přesný anglický název hlavní hry v tématu, např. "The Elder Scrolls V: Skyrim" nebo "Grand Theft Auto VI". Pokud téma není o konkrétní hře, napiš "N/A"]
 - 📌 STATUS TAG: [vyber JEDEN z: news, update, leak, critical, success, indie, review, trailer, rumor, info, finance, tema, preview]
 
 DŮLEŽITÉ:
-- Zaměř se na témata zajímavá pro ČESKÉ publikum
-- Preferuj témata, která jsou AKTUÁLNÍ (dnes/tento týden)
-- Ignoruj témata starší než 3 dny (pokud nejsou viral)
-- Dej přednost news a analýzám před recenzemi
-- Pokud jsou tam oznámení nových her, dej jim prioritu
-- V sekci ZDROJE musíš uvést PLNÉ URL adresy (začínající https://), ne čísla článků!
-- ZDROJE: Ke každému tématu přiřaď VŠECHNY relevantní URL ze vstupních článků, které se tématu týkají. MINIMUM 2 zdroje, ideálně 3+. Různé weby často píšou o stejném tématu — najdi je všechny! Nikdy nepřiřazuj jen 1 zdroj, pokud existují další.
-- KONTEXT musí obsahovat konkrétní fakta a čísla, ne obecné fráze
-- NIKDY nevytvářej prázdná témata! Každé téma musí mít kompletní obsah všech sekcí
-- FAKTICKÁ PŘESNOST: NIKDY nepřipisuj hře českou/slovenskou origin, pokud to není faktem. Neoznačuj hry jako "český", "česká hra", "od českých tvůrců" apod., pokud vývojářské studio skutečně není z ČR/SR. Psaní pro české publikum NEZNAMENÁ, že máš hry falešně vydávat za české!
-- Počet témat musí odpovídat počtu dostupných článků (max {max_topics})
-- STATUS TAG pravidla: "news" = běžná zpráva/oznámení, "update" = patch/aktualizace existující hry, "leak" = únik neoficiálních informací, "critical" = kritická/důležitá zpráva s velkým dopadem, "success" = prodejní rekord/milník/úspěch, "indie" = nezávislá hra, "review" = recenze, "trailer" = nový trailer/video, "rumor" = nepotvrzená spekulace, "info" = obecná informace/analýza, "finance" = finanční zpráva/akvizice/byznys, "tema" = tématický rozbor, "preview" = náhled/hands-on/preview. Defaultní je "news", ale snaž se vybrat co nejpřesnější tag."""
+{_build_common_rules(max_topics)}"""
 
     dynamic_prompt = f"""{topic_dedup.format_recent_topics_for_prompt(days=3)}
 {_format_existing_tags_for_prompt(limit=30)}
@@ -149,28 +218,8 @@ VÝSTUP (seřaď od nejdůležitějšího, vytvoř PŘESNĚ {max_topics} témat 
 
         result = message.content[0].text
 
-        # Statistiky použití
-        _cr = getattr(message.usage, "cache_read_input_tokens", 0)
-        _cw = getattr(message.usage, "cache_creation_input_tokens", 0)
-        cache_read = _cr if isinstance(_cr, int) else 0
-        cache_write = _cw if isinstance(_cw, int) else 0
         log.info("✅ Analýza dokončena")
-        log.info("   📊 Input tokeny: %d (cache read: %d, cache write: %d)",
-                 message.usage.input_tokens, cache_read, cache_write)
-        log.info("   📊 Output tokeny: %d", message.usage.output_tokens)
-
-        # Odhad ceny — odvozeno z modelu (Haiku 4.5: $1/$5 in/out, Sonnet 4.6: $3/$15)
-        if "haiku" in config.ANALYSIS_MODEL.lower():
-            p_in, p_out, p_cr, p_cw = 1.00, 5.00, 0.10, 1.25
-        else:
-            p_in, p_out, p_cr, p_cw = 3.00, 15.00, 0.30, 3.75
-        cost_input = (message.usage.input_tokens / 1_000_000) * p_in
-        cost_output = (message.usage.output_tokens / 1_000_000) * p_out
-        cost_cache_read = (cache_read / 1_000_000) * p_cr
-        cost_cache_write = (cache_write / 1_000_000) * p_cw
-        total_cost = cost_input + cost_output + cost_cache_read + cost_cache_write
-
-        log.info("   💰 Odhadovaná cena: $%.4f", total_cost)
+        _log_usage_and_cost(message, config.ANALYSIS_MODEL)
 
         return result
 
@@ -206,9 +255,9 @@ def _build_analysis_tool(max_topics: int) -> dict:
                             "virality_score": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Hodnocení virality 1-100"},
                             "why_now": {"type": "string", "description": "Proč je to aktuální, proč to napsat teď"},
                             "sources": {"type": "array", "items": {"type": "string"}, "description": "Plné URL adresy zdrojových článků (https://...)"},
-                            "seo_keywords": {"type": "string", "description": "2-3 tagy oddělené čárkou, POUZE z kategorií: (1) kanonický anglický název hry, (2) vývojářské studio, (3) herní série, (4) platforma (jen pokud klíčová). ZAKÁZÁNO obecná slova (novinky, hry, trailer, update, news, aktualizace), žánry (RPG, střílečka) a jednorázové popisky."},
+                            "seo_keywords": {"type": "string", "description": SEO_KEYWORDS_RULES},
                             "game_name": {"type": "string", "description": "Přesný anglický název hlavní hry (např. 'Grand Theft Auto VI'), nebo 'N/A'"},
-                            "status_tag": {"type": "string", "enum": ["news", "update", "leak", "critical", "success", "indie", "review", "trailer", "rumor", "info", "finance", "tema", "preview"], "description": "Typ článku — news=zpráva, update=patch/aktualizace, leak=únik info, critical=důležitá zpráva, success=rekord/milník, indie=indie hra, review=recenze, trailer=nový trailer, rumor=spekulace, info=analýza, finance=byznys, tema=tématický rozbor, preview=náhled"},
+                            "status_tag": {"type": "string", "enum": ["news", "update", "leak", "critical", "success", "indie", "review", "trailer", "rumor", "info", "finance", "tema", "preview"], "description": _build_status_tag_rules()},
                         }
                     }
                 }
@@ -217,6 +266,7 @@ def _build_analysis_tool(max_topics: int) -> dict:
     }
 
 
+@_with_retry
 def _call_structured_api(client, messages, tools):
     """Volání Claude API se strukturovaným výstupem (tool_use). messages je list pro multi-block s cache_control."""
     return client.messages.create(
@@ -229,19 +279,6 @@ def _call_structured_api(client, messages, tools):
     )
 
 
-if _HAS_TENACITY:
-    _call_structured_api = retry(
-        stop=stop_after_attempt(2),
-        wait=wait_exponential(multiplier=4, min=15, max=60),
-        retry=retry_if_exception(_is_retryable),
-        before_sleep=lambda retry_state: log.warning(
-            "⚠️  Structured API volání selhalo (HTTP %s), pokus %d/2, čekám...",
-            getattr(retry_state.outcome.exception(), 'status_code', '?'),
-            retry_state.attempt_number
-        ),
-    )(_call_structured_api)
-
-
 def format_topics_as_report(topics: list) -> str:
     """
     Vygeneruje čitelný report text ze strukturovaných témat.
@@ -252,30 +289,35 @@ def format_topics_as_report(topics: list) -> str:
         if not isinstance(topic, dict):
             log.warning("⚠️  Přeskakuji téma #%d — není dict (%s)", i, type(topic).__name__)
             continue
-        sources_text = "\n".join(topic.get("sources", []))
+        # Všude .get() s defaulty — po fallbacku z Pydantic validace sem můžou
+        # přijít raw data s chybějícími klíči a KeyError by zahodil zaplacenou analýzu.
+        sources = topic.get("sources") or []
+        sources_text = "\n".join(sources) if isinstance(sources, list) else str(sources)
         parts.append(
-            f"🎮 TÉMA {i}: {topic['topic']}\n"
-            f"📰 NAVRŽENÝ TITULEK: {topic['title']}\n"
-            f"🎯 ÚHEL POHLEDU: {topic['angle']}\n"
-            f"📝 KONTEXT: {topic['context']}\n"
-            f"💬 HLAVNÍ HOOK: {topic['hook']}\n"
-            f"🖼️ VIZUÁLNÍ NÁVRH: {topic['visual']}\n"
-            f"🔥 VIRALITA: {topic['virality_score']}/100\n"
-            f"💡 PROČ TEĎKA: {topic['why_now']}\n"
+            f"🎮 TÉMA {i}: {topic.get('topic', '')}\n"
+            f"📰 NAVRŽENÝ TITULEK: {topic.get('title', '')}\n"
+            f"🎯 ÚHEL POHLEDU: {topic.get('angle', '')}\n"
+            f"📝 KONTEXT: {topic.get('context', '')}\n"
+            f"💬 HLAVNÍ HOOK: {topic.get('hook', '')}\n"
+            f"🖼️ VIZUÁLNÍ NÁVRH: {topic.get('visual', '')}\n"
+            f"🔥 VIRALITA: {topic.get('virality_score', 0)}/100\n"
+            f"💡 PROČ TEĎKA: {topic.get('why_now', '')}\n"
             f"🔗 ZDROJE:\n{sources_text}\n"
-            f"🏷️ SEO KLÍČOVÁ SLOVA: {topic['seo_keywords']}\n"
+            f"🏷️ SEO KLÍČOVÁ SLOVA: {topic.get('seo_keywords', '')}\n"
             f"🕹️ NÁZEV HRY: {topic.get('game_name', 'N/A')}\n"
             f"📌 STATUS TAG: {topic.get('status_tag', 'news')}"
         )
     return "\n\n".join(parts)
 
 
-def analyze_articles_structured(articles_text: str) -> Optional[dict]:
+def analyze_articles_structured(articles_text: str, article_count: Optional[int] = None) -> Optional[dict]:
     """
     Analyzuje herní články pomocí Claude s tool_use pro strukturovaný výstup.
 
     Args:
         articles_text: Naformátované články jako text
+        article_count: Volitelný přesný počet článků (spolehlivější než
+                       počítání "ČLÁNEK " v textu — to zůstává jako fallback)
 
     Returns:
         {"text": str, "topics": list[dict]} nebo None při selhání
@@ -284,8 +326,7 @@ def analyze_articles_structured(articles_text: str) -> Optional[dict]:
 
     client = anthropic.Anthropic(api_key=config.CLAUDE_API_KEY)
 
-    article_count = articles_text.count("ČLÁNEK ")
-    max_topics = min(2, max(1, article_count))
+    max_topics = min(2, max(1, _resolve_article_count(articles_text, article_count)))
 
     static_prompt = f"""Analyzuj tyto herní články z dnešního dne a vytvoř report pro českého herního blogera.
 
@@ -293,19 +334,10 @@ def analyze_articles_structured(articles_text: str) -> Optional[dict]:
 1. Identifikuj TOP {max_topics} nejvíce relevantních témat pro český herní blog (PŘESNĚ {max_topics})
 2. Pro každé téma navrhni konkrétní článek, který by mohl napsat
 3. Poskytni dostatek kontextu pro vytvoření grafických bannerů
+4. DŮLEŽITÉ: Každé téma MUSÍ mít vyplněné VŠECHNY sekce včetně KONTEXTU a ZDROJŮ. Nevytvářej prázdná témata!
 
 PRAVIDLA:
-- Zaměř se na témata zajímavá pro ČESKÉ publikum
-- Preferuj témata, která jsou AKTUÁLNÍ (dnes/tento týden)
-- Ignoruj témata starší než 3 dny (pokud nejsou viral)
-- Dej přednost news a analýzám před recenzemi
-- Pokud jsou tam oznámení nových her, dej jim prioritu
-- KONTEXT musí obsahovat konkrétní fakta a čísla, ne obecné fráze
-- V sources musíš uvést PLNÉ URL adresy (začínající https://) ze zdrojových článků
-- ZDROJE: Ke každému tématu přiřaď VŠECHNY relevantní URL ze vstupních článků, které se tématu týkají. MINIMUM 2 zdroje, ideálně 3+. Různé weby často píšou o stejném tématu — najdi je všechny!
-- FAKTICKÁ PŘESNOST: NIKDY nepřipisuj hře českou/slovenskou origin, pokud to není faktem
-- Počet témat musí být PŘESNĚ {max_topics}
-- STATUS TAG pravidla: "news" = běžná zpráva/oznámení, "update" = patch/aktualizace existující hry, "leak" = únik neoficiálních informací, "critical" = kritická/důležitá zpráva s velkým dopadem, "success" = prodejní rekord/milník/úspěch, "indie" = nezávislá hra, "review" = recenze, "trailer" = nový trailer/video, "rumor" = nepotvrzená spekulace, "info" = obecná informace/analýza, "finance" = finanční zpráva/akvizice/byznys, "tema" = tématický rozbor, "preview" = náhled/hands-on/preview. Defaultní je "news", ale snaž se vybrat co nejpřesnější tag.
+{_build_common_rules(max_topics)}
 
 Použij tool submit_analysis k odeslání výsledků."""
 
@@ -362,25 +394,8 @@ Použij tool submit_analysis k odeslání výsledků."""
         report_text = format_topics_as_report(topics)
 
         # Statistiky
-        _cr = getattr(message.usage, "cache_read_input_tokens", 0)
-        _cw = getattr(message.usage, "cache_creation_input_tokens", 0)
-        cache_read = _cr if isinstance(_cr, int) else 0
-        cache_write = _cw if isinstance(_cw, int) else 0
         log.info("✅ Strukturovaná analýza dokončena (%d témat)", len(topics))
-        log.info("   📊 Input tokeny: %d (cache read: %d, cache write: %d)",
-                 message.usage.input_tokens, cache_read, cache_write)
-        log.info("   📊 Output tokeny: %d", message.usage.output_tokens)
-
-        if "haiku" in config.ANALYSIS_MODEL.lower():
-            p_in, p_out, p_cr, p_cw = 1.00, 5.00, 0.10, 1.25
-        else:
-            p_in, p_out, p_cr, p_cw = 3.00, 15.00, 0.30, 3.75
-        cost_input = (message.usage.input_tokens / 1_000_000) * p_in
-        cost_output = (message.usage.output_tokens / 1_000_000) * p_out
-        cost_cache_read = (cache_read / 1_000_000) * p_cr
-        cost_cache_write = (cache_write / 1_000_000) * p_cw
-        total_cost = cost_input + cost_output + cost_cache_read + cost_cache_write
-        log.info("   💰 Odhadovaná cena: $%.4f", total_cost)
+        _log_usage_and_cost(message, config.ANALYSIS_MODEL)
 
         return {"text": report_text, "topics": topics}
 

@@ -47,12 +47,24 @@ def write_article_endpoint():
     if run_dir is None:
         return json_response({'error': 'Invalid run_id'}), 400
 
+    # Check-then-act v JEDNÉ lock sekci — rezervace běhu hned, jinak TOCTOU
+    # (dva souběžné requesty by oba prošly checkem a spustily dvě generování).
     with state.article_writer_lock:
         if state.article_writer_state['running']:
             return json_response({'error': 'Already generating'}), 409
+        state.article_writer_state = {
+            'running': True,
+            'result': None,
+            'error': None,
+        }
+
+    def _release():
+        with state.article_writer_lock:
+            state.article_writer_state['running'] = False
 
     report_path = os.path.join(run_dir, 'report.txt')
     if not os.path.exists(report_path):
+        _release()
         return json_response({'error': 'Report not found'}), 404
 
     try:
@@ -61,18 +73,13 @@ def write_article_endpoint():
 
         topics = parse_topics_from_report(report_text)
         if topic_index < 0 or topic_index >= len(topics):
+            _release()
             return json_response({'error': 'Invalid topic_index'}), 400
 
         topic = topics[topic_index]
     except Exception as e:
+        _release()
         return json_response({'error': str(e)}), 500
-
-    with state.article_writer_lock:
-        state.article_writer_state = {
-            'running': True,
-            'result': None,
-            'error': None,
-        }
 
     def generate():
         try:

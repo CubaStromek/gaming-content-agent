@@ -48,27 +48,33 @@ def generate_podcast_endpoint():
     if lang not in ['cs', 'en']:
         return json_response({'error': 'Invalid lang'}), 400
 
+    # Check-then-act v JEDNÉ lock sekci — rezervace běhu hned, jinak TOCTOU
+    # (dva souběžné requesty by oba prošly checkem a spustily dvě generování).
     with state.podcast_writer_lock:
         if state.podcast_writer_state['running']:
             return json_response({'error': 'Already generating podcast'}), 409
+        state.podcast_writer_state = {
+            'running': True,
+            'result': None,
+            'error': None,
+        }
+
+    def _release():
+        with state.podcast_writer_lock:
+            state.podcast_writer_state['running'] = False
 
     article_path = os.path.join(run_dir, f'article_{topic_index}_{lang}.html')
 
     if not os.path.exists(article_path):
+        _release()
         return json_response({'error': 'Article not found. Generate article first.'}), 404
 
     try:
         with open(article_path, 'r', encoding='utf-8') as f:
             article_html = f.read()
     except Exception as e:
+        _release()
         return json_response({'error': str(e)}), 500
-
-    with state.podcast_writer_lock:
-        state.podcast_writer_state = {
-            'running': True,
-            'result': None,
-            'error': None,
-        }
 
     def generate():
         try:

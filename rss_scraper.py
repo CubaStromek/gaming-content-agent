@@ -4,9 +4,11 @@ Stahuje nejnovější články z RSS feedů — async interně, sync API zvenku.
 """
 
 import asyncio
+import html
 import os
+import re
 from datetime import datetime
-from typing import List, Dict
+from typing import Dict, List, Tuple
 from urllib.parse import urlparse
 import json
 import csv
@@ -21,10 +23,25 @@ from logger import setup_logger
 
 log = setup_logger(__name__)
 
+_HTML_TAG_RE = re.compile(r'<[^>]+>')
+
 
 def _get_domain(url: str) -> str:
     """Extrahuje doménu z URL."""
     return urlparse(url).netloc
+
+
+def _strip_html(text: str) -> str:
+    """Odstraní HTML tagy a entity ze summary.
+
+    Volá se PŘED ořezem na SUMMARY_MAX_LENGTH — jinak by limit vyplnily
+    tagy místo obsahu a v každém Claude volání by se platilo za HTML balast.
+    """
+    if not text:
+        return ''
+    text = _HTML_TAG_RE.sub(' ', text)
+    text = html.unescape(text)
+    return ' '.join(text.split())
 
 
 async def _fetch_feed(
@@ -33,8 +50,13 @@ async def _fetch_feed(
     skip_urls: set,
     global_sem: asyncio.Semaphore,
     domain_sems: dict,
-) -> List[Dict]:
-    """Async stažení jednoho RSS feedu."""
+) -> Tuple[List[Dict], bool]:
+    """Async stažení jednoho RSS feedu.
+
+    Vrací (articles, success). SQLite zápisy feed-health se tady NEdělají —
+    coroutine by blokovala event loop; health se zapisuje dávkově až po
+    asyncio.gather (viz _record_feed_health).
+    """
     domain = _get_domain(feed_info['url'])
     if domain not in domain_sems:
         domain_sems[domain] = asyncio.Semaphore(config.MAX_CONCURRENT_PER_DOMAIN)
@@ -52,20 +74,22 @@ async def _fetch_feed(
                     timeout=aiohttp.ClientTimeout(total=config.FEED_TIMEOUT),
                     headers={'User-Agent': 'Mozilla/5.0 (compatible; GamefoBot/1.0)'},
                 ) as resp:
+                    if resp.status != 200:
+                        raise aiohttp.ClientResponseError(
+                            resp.request_info, resp.history,
+                            status=resp.status,
+                            message=f"HTTP {resp.status}",
+                            headers=resp.headers,
+                        )
                     content = await resp.read()
 
                 # feedparser.parse() je CPU-bound — spustíme v executoru
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 feed = await loop.run_in_executor(None, feedparser.parse, content)
 
                 if feed.bozo and not feed.entries:
                     log.warning("  Chyba při parsování %s: %s", feed_info['name'], feed.bozo_exception)
-                    exceeded = feed_health.record_failure(feed_info['name'])
-                    if exceeded:
-                        log.warning("  %s: %d+ po sobě jdoucích selhání -> auto-deaktivace",
-                                    feed_info['name'], feed_health.MAX_CONSECUTIVE_FAILURES)
-                        feed_manager.auto_disable_feed(feed_info['name'])
-                    return articles
+                    return articles, False
 
                 for entry in feed.entries[:config.MAX_ARTICLES_PER_SOURCE]:
                     link = entry.get('link', '')
@@ -73,47 +97,50 @@ async def _fetch_feed(
                         skipped += 1
                         continue
 
-                    article = {
+                    # Strip HTML PŘED ořezem — jinak limit vyplní tagy místo obsahu
+                    summary = _strip_html(entry.get('summary', ''))
+                    if len(summary) > config.SUMMARY_MAX_LENGTH:
+                        summary = summary[:config.SUMMARY_MAX_LENGTH] + '...'
+
+                    articles.append({
                         'source': feed_info['name'],
                         'language': feed_info['lang'],
                         'title': entry.get('title', 'Bez názvu'),
                         'link': link,
-                        'summary': entry.get('summary', ''),
+                        'summary': summary,
                         'published': entry.get('published', ''),
-                    }
-
-                    if len(article['summary']) > config.SUMMARY_MAX_LENGTH:
-                        article['summary'] = article['summary'][:config.SUMMARY_MAX_LENGTH] + '...'
-
-                    articles.append(article)
-
-                feed_health.record_success(feed_info['name'])
+                    })
 
                 if skipped > 0:
                     log.info("  %s: %d nových (%d přeskočeno)", feed_info['name'], len(articles), skipped)
                 else:
                     log.info("  %s: %d článků", feed_info['name'], len(articles))
 
+                return articles, True
+
             except asyncio.TimeoutError:
                 log.error("  Timeout při stahování %s (%ds)", feed_info['name'], config.FEED_TIMEOUT)
-                exceeded = feed_health.record_failure(feed_info['name'])
-                if exceeded:
-                    log.warning("  %s: %d+ po sobě jdoucích selhání -> auto-deaktivace",
-                                feed_info['name'], feed_health.MAX_CONSECUTIVE_FAILURES)
-                    feed_manager.auto_disable_feed(feed_info['name'])
+                return articles, False
             except Exception as e:
                 log.error("  Chyba při stahování %s: %s", feed_info['name'], e)
-                exceeded = feed_health.record_failure(feed_info['name'])
-                if exceeded:
-                    log.warning("  %s: %d+ po sobě jdoucích selhání -> auto-deaktivace",
-                                feed_info['name'], feed_health.MAX_CONSECUTIVE_FAILURES)
-                    feed_manager.auto_disable_feed(feed_info['name'])
-
-    return articles
+                return articles, False
 
 
-async def _scrape_all_feeds_async(skip_urls: set = None) -> List[Dict]:
-    """Async stažení všech feedů paralelně."""
+def _record_feed_health(feed_info: Dict, success: bool) -> None:
+    """Zapíše výsledek stažení do feed_health (sync SQLite, mimo event loop)."""
+    if success:
+        feed_health.record_success(feed_info['name'])
+        return
+
+    exceeded = feed_health.record_failure(feed_info['name'])
+    if exceeded:
+        log.warning("  %s: %d+ po sobě jdoucích selhání -> auto-deaktivace",
+                    feed_info['name'], feed_health.MAX_CONSECUTIVE_FAILURES)
+        feed_manager.auto_disable_feed(feed_info['name'], feed_url=feed_info.get('url'))
+
+
+async def _scrape_all_feeds_async(skip_urls: set = None) -> Tuple[List[Dict], List[Tuple[List[Dict], bool]]]:
+    """Async stažení všech feedů paralelně. Vrací (feeds, results per feed)."""
     skip_urls = skip_urls or set()
     global_sem = asyncio.Semaphore(config.MAX_CONCURRENT_FEEDS)
     domain_sems = {}
@@ -127,11 +154,7 @@ async def _scrape_all_feeds_async(skip_urls: set = None) -> List[Dict]:
         ]
         results = await asyncio.gather(*tasks)
 
-    all_articles = []
-    for articles in results:
-        all_articles.extend(articles)
-
-    return all_articles
+    return feeds, results
 
 
 def scrape_rss_feed(feed_info: Dict, skip_urls: set = None) -> List[Dict]:
@@ -153,7 +176,9 @@ def scrape_rss_feed(feed_info: Dict, skip_urls: set = None) -> List[Dict]:
         async with aiohttp.ClientSession() as session:
             return await _fetch_feed(session, feed_info, skip_urls, global_sem, domain_sems)
 
-    return asyncio.run(_single())
+    articles, success = asyncio.run(_single())
+    _record_feed_health(feed_info, success)
+    return articles
 
 
 def scrape_all_feeds(skip_urls: set = None) -> List[Dict]:
@@ -168,7 +193,14 @@ def scrape_all_feeds(skip_urls: set = None) -> List[Dict]:
     """
     log.info("Stahuji články z herních webů...")
 
-    all_articles = asyncio.run(_scrape_all_feeds_async(skip_urls))
+    feeds, results = asyncio.run(_scrape_all_feeds_async(skip_urls))
+
+    # Dávkový zápis feed-health až po dokončení všech coroutines —
+    # blokující SQLite zápisy nepatří dovnitř event loopu.
+    all_articles = []
+    for feed_info, (articles, success) in zip(feeds, results):
+        _record_feed_health(feed_info, success)
+        all_articles.extend(articles)
 
     log.info("Celkem staženo: %d nových článků", len(all_articles))
     return all_articles

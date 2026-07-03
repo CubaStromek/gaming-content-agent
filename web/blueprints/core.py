@@ -9,7 +9,7 @@ import threading
 
 from flask import Blueprint, render_template
 
-from web.auth import require_auth
+from web.auth import require_auth, require_safe_origin
 from web.helpers import (
     json_response, output_lock, output_lines,
 )
@@ -29,28 +29,13 @@ def _strip_log_prefix(line: str) -> str:
     return _LOG_PREFIX_RE.sub('', line)
 
 
-def _rate_limit(limit_string):
-    """Rate limit dekorátor — no-op pokud flask-limiter není dostupný."""
-    try:
-        from flask import current_app
-        limiter = current_app.extensions.get('limiter')
-        if limiter:
-            return limiter.limit(limit_string)
-    except Exception:
-        pass
-    return lambda f: f
-
-
 def run_agent_process():
-    """Spustí main.py jako subprocess a zachytává výstup."""
-    state.run_success = False
+    """Spustí main.py jako subprocess a zachytává výstup.
 
-    with state.output_lock:
-        state.agent_running = True
-        state.output_lines.clear()
-        state.articles_count = 0
-        state.sources_count = 0
-
+    Pozn.: rezervaci stavu (agent_running=True, vyčištění output_lines)
+    provádí handler /start uvnitř locku — tady se stav jen průběžně plní
+    a ve finally uvolňuje.
+    """
     try:
         env = os.environ.copy()
         env['PYTHONUNBUFFERED'] = '1'
@@ -62,50 +47,37 @@ def run_agent_process():
             stderr=subprocess.STDOUT,
             cwd=BASE_DIR,
             env=env,
-            bufsize=0
         )
 
-        line_buffer = b''
-        while True:
-            byte = process.stdout.read(1)
-            if not byte:
-                break
+        for raw_line in process.stdout:
+            line = raw_line.decode('utf-8', errors='replace').rstrip()
+            if not line:
+                continue
 
-            if byte == b'\n':
-                try:
-                    line = line_buffer.decode('utf-8', errors='replace').rstrip()
-                except Exception:
-                    line = str(line_buffer)
+            clean_line = _strip_log_prefix(line)
+            with state.output_lock:
+                state.output_lines.append(clean_line)
 
-                if line:
-                    clean_line = _strip_log_prefix(line)
-                    with state.output_lock:
-                        state.output_lines.append(clean_line)
-
-                        if 'Analyzováno:' in line or 'Analyzovano:' in line:
-                            try:
-                                parts = line.replace('Analyzováno:', 'Analyzovano:').split('Analyzovano:')
-                                state.articles_count = int(parts[1].split()[0])
-                            except Exception:
-                                pass
-                        elif 'Zdroje:' in line:
-                            try:
-                                state.sources_count = int(line.split('Zdroje:')[1].split()[0])
-                            except Exception:
-                                pass
-                        elif 'Nalezeno' in line and 'článků' in line:
-                            try:
-                                parts = line.split()
-                                for i, part in enumerate(parts):
-                                    if part == 'Nalezeno':
-                                        state.articles_count = int(parts[i + 1])
-                                        break
-                            except Exception:
-                                pass
-
-                line_buffer = b''
-            else:
-                line_buffer += byte
+                if 'Analyzováno:' in line or 'Analyzovano:' in line:
+                    try:
+                        parts = line.replace('Analyzováno:', 'Analyzovano:').split('Analyzovano:')
+                        state.articles_count = int(parts[1].split()[0])
+                    except Exception:
+                        pass
+                elif 'Zdroje:' in line:
+                    try:
+                        state.sources_count = int(line.split('Zdroje:')[1].split()[0])
+                    except Exception:
+                        pass
+                elif 'Nalezeno' in line and 'článků' in line:
+                    try:
+                        parts = line.split()
+                        for i, part in enumerate(parts):
+                            if part == 'Nalezeno':
+                                state.articles_count = int(parts[i + 1])
+                                break
+                    except Exception:
+                        pass
 
         process.wait()
         state.run_success = (process.returncode == 0)
@@ -140,13 +112,22 @@ def healthcheck():
     })
 
 
-@core_bp.route('/start')
+@core_bp.route('/start', methods=['POST'])
+@require_safe_origin
 @require_auth
 def start():
+    # Check-then-act v JEDNÉ lock sekci: rezervujeme běh (agent_running=True)
+    # už tady, ne až ve spawnutém vlákně — jinak TOCTOU (dva souběžné /start
+    # by oba prošly checkem a spustily dva agenty).
     with state.output_lock:
         if state.agent_running:
             return json_response({'status': 'already_running'})
+        state.agent_running = True
+        state.output_lines.clear()
+        state.articles_count = 0
+        state.sources_count = 0
         state.sent_line_index = 0
+    state.run_success = False
 
     state.agent_thread = threading.Thread(target=run_agent_process)
     state.agent_thread.start()

@@ -37,12 +37,19 @@ def load_history() -> Dict:
         conn.close()
 
 
-def save_history(history: Dict) -> bool:
+def save_history(history: Dict, expiry_days: int = DEFAULT_EXPIRY_DAYS) -> bool:
     """
-    Uloží historii zpracovaných článků do SQLite.
+    Uloží historii zpracovaných článků do SQLite — INKREMENTÁLNĚ.
+
+    Dřívější implementace dělala DELETE celé tabulky + reinsert z paměťového
+    snapshotu — souběh dvou procesů (main.py + auto_publish.py) tak mohl ztratit
+    URL zapsané druhým procesem. Teď se jen:
+    - INSERT OR IGNORE nových URL (existující záznamy se nepřepisují),
+    - DELETE starých záznamů podle date_added < cutoff (expirace 30 dní).
 
     Args:
         history: Slovník s historií
+        expiry_days: Po kolika dnech mazat staré záznamy (default 30)
 
     Returns:
         True pokud úspěšně uloženo
@@ -51,14 +58,19 @@ def save_history(history: Dict) -> bool:
         now = datetime.now().isoformat()
         history["last_updated"] = now
 
+        cutoff = (datetime.now() - timedelta(days=expiry_days)).strftime("%Y-%m-%d")
+
         conn = get_db()
         try:
-            conn.execute("DELETE FROM processed_articles")
             for url, date_added in history.get("articles", {}).items():
                 conn.execute(
-                    "INSERT OR REPLACE INTO processed_articles (url, date_added) VALUES (?, ?)",
+                    "INSERT OR IGNORE INTO processed_articles (url, date_added) VALUES (?, ?)",
                     (url, date_added),
                 )
+            conn.execute(
+                "DELETE FROM processed_articles WHERE date_added < ?",
+                (cutoff,),
+            )
             conn.execute(
                 "INSERT OR REPLACE INTO meta (key, value) VALUES ('history_last_updated', ?)",
                 (now,),

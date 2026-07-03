@@ -93,3 +93,50 @@ class TestExtractStoryCards:
     def test_unbalanced_brackets_returns_none(self):
         text = 'STORY_CARDS CZ: [{"heading":"H","body":"B"'
         assert pp.extract_story_cards(text, 'CZ') is None
+
+
+class TestSanitizeArticleHtml:
+    """Allowlist sanitizace LLM výstupu před publikací do WP (prompt-injection obrana)."""
+
+    def test_drops_script_including_content(self):
+        out = pp.sanitize_article_html('<p>ok</p><script>alert(1)</script><p>dál</p>')
+        assert '<script' not in out and 'alert' not in out
+        assert '<p>ok</p>' in out and '<p>dál</p>' in out
+
+    def test_drops_iframe_including_content(self):
+        out = pp.sanitize_article_html('<iframe src="https://evil.com">x</iframe><p>text</p>')
+        assert 'iframe' not in out and 'evil.com' not in out
+
+    def test_strips_event_handlers_and_style(self):
+        out = pp.sanitize_article_html('<h2 onclick="x()" style="color:red">Nadpis</h2>')
+        assert out == '<h2>Nadpis</h2>'
+
+    def test_drops_javascript_href(self):
+        out = pp.sanitize_article_html('<a href="javascript:evil()">link</a>')
+        assert 'javascript' not in out
+        assert '>link</a>' in out
+
+    def test_keeps_https_link_with_target_rel(self):
+        out = pp.sanitize_article_html('<a href="https://ok.cz" target="_blank" rel="noopener">ok</a>')
+        assert 'href="https://ok.cz"' in out and 'target="_blank"' in out
+
+    def test_preserves_gutenberg_classes(self):
+        html = '<blockquote class="wp-block-quote"><p>Úvod</p></blockquote>'
+        out = pp.sanitize_article_html(html)
+        assert 'class="wp-block-quote"' in out
+
+    def test_unwraps_unknown_tags_keeps_text(self):
+        out = pp.sanitize_article_html('<article><p>text</p></article>')
+        assert out == '<p>text</p>'
+
+    def test_drops_comments(self):
+        out = pp.sanitize_article_html('<p>a</p><!-- wp:evil --><p>b</p>')
+        assert '<!--' not in out
+
+    def test_keeps_czech_diacritics_and_entities(self):
+        out = pp.sanitize_article_html('<p>Příliš žluťoučký &amp; kůň &#38; more</p>')
+        assert 'Příliš žluťoučký' in out
+        assert '&amp;' in out and '&#38;' in out
+
+    def test_empty_input_passthrough(self):
+        assert pp.sanitize_article_html('') == ''

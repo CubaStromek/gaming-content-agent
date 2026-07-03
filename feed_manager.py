@@ -6,6 +6,7 @@ CRUD operace + seed z config.RSS_FEEDS pri prvnim spusteni
 import json
 import os
 import re
+import tempfile
 from datetime import datetime
 
 import config
@@ -14,6 +15,14 @@ from logger import setup_logger
 log = setup_logger(__name__)
 
 FEEDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "custom_feeds.json")
+
+
+class FeedsFileError(RuntimeError):
+    """Soubor s feedy existuje, ale nejde načíst/parsovat.
+
+    Záměrně se NEpřepisuje defaulty — uživatelem spravovaný seznam feedů by se
+    tím nenávratně ztratil. Volající (pipeline, web API) musí selhat nahlas.
+    """
 
 
 def _generate_id(name):
@@ -33,16 +42,25 @@ def _ensure_unique_id(feed_id, existing_ids):
 
 
 def load_feeds():
-    """Nacte feedy z JSON. Pokud soubor neexistuje, vytvori ho z config.RSS_FEEDS."""
+    """Nacte feedy z JSON. Pokud soubor neexistuje, vytvori ho z config.RSS_FEEDS.
+
+    Pokud soubor existuje, ale nejde precist/parsovat, vyhodi FeedsFileError —
+    NIKDY soubor nesmi prepsat defaulty (ztrata uzivatelskych feedu). Volajici
+    (add_feed/update_feed/web API) pak selzou nahlas misto tiche ztraty dat.
+    """
     if os.path.exists(FEEDS_FILE):
         try:
             with open(FEEDS_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             return data.get("feeds", [])
-        except (json.JSONDecodeError, Exception) as e:
-            log.error("Chyba pri nacitani feedu: %s", e)
+        except (json.JSONDecodeError, OSError, ValueError) as e:
+            log.error("Chyba pri nacitani feedu z %s: %s", FEEDS_FILE, e)
+            raise FeedsFileError(
+                f"Soubor {FEEDS_FILE} existuje, ale nejde nacist: {e}. "
+                "Oprav ho rucne — nebude prepsan defaulty."
+            ) from e
 
-    # Seed z configu
+    # Seed z configu (jen kdyz soubor fyzicky neexistuje)
     feeds = []
     used_ids = set()
     for item in config.RSS_FEEDS:
@@ -62,18 +80,36 @@ def load_feeds():
 
 
 def save_feeds(feeds):
-    """Ulozi feedy do JSON souboru"""
+    """Ulozi feedy do JSON souboru atomicky (temp soubor + os.replace).
+
+    Zapisovat primo do FEEDS_FILE neni bezpecne — pad procesu uprostred zapisu
+    by nechal soubor zkraceny/nevalidni. os.replace() je na POSIX atomicky.
+    """
     data = {
         "last_updated": datetime.now().isoformat(),
         "feeds": feeds,
     }
+    tmp_path = None
     try:
-        with open(FEEDS_FILE, 'w', encoding='utf-8') as f:
+        fd, tmp_path = tempfile.mkstemp(
+            dir=os.path.dirname(FEEDS_FILE), prefix=".custom_feeds_", suffix=".tmp"
+        )
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, FEEDS_FILE)
+        tmp_path = None
         return True
     except Exception as e:
         log.error("Chyba pri ukladani feedu: %s", e)
         return False
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
 
 def get_enabled_feeds():
@@ -160,18 +196,35 @@ def update_feed(feed_id, **kwargs):
     return target, None
 
 
-def auto_disable_feed(feed_name):
-    """Automaticky deaktivuje feed podle jména (volá feed_health)."""
+def auto_disable_feed(feed_name, feed_url=None):
+    """Automaticky deaktivuje feed (volá feed_health po opakovaných selháních).
+
+    Matchuje primárně podle URL (unikátní klíč), fallback podle jména
+    (zpětná kompatibilita pro volající, kteří URL nepředají).
+    """
     feeds = load_feeds()
-    for f in feeds:
-        if f["name"] == feed_name:
-            if f.get("enabled", True):
-                f["enabled"] = False
-                f["auto_disabled"] = True
-                save_feeds(feeds)
-                log.info("🚫 Feed '%s' automaticky deaktivován (opakovaná selhání)", feed_name)
-            return True
-    return False
+
+    target = None
+    if feed_url:
+        for f in feeds:
+            if f.get("url") == feed_url:
+                target = f
+                break
+    if target is None:
+        for f in feeds:
+            if f.get("name") == feed_name:
+                target = f
+                break
+
+    if target is None:
+        return False
+
+    if target.get("enabled", True):
+        target["enabled"] = False
+        target["auto_disabled"] = True
+        save_feeds(feeds)
+        log.info("🚫 Feed '%s' automaticky deaktivován (opakovaná selhání)", target.get("name", feed_name))
+    return True
 
 
 def delete_feed(feed_id):

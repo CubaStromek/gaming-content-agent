@@ -6,6 +6,13 @@ Fáze 1: Nahrazení regex parsování strukturovanými výstupy (tool_use).
 from pydantic import BaseModel, Field
 from typing import List
 
+# Jediný zdroj pravdy pro povolené status tagy (WP meta gameinfo_status_tag).
+# Používá article_writer, publish_pipeline i claude_analyzer.
+VALID_STATUS_TAGS = frozenset({
+    'news', 'update', 'leak', 'critical', 'success', 'indie', 'review',
+    'trailer', 'rumor', 'info', 'finance', 'tema', 'preview',
+})
+
 
 class Topic(BaseModel):
     """Jedno téma z analýzy herních článků."""

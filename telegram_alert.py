@@ -7,13 +7,12 @@ nepublikovatelné články a uživatel ví, že má zapnout VPN.
 
 Best-effort: alert nikdy nesmí shodit pipeline — všechny chyby se jen zalogují.
 """
-import logging
-
 import requests
 
 import config
+from logger import setup_logger
 
-log = logging.getLogger("gaming-agent")
+log = setup_logger(__name__)
 
 
 def send_alert(text: str) -> bool:
@@ -40,6 +39,8 @@ def send_alert(text: str) -> bool:
             return True
         log.warning("Telegram alert selhal: HTTP %s %s", resp.status_code, resp.text[:200])
         return False
-    except Exception:
-        log.exception("Telegram alert selhal (síťová chyba)")
+    except Exception as e:
+        # Záměrně bez tracebacku — request URL obsahuje bot token,
+        # stačí typ výjimky (sanitizace v loggeru je jen druhá pojistka).
+        log.warning("Telegram alert selhal (síťová chyba): %s", type(e).__name__)
         return False

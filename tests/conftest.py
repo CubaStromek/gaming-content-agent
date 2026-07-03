@@ -131,11 +131,52 @@ https://pcgamer.com/palworld
 
 @pytest.fixture
 def app_client(tmp_path):
-    """Flask test client with temp DB."""
+    """Flask test client s temp DB, temp OUTPUT_DIR a zamockovaným agentem.
+
+    DŮLEŽITÉ: run_agent_process je VŽDY zamockovaný — testy NIKDY nesmí
+    spustit reálný main.py (utrácel by API tokeny). OUTPUT_DIR je přesměrován
+    do tmp_path, takže testy nezávisí na reálném output/ adresáři.
+    """
     import database
+    import web.helpers as web_state
+    from web.blueprints import core as core_module
+    from web.blueprints import history as history_module
+    from web.blueprints import articles as articles_module
+    from web.blueprints import podcasts as podcasts_module
+    from web.blueprints import decisions as decisions_module
+
     db_path = str(tmp_path / 'test_web.db')
     database.init_db(db_path)
-    with patch.object(database, 'DB_PATH', db_path):
+
+    output_dir = os.path.realpath(str(tmp_path / 'output'))
+    os.makedirs(output_dir, exist_ok=True)
+
+    def fake_run_agent_process():
+        """Náhrada za spuštění main.py — okamžitě 'doběhne'."""
+        with web_state.output_lock:
+            web_state.output_lines.append('FAKE RUN (test) - main.py se nespoustí')
+            web_state.run_success = True
+            web_state.agent_running = False
+
+    # Reset sdíleného modulového stavu (web.helpers je globální napříč testy)
+    with web_state.output_lock:
+        web_state.agent_running = False
+        web_state.output_lines.clear()
+        web_state.articles_count = 0
+        web_state.sources_count = 0
+        web_state.sent_line_index = 0
+        web_state.run_success = False
+    with web_state.article_writer_lock:
+        web_state.article_writer_state = {'running': False, 'result': None, 'error': None}
+    with web_state.podcast_writer_lock:
+        web_state.podcast_writer_state = {'running': False, 'result': None, 'error': None}
+
+    with patch.object(database, 'DB_PATH', db_path), \
+         patch.object(core_module, 'run_agent_process', fake_run_agent_process), \
+         patch.object(history_module, 'OUTPUT_DIR', output_dir), \
+         patch.object(articles_module, 'OUTPUT_DIR', output_dir), \
+         patch.object(podcasts_module, 'OUTPUT_DIR', output_dir), \
+         patch.object(decisions_module, 'OUTPUT_DIR', output_dir):
         from web_app import app
         app.config['TESTING'] = True
         with app.test_client() as client:

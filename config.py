@@ -12,6 +12,22 @@ log = setup_logger(__name__)
 # Načti .env soubor
 load_dotenv()
 
+
+def _env_int(name: str, default: int) -> int:
+    """Bezpečné načtení int hodnoty z env.
+
+    Překlep v .env (např. SMTP_PORT=58x7) nesmí shodit import celého modulu —
+    zaloguje warning a vrátí default.
+    """
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError:
+        log.warning("⚠️  Neplatná hodnota %s=%r v .env — používám default %d", name, raw, default)
+        return default
+
 # Claude API
 CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")
 
@@ -21,7 +37,7 @@ EMAIL_FROM = os.getenv("EMAIL_FROM", "content-agent@gaming.cz")
 
 # SMTP nastavení
 SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_PORT = _env_int("SMTP_PORT", 587)
 SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 
@@ -62,11 +78,11 @@ THREADS_ACCESS_TOKEN = os.getenv("THREADS_ACCESS_TOKEN", "")
 SOCIAL_DRY_RUN = os.getenv("SOCIAL_DRY_RUN", "").lower() in ("1", "true", "yes")
 
 # Denní limit social media postů (ochrana proti banu za spam)
-SOCIAL_DAILY_LIMIT = int(os.getenv("SOCIAL_DAILY_LIMIT", "3"))
+SOCIAL_DAILY_LIMIT = _env_int("SOCIAL_DAILY_LIMIT", 3)
 
 # Náhodný delay před social postem (sekundy) — aby to nevypadalo jako bot
-SOCIAL_DELAY_MIN = int(os.getenv("SOCIAL_DELAY_MIN", "60"))
-SOCIAL_DELAY_MAX = int(os.getenv("SOCIAL_DELAY_MAX", "300"))
+SOCIAL_DELAY_MIN = _env_int("SOCIAL_DELAY_MIN", 60)
+SOCIAL_DELAY_MAX = _env_int("SOCIAL_DELAY_MAX", 300)
 
 def is_wp_configured():
     return bool(WP_URL and WP_USER and WP_APP_PASSWORD)
@@ -86,8 +102,8 @@ def is_threads_configured():
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'gamefo.db')
 
 # Nastavení agenta
-MAX_ARTICLES_PER_SOURCE = int(os.getenv("MAX_ARTICLES_PER_SOURCE", "10"))
-MIN_VIRALITY_SCORE = int(os.getenv("MIN_VIRALITY_SCORE", "50"))
+MAX_ARTICLES_PER_SOURCE = _env_int("MAX_ARTICLES_PER_SOURCE", 10)
+MIN_VIRALITY_SCORE = _env_int("MIN_VIRALITY_SCORE", 50)
 
 # Model pro generování článků
 ARTICLE_MODEL = "claude-sonnet-4-6"
@@ -101,12 +117,12 @@ ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "claude-haiku-4-5-20251001")
 DEDUP_MODEL = os.getenv("DEDUP_MODEL", "claude-haiku-4-5-20251001")
 
 # Maximální délka summary při scrapování RSS (znaky)
-SUMMARY_MAX_LENGTH = int(os.getenv("SUMMARY_MAX_LENGTH", "500"))
+SUMMARY_MAX_LENGTH = _env_int("SUMMARY_MAX_LENGTH", 500)
 
 # Async RSS scraping
-FEED_TIMEOUT = int(os.getenv("FEED_TIMEOUT", "15"))
-MAX_CONCURRENT_FEEDS = int(os.getenv("MAX_CONCURRENT_FEEDS", "8"))
-MAX_CONCURRENT_PER_DOMAIN = int(os.getenv("MAX_CONCURRENT_PER_DOMAIN", "2"))
+FEED_TIMEOUT = _env_int("FEED_TIMEOUT", 15)
+MAX_CONCURRENT_FEEDS = _env_int("MAX_CONCURRENT_FEEDS", 8)
+MAX_CONCURRENT_PER_DOMAIN = _env_int("MAX_CONCURRENT_PER_DOMAIN", 2)
 
 # Dashboard autentizace (volitelný bearer token, POVINNÝ v produkci)
 DASHBOARD_TOKEN = os.getenv("DASHBOARD_TOKEN", "")

@@ -10,7 +10,8 @@ SEO přínos: lepší crawlovatelnost, distribuce autority, delší čas na webu
 """
 
 import re
-from typing import Optional, List
+from html import escape as html_escape
+from typing import Optional, List, Dict
 import requests
 import config
 from logger import setup_logger
@@ -52,6 +53,24 @@ def get_tag_details(tag_name: str, lang: str = 'cs') -> Optional[dict]:
         log.warning("get_tag_details selhalo pro '%s': %s", tag_name, e)
 
     return None
+
+
+def fetch_tag_details_map(tag_names: list, lang: str = 'cs') -> Dict[str, dict]:
+    """
+    Stáhne detaily všech tagů jedním průchodem (1 API call na tag).
+    Vrací dict {tag_name: {'id', 'slug', 'name'}} — jen pro nalezené tagy.
+    Sdílí se mezi inject_tag_links a related-posts logikou, aby se
+    get_tag_details nevolalo 2x na každý tag.
+    """
+    details_map: Dict[str, dict] = {}
+    for tn in tag_names or []:
+        tn = (tn or '').strip()
+        if not tn or tn in details_map:
+            continue
+        d = get_tag_details(tn, lang=lang)
+        if d:
+            details_map[tn] = d
+    return details_map
 
 
 def _build_tag_url(slug: str, lang: str = 'cs') -> str:
@@ -100,16 +119,21 @@ def _replace_first_outside_tags(html: str, needle: str, replacement: str):
     return (html, False)
 
 
-def inject_tag_links(html: str, tag_names: list, lang: str = 'cs', max_links: int = 5) -> str:
+def inject_tag_links(html: str, tag_names: list, lang: str = 'cs', max_links: int = 5,
+                     tag_details: Optional[Dict[str, dict]] = None) -> str:
     """
     Pro každý tag najde první výskyt v článku a obalí ho <a> linkem na tag archive.
     Maximálně `max_links` linků na článek (prevence over-optimization).
+
+    `tag_details` = volitelná předpřipravená mapa z fetch_tag_details_map()
+    (šetří API cally); pokud chybí, stáhne se zde.
     """
     if not html or not tag_names:
         return html
 
     linked = 0
-    tag_details_cache = {}
+    if tag_details is None:
+        tag_details = fetch_tag_details_map(tag_names, lang=lang)
 
     # Seřadit tagy od nejdelších — delší match bere prednost (např. "GTA 6" před "GTA")
     sorted_tags = sorted([t.strip() for t in tag_names if t and t.strip()], key=len, reverse=True)
@@ -118,10 +142,9 @@ def inject_tag_links(html: str, tag_names: list, lang: str = 'cs', max_links: in
         if linked >= max_links:
             break
 
-        details = tag_details_cache.get(tag_name) or get_tag_details(tag_name, lang=lang)
+        details = tag_details.get(tag_name)
         if not details:
             continue
-        tag_details_cache[tag_name] = details
 
         url = _build_tag_url(details['slug'], lang=lang)
         replacement = f'<a href="{url}">{{MATCH}}</a>'
@@ -203,7 +226,9 @@ def build_related_section(related_posts: list, lang: str = 'cs') -> str:
         img = ''
         if p.get('featured_media_url'):
             # Use article title as alt (each related article has unique title → unique alt).
-            img = f'<img src="{p["featured_media_url"]}" alt="{title}" loading="lazy" style="max-width:120px;height:auto;margin-right:12px;vertical-align:middle;"/>'
+            # Escape — title may contain quotes/angle brackets that would break the attribute.
+            alt = html_escape(title, quote=True)
+            img = f'<img src="{p["featured_media_url"]}" alt="{alt}" loading="lazy" style="max-width:120px;height:auto;margin-right:12px;vertical-align:middle;"/>'
         items.append(
             f'<li style="margin-bottom:12px;">'
             f'<a href="{p["url"]}" style="text-decoration:none;display:flex;align-items:center;">'
@@ -232,15 +257,14 @@ def enrich_with_internal_links(html: str, tag_names: list, lang: str = 'cs', exc
     if not html:
         return html
 
+    # Detaily tagů stáhneme JEDNOU a sdílíme pro oba kroky
+    tag_details = fetch_tag_details_map(tag_names, lang=lang)
+
     # 1) Inline tag linky
-    html = inject_tag_links(html, tag_names, lang=lang)
+    html = inject_tag_links(html, tag_names, lang=lang, tag_details=tag_details)
 
     # 2) Related articles (potřebujeme tag IDs)
-    tag_ids = []
-    for tn in tag_names:
-        d = get_tag_details(tn, lang=lang)
-        if d:
-            tag_ids.append(d['id'])
+    tag_ids = [d['id'] for d in tag_details.values()]
 
     if tag_ids:
         related = find_related_posts(tag_ids, exclude_id=exclude_post_id, lang=lang, limit=3)

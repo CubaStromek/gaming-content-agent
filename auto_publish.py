@@ -4,14 +4,9 @@ Automaticky stahne RSS, analyzuje, napise clanky a publikuje na GAMEfo.cz
 Spousteno 5x denne pres launchd (8:00, 11:00, 14:00, 17:00, 20:00)
 """
 
-import contextlib
-import fcntl
-import json
 import os
-import re
 import sys
 import time
-import requests
 from datetime import datetime
 
 # Zajisti spravny working directory (dulezite pro launchd)
@@ -25,89 +20,22 @@ import article_history
 import file_manager
 import wp_publisher
 import publish_log
-import youtube_embed
-import section_images
-import social_poster
-import brand_logos
+import publish_pipeline
 import topic_dedup
-import internal_linking
 import telegram_alert
 from logger import setup_logger
-from fb_generator.generate_fb_post import generate_fb_post
 
 log = setup_logger('auto_publish')
 
+# Zpětně kompatibilní aliasy — logika žije v publish_pipeline (sdílená
+# s manual_article.py).
+_publish_lock = publish_pipeline.publish_lock
+search_rawg_image = publish_pipeline.search_rawg_image
+_extract_excerpt = publish_pipeline.extract_excerpt
 
-_LOCK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', '.publish.lock')
-
-
-@contextlib.contextmanager
-def _publish_lock():
-    """Exclusivní lock — pokud je drží jiný proces, exit 0 + log.
-
-    Chrání před souběhem launchd slotu s manuálním spuštěním (`python main.py`)
-    nebo pomalým slotem překrývajícím další.
-    """
-    os.makedirs(os.path.dirname(_LOCK_PATH), exist_ok=True)
-    fp = open(_LOCK_PATH, 'w')
-    try:
-        try:
-            fcntl.flock(fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            log.info("Auto-publish lock drží jiný proces, končím (exit 0)")
-            fp.close()
-            sys.exit(0)
-        fp.write(f"{os.getpid()}\n")
-        fp.flush()
-        yield
-    finally:
-        try:
-            fcntl.flock(fp.fileno(), fcntl.LOCK_UN)
-        except Exception:
-            pass
-        fp.close()
-
-
-def search_rawg_image(game_name):
-    """Vyhleda obrazek hry na RAWG.io. Vraci URL nebo None."""
-    if not config.RAWG_API_KEY:
-        return None
-
-    try:
-        resp = requests.get(
-            'https://api.rawg.io/api/games',
-            params={'key': config.RAWG_API_KEY, 'search': game_name, 'page_size': 1},
-            timeout=10,
-        )
-        if resp.status_code != 200:
-            return None
-
-        results = resp.json().get('results', [])
-        if results and results[0].get('background_image'):
-            return results[0]['background_image']
-    except Exception as e:
-        log.warning("RAWG search error for '%s': %s", game_name, e)
-
-    return None
-
-
-def _extract_excerpt(html_content, max_len=200):
-    """Vyextrahuje první odstavec z HTML a ořízne na max délku."""
-    from bs4 import BeautifulSoup
-    soup = BeautifulSoup(html_content, 'html.parser')
-    # Najdi první <p> s textem
-    for p in soup.find_all('p'):
-        text = p.get_text(strip=True)
-        if len(text) > 30:  # přeskoč krátké úvodní řádky
-            if len(text) > max_len:
-                # Ořízni na celé slovo
-                truncated = text[:max_len]
-                last_space = truncated.rfind(' ')
-                if last_space > max_len // 2:
-                    truncated = truncated[:last_space]
-                return truncated + '…'
-            return text
-    return ''
+# Pojistka proti neposlušnému modelu: prompt říká max 2 témata, ale smyčka
+# dřív iterovala přes vše, co model vrátil (= placené generování navíc).
+MAX_TOPICS_PER_RUN = 3
 
 
 def _pick_topics(articles, run_dir, run_id):
@@ -129,7 +57,7 @@ def _pick_topics(articles, run_dir, run_id):
     topics = None
 
     for attempt in range(1, MAX_ANALYSIS_RETRIES + 1):
-        structured = claude_analyzer.analyze_articles_structured(articles_text)
+        structured = claude_analyzer.analyze_articles_structured(articles_text, article_count=len(articles))
         if structured:
             analysis = structured["text"]
             topics = structured["topics"]
@@ -194,6 +122,10 @@ def _pick_topics(articles, run_dir, run_id):
     if not topics:
         log.info("Všechna témata jsou duplicitní. Končím.")
         return None
+
+    if len(topics) > MAX_TOPICS_PER_RUN:
+        log.warning("Model vrátil %d témat, ořezávám na %d", len(topics), MAX_TOPICS_PER_RUN)
+        topics = topics[:MAX_TOPICS_PER_RUN]
 
     log.info("Po deduplikaci: %d témat k publikaci", len(topics))
     return topics
@@ -306,6 +238,7 @@ def run():
 
     # 5. Etapa „produce_articles + publish_and_promote": pro každé téma napsat + publikovat
     published_count = 0
+    aborted_mid_run = False
     for i, topic in enumerate(topics, 1):
         topic_name = topic.get('topic', 'Neznámé')
         title = topic.get('title', topic_name)
@@ -338,6 +271,7 @@ def run():
                 "(Starlink IP je na Webglobe blacklistu).\n"
                 "➡️ Zapni VPN; další běh proběhne v plánovaný čas."
             )
+            aborted_mid_run = True
             break
 
         source_texts, source_urls, failed_sources = _collect_source_texts(topic, articles)
@@ -377,40 +311,6 @@ def run():
 
         log.info("Clanek vygenerovan (%s)", article.get('cost', '?'))
 
-        # YouTube embed (pokud kterakoliv verze zminuje video/trailer)
-        # Video se hleda jednou a vlozi do obou verzi — CZ ctenari umi anglicky
-        game_name_raw = topic.get('game_name', '')
-        game_name = game_name_raw if (game_name_raw and game_name_raw != 'N/A') else topic_name
-
-        cs_has_video = youtube_embed.has_video_reference(article['cs'], lang='cs')
-        en_has_video = article.get('en') and youtube_embed.has_video_reference(article['en'], lang='en')
-
-        if cs_has_video or en_has_video:
-            query = f"{game_name} official trailer 2026"
-            log.info("Hledám YouTube video: %s", query)
-            videos = youtube_embed.search_youtube(query)
-            if videos:
-                video = videos[0]
-                log.info("Nalezeno video: %s (%s)", video['title'], video['url'])
-                video_id = video['id']
-                # Vloz do CS — bud normalne (ma keyword) nebo force (EN trigger)
-                if cs_has_video:
-                    article['cs'] = youtube_embed.embed_youtube_in_html(article['cs'], game_name, lang='cs')
-                else:
-                    log.info("CS článek nemá video keyword, vkládám embed z EN detekce")
-                    article['cs'] = youtube_embed.force_embed_youtube(article['cs'], video_id, lang='cs')
-                # Vloz do EN
-                if article.get('en'):
-                    if en_has_video:
-                        article['en'] = youtube_embed.embed_youtube_in_html(article['en'], game_name, lang='en')
-                    else:
-                        log.info("EN článek nemá video keyword, vkládám embed z CS detekce")
-                        article['en'] = youtube_embed.force_embed_youtube(article['en'], video_id, lang='en')
-            else:
-                log.warning("YouTube video nenalezeno pro: %s", query)
-        else:
-            log.info("Žádná zmínka o videu v článku, přeskakuji YouTube embed")
-
         # Rychlý test dostupnosti WP před jakýmkoliv odesíláním
         if not wp_publisher.check_wp_available():
             log.error("WP nedostupný — přeskakuji článek '%s' (prevence Fail2Ban)", topic_name)
@@ -423,266 +323,43 @@ def run():
             })
             continue
 
-        # Brand-first: kdyz je tema samotna platforma/firma (Steam, PlayStation,
-        # Xbox...), RAWG by vratil nahodnou hru — pouzij rovnou brand logo
-        # a RAWG (featured i Story Mode screenshoty) preskoc.
-        featured_image_id = brand_logos.resolve_brand_logo_strict(game_name)
-        section_images_meta = None
-        if featured_image_id:
-            log.info("Brand tema '%s' → brand logo (ID: %d), RAWG preskocen",
-                     game_name, featured_image_id)
-        else:
-            # RAWG screenshoty → WP meta pro Story Mode v appce (ne inline v HTML)
-            # Nejdřív hledá existující ve WP, fallback na RAWG API + upload
-            section_images_meta = section_images.get_or_fetch_screenshots(game_name)
-
-            # Hledani featured image pres RAWG (pouzij cisty nazev hry)
-            image_url = search_rawg_image(game_name)
-            if image_url:
-                log.info("RAWG image nalezen, uploaduji...")
-                media_id, _, err = wp_publisher.upload_media(image_url, title=title)
-                if media_id:
-                    featured_image_id = media_id
-                    log.info("Featured image uploaded (ID: %d)", media_id)
-                else:
-                    log.warning("Upload image selhal: %s", err)
-
-            # Fallback: pokud RAWG nedodal nic, zkus brand logo (PlayStation, Xbox, ...)
-            if not featured_image_id:
-                brand_logo_id = brand_logos.resolve_brand_logo(game_name, title)
-                if brand_logo_id:
-                    featured_image_id = brand_logo_id
-                    log.info("RAWG nenasel image, pouzivam brand logo (ID: %d)", brand_logo_id)
-
-        # SEO keywords jako tagy
-        seo_keywords = topic.get('seo_keywords', '')
-        tag_names = [kw.strip() for kw in seo_keywords.split(',') if kw.strip()] if seo_keywords else None
-
-        # Status tag z Claude analýzy (dynamický místo hardcoded 'news')
-        valid_status_tags = {'news', 'update', 'leak', 'critical', 'success', 'indie', 'review', 'trailer', 'rumor', 'info', 'finance', 'tema', 'preview'}
-        raw_status_tag = topic.get('status_tag', 'news').lower().strip()
-        status_tag = raw_status_tag if raw_status_tag in valid_status_tags else 'news'
-        log.info("Status tag: '%s'", status_tag)
-
-        # Informace o zdroji pro WP meta pole
-        source_info = '\n'.join(source_urls) if source_urls else None
-
-        # Rank Math focus keyword — krátké 1-2 slova (přesná shoda v titulku zvedá score)
-        focus_kw = article.get('focus_keyword_cs')
-        if focus_kw and len(focus_kw.split()) > 2:
-            log.info("AI vrátilo dlouhý keyword '%s' (%d slov) → fallback na game_name", focus_kw, len(focus_kw.split()))
-            focus_kw = None
-        if focus_kw:
-            log.info("Focus keyword (AI): '%s'", focus_kw)
-        else:
-            focus_kw = game_name if game_name and game_name != 'N/A' else None
-            if focus_kw:
-                focus_kw = re.sub(r'\s+(\d+|[IVXLCDM]+)$', '', focus_kw).strip()
-                if focus_kw.lower() not in title.lower():
-                    log.info("Fallback focus keyword '%s' není v CZ titulku, přeskakuji", focus_kw)
-                    focus_kw = None
-                else:
-                    log.info("Focus keyword (fallback game_name): '%s'", focus_kw)
-
-        # Publikace CZ verze
-        log.info("Publikuji CZ verzi...")
-        cs_content = wp_publisher.strip_first_heading(article['cs'])
-        if tag_names:
-            cs_content = internal_linking.enrich_with_internal_links(cs_content, tag_names, lang='cs')
-
-        story_cards_cs_json = json.dumps(article['story_cards_cs'], ensure_ascii=False) if article.get('story_cards_cs') else None
-        story_cards_en_json = json.dumps(article['story_cards_en'], ensure_ascii=False) if article.get('story_cards_en') else None
-
-        cs_result, cs_err = wp_publisher.create_draft(
+        # Sdílená publish pipeline: YouTube embed, featured image, WP CZ+EN,
+        # FB obrázky, social media, publish_log
+        result, publish_err = publish_pipeline.publish_article(
+            topic=topic,
+            article=article,
             title=title,
-            content=cs_content,
-            category_ids=[9],  # Zprávy
-            tag_names=tag_names,
-            lang='cs',
-            featured_image_id=featured_image_id,
-            status_tag=status_tag,
-            source_info=source_info,
-            status='publish',
-            focus_keyword=focus_kw,
-            section_images=section_images_meta,
-            meta_description=article.get('meta_description_cs'),
-            story_cards=story_cards_cs_json,
+            run_id=run_id,
+            source='auto',
+            source_urls=source_urls,
+            extra_log={'failed_sources': failed_sources},
         )
 
-        if cs_err:
-            log.error("CZ publish selhal: %s", cs_err)
+        if publish_err:
+            log.error("CZ publish selhal: %s", publish_err)
             publish_log.log_decision({
                 'action': 'skipped',
                 'reason': 'wp_error_cs',
                 'run_id': run_id,
                 'topic': topic_name,
                 'score': virality,
-                'error': cs_err,
+                'error': publish_err,
             })
             continue
 
-        log.info("CZ publikovan: %s", cs_result['view_url'])
-
-        # Publikace EN verze
-        en_result = None
-        en_title = None
-        if article.get('en'):
-            # Anglicky titulek z article_writer
-            en_title = article.get('en_title')
-            if not en_title:
-                en_title = topic.get('topic', title)
-                log.warning("EN titulek chybí v article_writer výstupu, fallback na CZ: %s", en_title)
-
-            log.info("Publikuji EN verzi...")
-            en_content = wp_publisher.strip_first_heading(article['en'])
-            if tag_names:
-                en_content = internal_linking.enrich_with_internal_links(en_content, tag_names, lang='en')
-            # Focus keyword pro EN — krátké 1-2 slova
-            en_focus_kw = article.get('focus_keyword_en')
-            if en_focus_kw and len(en_focus_kw.split()) > 2:
-                log.info("AI vrátilo dlouhý EN keyword '%s' (%d slov) → fallback na game_name", en_focus_kw, len(en_focus_kw.split()))
-                en_focus_kw = None
-            if en_focus_kw:
-                log.info("EN focus keyword (AI): '%s'", en_focus_kw)
-            else:
-                en_focus_kw = game_name if game_name and game_name != 'N/A' else None
-                if en_focus_kw:
-                    en_focus_kw = re.sub(r'\s+(\d+|[IVXLCDM]+)$', '', en_focus_kw).strip()
-                if en_focus_kw and en_focus_kw.lower() not in en_title.lower():
-                    log.info("EN fallback focus keyword '%s' není v EN titulku, přeskakuji", en_focus_kw)
-                    en_focus_kw = None
-            en_result, en_err = wp_publisher.create_draft(
-                title=en_title,
-                content=en_content,
-                category_ids=[12],  # News
-                tag_names=tag_names,
-                lang='en',
-                featured_image_id=featured_image_id,
-                status_tag=status_tag,
-                source_info=source_info,
-                status='publish',
-                focus_keyword=en_focus_kw,
-                section_images=section_images_meta,
-                meta_description=article.get('meta_description_en'),
-                story_cards=story_cards_en_json,
-            )
-
-            if en_err:
-                log.warning("EN publish selhal: %s", en_err)
-            else:
-                log.info("EN publikovan: %s", en_result['view_url'])
-
-                # Propojeni CZ <-> EN pres Polylang
-                link_ok, link_err = wp_publisher.link_translations(cs_result['id'], en_result['id'])
-                if link_ok:
-                    log.info("CZ/EN propojeni OK")
-                else:
-                    log.warning("Propojeni selhalo: %s", link_err)
-
-        # Generovani FB post obrazku (CZ + EN). Cleanup garantován i při výjimce.
-        if image_url:
-            local_thumb = f"/tmp/fb_thumb_{datetime.now().strftime('%H%M%S')}.jpg"
-            try:
-                thumb_resp = requests.get(image_url, timeout=15)
-                with open(local_thumb, 'wb') as f:
-                    f.write(thumb_resp.content)
-
-                safe_name = "".join(c if c.isalnum() or c in '-_ ' else '' for c in game_name).strip().replace(' ', '_')
-                date_str = datetime.now().strftime('%Y-%m-%d')
-
-                fb_output_cs = os.path.join(os.path.dirname(__file__), 'output', 'fb-posts', f'{date_str}_{safe_name}_CZ.png')
-                fb_path_cs = generate_fb_post(
-                    thumbnail_path=local_thumb,
-                    title=game_name,
-                    subtitle=title,
-                    output_path=fb_output_cs,
-                )
-                log.info("FB post obrazek CZ vygenerovan: %s", fb_path_cs)
-
-                if article.get('en') and en_title:
-                    fb_output_en = os.path.join(os.path.dirname(__file__), 'output', 'fb-posts', f'{date_str}_{safe_name}_EN.png')
-                    en_fb_title = game_name_raw if (game_name_raw and game_name_raw != 'N/A') else ''
-                    fb_path_en = generate_fb_post(
-                        thumbnail_path=local_thumb,
-                        title=en_fb_title,
-                        subtitle=en_title,
-                        output_path=fb_output_en,
-                    )
-                    log.info("FB post obrazek EN vygenerovan: %s", fb_path_en)
-            except Exception:
-                log.exception("FB post generovani selhalo")
-            finally:
-                if os.path.exists(local_thumb):
-                    try:
-                        os.remove(local_thumb)
-                    except OSError:
-                        log.warning("Nepodařilo se smazat temp thumbnail: %s", local_thumb)
-
-        # Social media posting
-        social_results = {}
-        try:
-            excerpt = _extract_excerpt(article.get('cs', ''), max_len=200)
-            hashtags = [f"#{tag.strip().replace(' ', '')}" for tag in topic.get('seo_keywords', '').split(',') if tag.strip()]
-            hashtags.append("#GAMEfo")
-
-            # CZ FB obrázek
-            safe_name = "".join(c if c.isalnum() or c in '-_ ' else '' for c in game_name).strip().replace(' ', '_')
-            date_str = datetime.now().strftime('%Y-%m-%d')
-            social_image_cs = None
-            social_image_en = None
-            if image_url:
-                candidate_cs = os.path.join(os.path.dirname(__file__), 'output', 'fb-posts', f'{date_str}_{safe_name}_CZ.png')
-                if os.path.exists(candidate_cs):
-                    social_image_cs = candidate_cs
-                candidate_en = os.path.join(os.path.dirname(__file__), 'output', 'fb-posts', f'{date_str}_{safe_name}_EN.png')
-                if os.path.exists(candidate_en):
-                    social_image_en = candidate_en
-
-            # EN data pro Facebook EN stránku (en_title vypočítán výše na ř. 312)
-            en_excerpt_social = _extract_excerpt(article.get('en', ''), max_len=200) if en_result else None
-            en_url_social = en_result['view_url'] if en_result else None
-
-            social_results = social_poster.post_to_all(
-                title=title,
-                excerpt=excerpt,
-                image_path=social_image_cs,
-                url=cs_result['view_url'],
-                hashtags=hashtags[:5],
-                en_title=en_title if en_result else None,
-                en_excerpt=en_excerpt_social,
-                en_image_path=social_image_en,
-                en_url=en_url_social,
-                image_url=image_url,
-            )
-            log.info("Social posting: %s", social_results)
-        except Exception:
-            log.exception("Social posting selhalo")
-
-        # Log
-        publish_log.log_decision({
-            'action': 'published',
-            'run_id': run_id,
-            'topic': topic_name,
-            'title': title,
-            'score': virality,
-            'status_tag': status_tag,
-            'game_name': game_name,
-            'cs_post_id': cs_result['id'],
-            'en_post_id': en_result['id'] if en_result else None,
-            'cs_url': cs_result['view_url'],
-            'en_url': en_result['view_url'] if en_result else None,
-            'sources': source_urls,
-            'failed_sources': failed_sources,
-            'cost': article.get('cost', '?'),
-            'social': social_results,
-        })
-
         published_count += 1
 
-    # 8. Aktualizace historie
-    history = article_history.mark_as_processed(articles, history)
-    history = article_history.cleanup_old_entries(history)
-    article_history.save_history(history)
+    # 8. Aktualizace historie — POUZE pokud běh nebyl přerušen výpadkem WP.
+    # Při mid-run abortu se nepublikovaná témata NESMÍ označit za zpracovaná
+    # (byla by nenávratně ztracená v 30denním dedup okně). Publikovaná témata
+    # opakované publikaci zabrání topic_dedup (čte publish_log).
+    if aborted_mid_run:
+        log.warning("Běh přerušen výpadkem WP — historie se neukládá, "
+                    "témata se zkusí znovu v dalším slotu.")
+    else:
+        history = article_history.mark_as_processed(articles, history)
+        history = article_history.cleanup_old_entries(history)
+        article_history.save_history(history)
 
     # 9. Shrnutí
     elapsed = (datetime.now() - start_time).total_seconds()

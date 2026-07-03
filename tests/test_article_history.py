@@ -38,7 +38,10 @@ class TestLoadHistory:
 
 class TestSaveHistory:
     def test_saves_and_updates_timestamp(self):
-        history = {"last_updated": None, "articles": {"https://test.com": "2025-01-15"}}
+        # Datum musí být čerstvé — save_history nově maže záznamy starší 30 dní
+        # (inkrementální zápis + DB-side expirace místo DELETE celé tabulky).
+        today = datetime.now().strftime("%Y-%m-%d")
+        history = {"last_updated": None, "articles": {"https://test.com": today}}
         result = article_history.save_history(history)
         assert result is True
         assert history["last_updated"] is not None

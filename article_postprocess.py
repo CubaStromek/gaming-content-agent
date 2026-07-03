@@ -4,8 +4,10 @@ Vyčleněno z article_writer.py — testovatelné samostatně, bez závislosti
 na Claude API ani síti.
 """
 
+import html as html_module
 import json
 import re
+from html.parser import HTMLParser
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -26,9 +28,119 @@ def build_sources_html(source_urls: List[str], lang: str = 'cs') -> str:
             domain = urlparse(url).netloc.replace('www.', '')
         except Exception:
             domain = url
-        items.append(f'<li><a href="{url}" target="_blank" rel="noopener">{domain}</a></li>')
+        safe_url = html_module.escape(url, quote=True)
+        safe_domain = html_module.escape(domain)
+        items.append(f'<li><a href="{safe_url}" target="_blank" rel="noopener">{safe_domain}</a></li>')
 
     return f'\n<h2>{heading}</h2>\n<ul>\n' + '\n'.join(items) + '\n</ul>'
+
+
+# --- Sanitizace LLM-generovaného HTML před publikací do WP -------------------
+#
+# Obsah článku generuje Claude ze scrapnutých textů třetích stran — škodlivý
+# zdroj může modelu podstrčit instrukci vygenerovat <script>/<iframe>. WP user
+# má typicky `unfiltered_html`, takže kses nic nevyfiltruje. Allowlist řeší
+# obojí. Volá se na SUROVÝ výstup modelu, PŘED vložením vlastního markupu
+# (YouTube embed, interní odkazy) — ten už je důvěryhodný.
+
+_ALLOWED_TAGS = {
+    # h1 zůstává povolený, aby ho následně odstranil wp_publisher.strip_first_heading
+    # (unwrap na holý text by nadpis nechal v článku jako duplicitní řádek)
+    'p', 'h1', 'h2', 'h3', 'h4', 'strong', 'em', 'b', 'i', 'u', 'a',
+    'ul', 'ol', 'li', 'blockquote', 'hr', 'br', 'figure', 'figcaption',
+    'code', 'pre', 'span', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'img',
+}
+_VOID_TAGS = {'hr', 'br', 'img'}
+# Tagy, jejichž OBSAH se zahazuje celý (ne jen tag samotný)
+_DROP_CONTENT_TAGS = {'script', 'style', 'iframe', 'object', 'embed', 'form', 'svg'}
+_ALLOWED_ATTRS = {
+    'a': {'href', 'target', 'rel', 'title'},
+    'img': {'src', 'alt', 'title', 'width', 'height'},
+    '*': {'class'},
+}
+
+
+class _ArticleSanitizer(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.out: List[str] = []
+        self._drop_depth = 0
+
+    def _clean_attrs(self, tag, attrs):
+        allowed = _ALLOWED_ATTRS.get(tag, set()) | _ALLOWED_ATTRS['*']
+        cleaned = []
+        for name, value in attrs:
+            name = name.lower()
+            if name.startswith('on') or name == 'style' or name not in allowed:
+                continue
+            if name in ('href', 'src'):
+                v = (value or '').strip()
+                if not v.lower().startswith(('http://', 'https://')):
+                    continue
+            cleaned.append((name, value))
+        return cleaned
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        if tag in _DROP_CONTENT_TAGS:
+            if tag not in _VOID_TAGS:
+                self._drop_depth += 1
+            return
+        if self._drop_depth or tag not in _ALLOWED_TAGS:
+            return  # nepovolený tag zahodit, obsah (text) projde přes handle_data
+        attr_str = ''.join(
+            f' {n}="{html_module.escape(v or "", quote=True)}"'
+            for n, v in self._clean_attrs(tag, attrs)
+        )
+        self.out.append(f'<{tag}{attr_str}>')
+
+    def handle_startendtag(self, tag, attrs):
+        tag = tag.lower()
+        if tag in _VOID_TAGS and not self._drop_depth:
+            self.handle_starttag(tag, attrs)
+            return
+        self.handle_starttag(tag, attrs)
+        self.handle_endtag(tag)
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if tag in _DROP_CONTENT_TAGS:
+            if self._drop_depth:
+                self._drop_depth -= 1
+            return
+        if self._drop_depth or tag not in _ALLOWED_TAGS or tag in _VOID_TAGS:
+            return
+        self.out.append(f'</{tag}>')
+
+    def handle_data(self, data):
+        if not self._drop_depth:
+            self.out.append(html_module.escape(data, quote=False))
+
+    def handle_entityref(self, name):
+        if not self._drop_depth:
+            self.out.append(f'&{name};')
+
+    def handle_charref(self, name):
+        if not self._drop_depth:
+            self.out.append(f'&#{name};')
+
+    def handle_comment(self, data):
+        pass  # komentáře z LLM výstupu zahodit (Gutenberg markup přidáváme až po sanitizaci)
+
+
+def sanitize_article_html(html: str) -> str:
+    """Allowlist sanitizace HTML článku z Claude před publikací do WP.
+
+    Zahodí <script>/<iframe>/event handlery/javascript: URL; povolené tagy
+    a atributy projdou beze změny. Volat na výstup modelu PŘED přidáním
+    vlastního markupu (YouTube embed bloky, interní odkazy).
+    """
+    if not html:
+        return html
+    parser = _ArticleSanitizer()
+    parser.feed(html)
+    parser.close()
+    return ''.join(parser.out)
 
 
 def strip_generated_sources(html: str) -> str:

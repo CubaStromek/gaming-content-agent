@@ -24,6 +24,13 @@ LOGO_PATH = os.path.join(SCRIPT_DIR, "gamefo_logo_transparent.png")
 CARA_PATH = os.path.join(SCRIPT_DIR, "FB_LAYOUT_cara.png")
 FONT_PATH = os.path.expanduser("~/Library/Fonts/Digitalt.ttf")
 
+# Fallback systémové fonty (macOS), pokud primární font neexistuje
+FALLBACK_FONT_PATHS = [
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+    "/System/Library/Fonts/Helvetica.ttc",
+]
+
 # --- Layout (canvas 940x788) ---
 CANVAS_W = 940
 CANVAS_H = 788
@@ -87,6 +94,20 @@ def _wrap_text(draw, text, font, max_width):
     return lines
 
 
+def _load_font(font_path, size):
+    """
+    Načte TrueType font v dané velikosti. Pokud primární font neexistuje,
+    zkusí systémové fallbacky (Arial Bold apod.), nakonec PIL default.
+    """
+    candidates = [font_path] + [p for p in FALLBACK_FONT_PATHS if p != font_path]
+    for path in candidates:
+        try:
+            return ImageFont.truetype(path, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
 def _draw_wrapped_text(draw, text, font_path, start_size, min_size, max_width, max_height, start_y, color):
     """
     Vykreslí text se zalomením. Pokud se nevejde, zmenšuje font.
@@ -94,12 +115,7 @@ def _draw_wrapped_text(draw, text, font_path, start_size, min_size, max_width, m
     """
     size = start_size
     while size >= min_size:
-        try:
-            font = ImageFont.truetype(font_path, size)
-        except OSError:
-            font = ImageFont.load_default()
-            break
-
+        font = _load_font(font_path, size)
         lines = _wrap_text(draw, text, font, max_width)
         line_height = size + 6
         total_height = len(lines) * line_height
@@ -109,10 +125,7 @@ def _draw_wrapped_text(draw, text, font_path, start_size, min_size, max_width, m
         size -= 2
     else:
         # I s minimálním fontem se nevejde — použij minimum
-        try:
-            font = ImageFont.truetype(font_path, min_size)
-        except OSError:
-            font = ImageFont.load_default()
+        font = _load_font(font_path, min_size)
         lines = _wrap_text(draw, text, font, max_width)
         line_height = min_size + 6
 

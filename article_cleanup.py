@@ -10,17 +10,23 @@ Použití:
 """
 
 import json
+import os
 import argparse
 from datetime import datetime, timedelta, timezone
 
 import requests
 import wp_publisher
+from brand_logos import BRAND_LOGOS
 from database import get_db
 from logger import setup_logger
 
 log = setup_logger('article_cleanup')
 
 CLEANUP_AFTER_DAYS = 30
+
+# Sdílená brand loga (PlayStation/Xbox/Steam/EA/FromSoftware…) — používají je
+# desítky článků jako featured image. Tato media ID se NIKDY nemažou.
+PROTECTED_MEDIA_IDS = frozenset(BRAND_LOGOS.values())
 
 
 def _gamefo_api_url(path):
@@ -129,9 +135,100 @@ def get_post_details(post_id):
     return None
 
 
-def delete_media(media_id, dry_run=False):
-    """Smaže media attachment z WP. Vrátí True pokud úspěch."""
+def is_media_used_elsewhere(media_id, owner_post_ids):
+    """
+    Zkontroluje přes WP REST API, jestli médium používá i jiný post než ty,
+    které právě mažeme (`owner_post_ids`).
+
+    Kontroly:
+      1. Attachment parent (`post` pole media objektu) — pokud je médium
+         připnuté k cizímu postu, je sdílené.
+      2. Fulltext search postů na název souboru média — chytí inline použití
+         v obsahu (včetně resized variant, hledá se basename bez přípony).
+
+    Fail-safe: pokud ověření selže (síťová chyba, neočekávaný HTTP status,
+    chybějící source_url), vrací True → médium se NEMAŽE.
+    """
+    headers = wp_publisher._auth_headers()
+    owner_post_ids = {int(pid) for pid in owner_post_ids if pid}
+
+    # 1) Detail média — source_url + parent post
+    try:
+        resp = requests.get(
+            wp_publisher._api_url(f'media/{media_id}'),
+            headers=headers,
+            params={'_fields': 'id,source_url,post'},
+            timeout=15,
+        )
+    except requests.RequestException as e:
+        log.warning("  Nelze ověřit sdílení media #%d (síť): %s — nemažu", media_id, e)
+        return True
+
+    if resp.status_code == 404:
+        # Médium už neexistuje — delete_media(404) to vyřeší jako no-op
+        return False
+    if resp.status_code != 200:
+        log.warning("  Nelze ověřit sdílení media #%d: HTTP %d — nemažu", media_id, resp.status_code)
+        return True
+
+    media = resp.json()
+    parent = media.get('post')
+    if parent and int(parent) not in owner_post_ids:
+        log.info("  Media #%d je připnuté k cizímu postu #%s — nemažu", media_id, parent)
+        return True
+
+    source_url = media.get('source_url') or ''
+    filename = os.path.splitext(os.path.basename(source_url))[0] if source_url else ''
+    if not filename:
+        log.warning("  Media #%d nemá source_url — nelze ověřit sdílení, nemažu", media_id)
+        return True
+
+    # 2) Hledej název souboru v obsahu ostatních postů
+    try:
+        resp = requests.get(
+            wp_publisher._api_url('posts'),
+            headers=headers,
+            params={'search': filename, 'per_page': 100, '_fields': 'id'},
+            timeout=15,
+        )
+    except requests.RequestException as e:
+        log.warning("  Nelze ověřit reference media #%d (síť): %s — nemažu", media_id, e)
+        return True
+
+    if resp.status_code != 200:
+        log.warning("  Nelze ověřit reference media #%d: HTTP %d — nemažu", media_id, resp.status_code)
+        return True
+
+    try:
+        posts = resp.json()
+    except ValueError:
+        log.warning("  Neplatná odpověď při ověření media #%d — nemažu", media_id)
+        return True
+
+    for p in posts:
+        pid = p.get('id')
+        if pid and int(pid) not in owner_post_ids:
+            log.info("  Media #%d ('%s') referencuje cizí post #%d — nemažu", media_id, filename, pid)
+            return True
+
+    return False
+
+
+def delete_media(media_id, dry_run=False, owner_post_ids=None):
+    """Smaže media attachment z WP. Vrátí True pokud úspěch.
+
+    Chráněná brand loga (PROTECTED_MEDIA_IDS) se nikdy nemažou.
+    Pokud je předáno `owner_post_ids`, před smazáním se ověří, že médium
+    nepoužívá žádný jiný post — jinak se mazání přeskočí.
+    """
     if not media_id or media_id == 0:
+        return False
+
+    if int(media_id) in PROTECTED_MEDIA_IDS:
+        log.info("  SKIP media #%d — chráněné brand logo", media_id)
+        return False
+
+    if owner_post_ids is not None and is_media_used_elsewhere(media_id, owner_post_ids):
         return False
 
     if dry_run:
@@ -156,14 +253,20 @@ def delete_media(media_id, dry_run=False):
         return False
 
 
-def delete_post_media(post, dry_run=False):
-    """Smaže featured image a section images postu. Vrátí počet smazaných."""
+def delete_post_media(post, dry_run=False, owner_post_ids=None):
+    """Smaže featured image a section images postu. Vrátí počet smazaných.
+
+    `owner_post_ids` = ID postů, které se v tomto kroku mažou (post + překlad);
+    média referencovaná jinými posty se nemažou (viz is_media_used_elsewhere).
+    """
     count = 0
+    if owner_post_ids is None:
+        owner_post_ids = {post.get('id')}
 
     # Featured image
     featured = post.get('featured_media', 0)
     if featured and featured > 0:
-        if delete_media(featured, dry_run):
+        if delete_media(featured, dry_run, owner_post_ids=owner_post_ids):
             count += 1
 
     # Section images (Story Mode screenshots)
@@ -176,7 +279,7 @@ def delete_post_media(post, dry_run=False):
                 for img in section_images:
                     mid = img.get('media_id') if isinstance(img, dict) else None
                     if mid:
-                        if delete_media(mid, dry_run):
+                        if delete_media(mid, dry_run, owner_post_ids=owner_post_ids):
                             count += 1
         except json.JSONDecodeError:
             pass
@@ -275,7 +378,15 @@ def run(dry_run=False, days=CLEANUP_AFTER_DAYS):
             processed_ids.add(paired_id)
             # Zkontroluj i překlad
             paired_post = get_post_details(paired_id)
-            if paired_post and is_protected(paired_post):
+            if paired_post is None:
+                # Nelze ověřit ochranu překladu (síťová chyba apod.) —
+                # NEMAZAT celý pár, jinak by se chráněný překlad smazal bez kontroly.
+                log.warning("SKIP #%d [%s] \"%s\" — nelze ověřit překlad #%d, pár se nemaže",
+                            post_id, lang, title, paired_id)
+                skipped_count += 1
+                processed_ids.add(post_id)
+                continue
+            if is_protected(paired_post):
                 log.info("SKIP #%d [%s] \"%s\" — překlad #%d má Game Page link",
                          post_id, lang, title, paired_id)
                 skipped_count += 1
@@ -287,9 +398,13 @@ def run(dry_run=False, days=CLEANUP_AFTER_DAYS):
                  prefix, post_id, lang, title,
                  f" (+ překlad #{paired_id})" if paired_id else "")
 
-        mc = delete_post_media(post, dry_run)
+        owner_ids = {post_id}
+        if paired_id:
+            owner_ids.add(paired_id)
+
+        mc = delete_post_media(post, dry_run, owner_post_ids=owner_ids)
         if paired_post:
-            mc += delete_post_media(paired_post, dry_run)
+            mc += delete_post_media(paired_post, dry_run, owner_post_ids=owner_ids)
 
         # Smazat oba posty
         delete_post(post_id, dry_run)
