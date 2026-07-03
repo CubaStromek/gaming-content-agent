@@ -187,21 +187,29 @@ class TestLoggerSanitization:
         lg.propagate = False
         return lg, stream
 
+    # Falešné secret části se skládají za běhu — literál v celém token formátu
+    # (bot<číslo>:AAH...) spouštěl GitHub secret scanning alert, přestože jde
+    # o smyšlené hodnoty (žádný reálný token v repu není).
+    FAKE_SECRET_1 = "AAH" + "dqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
+    FAKE_SECRET_2 = "AAH" + "x" * 31
+
     def test_masks_telegram_bot_token(self):
         lg, stream = self._make_logger()
-        lg.info("POST https://api.telegram.org/bot123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw/sendMessage")
+        fake_token = "123456789:" + self.FAKE_SECRET_1
+        lg.info("POST https://api.telegram.org/bot%s/sendMessage", fake_token)
         out = stream.getvalue()
-        assert "AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw" not in out
+        assert self.FAKE_SECRET_1 not in out
         assert "bot***" in out
 
     def test_masks_token_in_exception_traceback(self):
         lg, stream = self._make_logger()
+        fake_token = "987654321:" + self.FAKE_SECRET_2
         try:
-            raise ValueError("failed for https://api.telegram.org/bot987654321:AAHxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/x")
+            raise ValueError(f"failed for https://api.telegram.org/bot{fake_token}/x")
         except ValueError:
             lg.exception("boom")
         out = stream.getvalue()
-        assert "AAHxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" not in out
+        assert self.FAKE_SECRET_2 not in out
         assert "bot***" in out
 
     def test_masks_anthropic_key_in_exc_info(self):
