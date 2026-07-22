@@ -32,6 +32,11 @@ def _format_existing_tags_for_prompt(limit: int = 30) -> str:
 
 log = setup_logger(__name__)
 
+# Počet kandidátních témat od analyzátoru. Publikuje se jen top N přeživších
+# dedup (auto_publish.MAX_TOPICS_PER_RUN); zbytek je záloha pro případ, že
+# nejvirálnější témata už byla publikována v dřívějším běhu dne.
+CANDIDATE_TOPICS = 5
+
 try:
     from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
     _HAS_TENACITY = True
@@ -145,7 +150,8 @@ def _call_analysis_api(client, messages):
     """Volání Claude API. messages je list zpráv (může obsahovat multi-block content s cache_control)."""
     message = client.messages.create(
         model=config.ANALYSIS_MODEL,
-        max_tokens=4000,
+        # 5 kandidátních témat ~ až ×2.5 výstupu oproti původním 2; 4000 by ořezávalo
+        max_tokens=8000,
         temperature=0.7,
         messages=messages,
     )
@@ -168,7 +174,7 @@ def analyze_gaming_articles(articles_text: str, article_count: Optional[int] = N
 
     client = anthropic.Anthropic(api_key=config.CLAUDE_API_KEY)
 
-    max_topics = min(2, max(1, _resolve_article_count(articles_text, article_count)))
+    max_topics = min(CANDIDATE_TOPICS, max(1, _resolve_article_count(articles_text, article_count)))
 
     static_prompt = f"""Analyzuj tyto herní články z dnešního dne a vytvoř report pro českého herního blogera.
 
@@ -271,7 +277,8 @@ def _call_structured_api(client, messages, tools):
     """Volání Claude API se strukturovaným výstupem (tool_use). messages je list pro multi-block s cache_control."""
     return client.messages.create(
         model=config.ANALYSIS_MODEL,
-        max_tokens=4000,
+        # 5 kandidátních témat ~ až ×2.5 výstupu oproti původním 2; 4000 by ořezávalo
+        max_tokens=8000,
         temperature=0.7,
         tools=tools,
         tool_choice={"type": "tool", "name": "submit_analysis"},
@@ -326,7 +333,7 @@ def analyze_articles_structured(articles_text: str, article_count: Optional[int]
 
     client = anthropic.Anthropic(api_key=config.CLAUDE_API_KEY)
 
-    max_topics = min(2, max(1, _resolve_article_count(articles_text, article_count)))
+    max_topics = min(CANDIDATE_TOPICS, max(1, _resolve_article_count(articles_text, article_count)))
 
     static_prompt = f"""Analyzuj tyto herní články z dnešního dne a vytvoř report pro českého herního blogera.
 

@@ -33,9 +33,11 @@ _publish_lock = publish_pipeline.publish_lock
 search_rawg_image = publish_pipeline.search_rawg_image
 _extract_excerpt = publish_pipeline.extract_excerpt
 
-# Pojistka proti neposlušnému modelu: prompt říká max 2 témata, ale smyčka
-# dřív iterovala přes vše, co model vrátil (= placené generování navíc).
-MAX_TOPICS_PER_RUN = 3
+# Publish limit na běh. Analyzátor vrací až 5 kandidátů seřazených podle
+# důležitosti (claude_analyzer.CANDIDATE_TOPICS) — dedup je profiltruje a
+# publikují se první 2 přeživší. Níže seřazení kandidáti slouží jako záloha,
+# když nejvirálnější témata už vyšla dřív (jinak běh nepublikoval nic).
+MAX_TOPICS_PER_RUN = 2
 
 
 def _pick_topics(articles, run_dir, run_id):
@@ -107,7 +109,8 @@ def _pick_topics(articles, run_dir, run_id):
     topics, dup_topics = topic_dedup.filter_duplicate_topics(topics)
     # Sémantická druhá vrstva: chytí přejmenované entity (ráno bezejmenná hra,
     # odpoledne s oficiálním názvem), na které lexikální shoda nestačí.
-    topics, llm_dups = topic_dedup.llm_filter_duplicate_topics(topics)
+    # `needed`: jakmile přežije MAX_TOPICS_PER_RUN témat, zbytek se nekontroluje.
+    topics, llm_dups = topic_dedup.llm_filter_duplicate_topics(topics, needed=MAX_TOPICS_PER_RUN)
     dup_topics.extend(llm_dups)
     for dup in dup_topics:
         publish_log.log_decision({
@@ -124,7 +127,7 @@ def _pick_topics(articles, run_dir, run_id):
         return None
 
     if len(topics) > MAX_TOPICS_PER_RUN:
-        log.warning("Model vrátil %d témat, ořezávám na %d", len(topics), MAX_TOPICS_PER_RUN)
+        log.info("Po dedupu zbývá %d kandidátů, publikuji top %d", len(topics), MAX_TOPICS_PER_RUN)
         topics = topics[:MAX_TOPICS_PER_RUN]
 
     log.info("Po deduplikaci: %d témat k publikaci", len(topics))

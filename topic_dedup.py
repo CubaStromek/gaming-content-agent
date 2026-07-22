@@ -253,26 +253,34 @@ def _llm_is_same_story(client, new_topic: Dict, recent: List[Dict]) -> Tuple[Opt
     return (None, reason)
 
 
-def llm_filter_duplicate_topics(topics: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
+def llm_filter_duplicate_topics(topics: List[Dict], needed: Optional[int] = None) -> Tuple[List[Dict], List[Dict]]:
     """Sémantická druhá vrstva dedupu (po lexikálním `filter_duplicate_topics`).
 
     Chytá případy, kdy se entita mezi běhy přejmenuje (ráno „bezejmenná závodní hra
     Maverick Games", odpoledne „Clutch") — na to lexikální shoda jména ani Jaccard
     nestačí. Vrací (unique, duplicates) se stejným `_dedup_match` formátem.
+
+    `needed`: kolik přeživších témat volajícímu stačí (publish limit). Jakmile jich
+    tolik projde, zbylí níže seřazení kandidáti se už LLM nekontrolují (šetří volání)
+    a tiše se zahodí — stejně by se nepublikovali.
     """
     if not topics:
         return (topics, [])
 
     recent = get_recent_published_topics()
     if not recent:
-        return (topics, [])
+        return (topics[:needed] if needed else topics, [])
 
     import anthropic
     import config
     client = anthropic.Anthropic(api_key=config.CLAUDE_API_KEY, max_retries=2)
 
     unique, duplicates = [], []
-    for topic in topics:
+    for i, topic in enumerate(topics):
+        if needed is not None and len(unique) >= needed:
+            log.info("LLM dedup: mám %d témat (limit), %d zbylých kandidátů nekontroluji",
+                     len(unique), len(topics) - i)
+            break
         idx, reason = _llm_is_same_story(client, topic, recent)
         if idx is None:
             unique.append(topic)

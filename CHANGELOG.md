@@ -1,5 +1,16 @@
 # Changelog — Gaming Content Agent
 
+## 2026-07-10 — Fallback kandidáti: když jsou top témata duplicitní, publikuj další v pořadí
+
+Běhy 10. 7. v 8:00 a 11:00 nepublikovaly nic — analyzátor vrátil jen 2 témata a LLM dedup obě zahodil (Palworld 1.0 launch, Xbox layoffs). Odteď:
+
+- **`claude_analyzer`**: analyzátor vrací až **5 kandidátních témat** seřazených podle důležitosti (`CANDIDATE_TOPICS = 5`, dřív napevno 2); `max_tokens` analýzy 4000 → 8000, aby se 5 témat vešlo bez ořezu. Cena analýzy ~+$0.03/běh (více output tokenů).
+- **`auto_publish`**: `MAX_TOPICS_PER_RUN = 2` je nyní explicitní publish limit — po dedupu se publikují první 2 přeživší kandidáti, zbytek je záloha. Objem publikace se nemění (max 2 články/běh jako dřív).
+- **`topic_dedup.llm_filter_duplicate_topics`**: nový parametr `needed` — jakmile přežije `needed` témat, zbylí (níže seřazení) kandidáti se už LLM nekontrolují, aby se neplatila zbytečná Haiku volání.
+- Testy: `tests/test_topic_dedup.py` (4 nové testy na `needed` limit).
+
+Pozn.: dedup verdikt „vydání 1.0 = duplicita dřívějšího oznámení data vydání" (Palworld) tím vyřešen není — top téma zůstane blokované a místo něj vyjdou další kandidáti.
+
 ## 2026-07-06 — Brand logo pro témata bez konkrétní hry (fix RAWG garbage)
 
 - **`publish_pipeline.resolve_featured_image`**: když analyzer nevrátí reálnou hru (`game_name = N/A`), zkusí se brand logo z titulku/tématu/SEO klíčových slov **před** RAWG — dřív šla do RAWG celá česká věta tématu a RAWG (databáze her) vždy vrátil náhodný screenshot cizí hry, takže brand fallback pod RAWG se nikdy nespustil. Reálný případ: „Petice proti zrušení disků na PlayStation" dostala screenshot náhodné hry místo PlayStation loga. Reálné hry (`game_name != N/A`) jdou beze změny na RAWG.
