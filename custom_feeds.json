@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-02-19T12:00:52.559343",
+  "last_updated": "2026-04-18T17:00:18.585617",
   "feeds": [
     {
       "id": "ign",
@@ -62,7 +62,8 @@
       "name": "Hrej.cz",
       "url": "https://hrej.cz/rss/all",
       "lang": "cs",
-      "enabled": true
+      "enabled": false,
+      "auto_disabled": true
     },
     {
       "id": "zing-cz",
@@ -132,7 +133,7 @@
       "name": "Vortex.cz",
       "url": "https://www.vortex.cz/feed/",
       "lang": "cs",
-      "enabled": true
+      "enabled": false
     },
     {
       "id": "playzone-cz",
