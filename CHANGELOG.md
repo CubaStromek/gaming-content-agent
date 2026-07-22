@@ -1,5 +1,11 @@
 # Changelog — Gaming Content Agent
 
+## 2026-07-06 — Brand logo pro témata bez konkrétní hry (fix RAWG garbage)
+
+- **`publish_pipeline.resolve_featured_image`**: když analyzer nevrátí reálnou hru (`game_name = N/A`), zkusí se brand logo z titulku/tématu/SEO klíčových slov **před** RAWG — dřív šla do RAWG celá česká věta tématu a RAWG (databáze her) vždy vrátil náhodný screenshot cizí hry, takže brand fallback pod RAWG se nikdy nespustil. Reálný případ: „Petice proti zrušení disků na PlayStation" dostala screenshot náhodné hry místo PlayStation loga. Reálné hry (`game_name != N/A`) jdou beze změny na RAWG.
+- Regresní test `test_brand_news_no_real_game_uses_logo_not_rawg` (tests/test_publish_pipeline.py).
+- Manuální cesta (Telegram): pro brand/industry témata bez konkrétní hry předávat `--game-name "N/A"` nebo přímo brand (`--game-name "PlayStation"`) — viz CLAUDE.md.
+
 ## 2026-07-03 — Kompletní refactor podle code review
 
 ### Kritické opravy

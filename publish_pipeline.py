@@ -164,7 +164,7 @@ def embed_youtube(article, game_name):
     return article
 
 
-def resolve_featured_image(game_name, title):
+def resolve_featured_image(game_name, title, topic=None):
     """Featured image: brand-first → RAWG upload → brand logo fallback.
 
     Vrací (featured_image_id, section_images_meta, image_url).
@@ -180,6 +180,21 @@ def resolve_featured_image(game_name, title):
         log.info("Brand tema '%s' → brand logo (ID: %d), RAWG preskocen",
                  game_name, featured_image_id)
         return featured_image_id, section_images_meta, image_url
+
+    # Bez reálné hry (analyzer vrátil game_name = N/A) je game_name jen fallback
+    # na téma — celá česká věta. RAWG je databáze her a na takový dotaz VŽDY
+    # vrátí nesmyslnou hru (viz "Petice za záchranu disků" → náhodný screenshot),
+    # a brand fallback pod RAWG se pak nikdy nespustí. Když tedy žádná hra není,
+    # zkus nejdřív brand logo z titulku/tématu/SEO a RAWG přeskoč.
+    raw_game = (topic or {}).get('game_name', '')
+    has_real_game = bool(raw_game) and raw_game != 'N/A'
+    if not has_real_game:
+        seo = (topic or {}).get('seo_keywords', '')
+        brand_id = brand_logos.resolve_brand_logo(title, game_name, seo)
+        if brand_id:
+            log.info("Bez reálné hry, brand match v titulku/tématu → brand logo "
+                     "(ID: %d), RAWG preskocen", brand_id)
+            return brand_id, section_images_meta, image_url
 
     # RAWG screenshoty → WP meta pro Story Mode v appce (ne inline v HTML)
     section_images_meta = section_images.get_or_fetch_screenshots(game_name)
@@ -320,7 +335,7 @@ def publish_article(topic, article, title, run_id=None, source='auto',
     article = embed_youtube(article, game_name)
 
     # Featured image + Story Mode screenshoty
-    featured_image_id, section_images_meta, image_url = resolve_featured_image(game_name, title)
+    featured_image_id, section_images_meta, image_url = resolve_featured_image(game_name, title, topic)
 
     # SEO keywords jako tagy
     seo_keywords = topic.get('seo_keywords', '')

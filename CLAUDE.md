@@ -83,7 +83,7 @@ python /Users/openclaw/AI-Projects/gaming-content-agent/manual_article.py \
 |----------|---------|-------|
 | `--topic` | ano | Popis tématu článku |
 | `--sources` | ano | Zdrojové URL oddělené čárkou (min 1, max 5) |
-| `--game-name` | ne | Název hry (default = topic). Použito pro RAWG obrázek, SEO, social media |
+| `--game-name` | ne | Název hry (default = topic). Použito pro RAWG obrázek, SEO, social media. **Téma o platformě/značce bez konkrétní hry** (PlayStation, Xbox, Steam Deck, Steam Machine, Sony, Microsoft, Valve…): zadej brand (`--game-name "PlayStation"`) nebo `--game-name "N/A"` — jinak jde do RAWG celý topic a featured image bude náhodný screenshot cizí hry |
 | `--title` | ne | Vlastní CZ titulek (jinak vygeneruje Claude) |
 | `--seo-keywords` | ne | SEO klíčová slova oddělená čárkou |
 | `--status-tag` | ne | news, update, leak, critical, success, indie, review, trailer, rumor, info, finance, tema, preview |

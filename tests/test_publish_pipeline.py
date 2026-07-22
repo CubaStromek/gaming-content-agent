@@ -74,9 +74,34 @@ class TestResolveFeaturedImage:
         monkeypatch.setattr(pp.section_images, 'get_or_fetch_screenshots', lambda g: {'imgs': 1})
         monkeypatch.setattr(pp, 'search_rawg_image', lambda g: 'https://rawg.io/x.jpg')
         monkeypatch.setattr(pp.wp_publisher, 'upload_media', lambda url, title='': (42, 'src', None))
-        fid, meta, image_url = pp.resolve_featured_image('Elden Ring', 'Titulek')
+        fid, meta, image_url = pp.resolve_featured_image(
+            'Elden Ring', 'Titulek', {'game_name': 'Elden Ring'})
         assert fid == 42
         assert image_url == 'https://rawg.io/x.jpg'
+
+    def test_brand_news_no_real_game_uses_logo_not_rawg(self, monkeypatch):
+        """Regrese: game_name=N/A + brand v titulku → brand logo, NE RAWG.
+
+        Reálný bug: 'Petice za záchranu disků na PlayStation' dostala náhodný
+        screenshot hry z RAWG, protože strict gate spadl na celé české větě
+        a brand fallback pod RAWG se nikdy nespustil (RAWG vždy něco vrátí).
+        """
+        monkeypatch.setattr(pp.brand_logos, 'resolve_brand_logo_strict', lambda g: None)
+        # RAWG by (jako vždy) něco vrátilo — nesmí se použít
+        monkeypatch.setattr(pp, 'search_rawg_image',
+                            lambda g: (_ for _ in ()).throw(AssertionError('RAWG nesmí běžet')))
+        topic = {
+            'game_name': 'N/A',
+            'seo_keywords': 'PlayStation, Sony',
+            'topic': 'Petice za záchranu fyzických her: 115 000 podpisů',
+        }
+        fid, meta, image_url = pp.resolve_featured_image(
+            topic['topic'],
+            'Petice proti zrušení disků na PlayStation překročila 115 tisíc podpisů',
+            topic)
+        assert fid == pp.brand_logos.BRAND_LOGOS['playstation']
+        assert meta is None
+        assert image_url is None
 
 
 class TestPublishArticle:
@@ -132,3 +157,4 @@ class TestPublishArticle:
         topic['status_tag'] = 'nesmysl'
         pp.publish_article(topic, article, title='T')
         assert wired['create_draft'][0]['status_tag'] == 'news'
+
