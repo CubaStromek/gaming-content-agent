@@ -13,6 +13,23 @@ VALID_STATUS_TAGS = frozenset({
     'trailer', 'rumor', 'info', 'finance', 'tema', 'preview',
 })
 
+# Podrubriky rubriky Zprávy (CZ, id 9) / News (EN, id 12) na gamefo.cz.
+# Klíč = interní slug (vrací ho LLM v article_writer, přijímá --category
+# v manual_article), hodnoty = WP category ID. 'en': None = podrubrika
+# nemá anglický ekvivalent (článek jde jen do News).
+SUBCATEGORY_IDS = {
+    'aaa':             {'cs': 100,  'en': 104},
+    'indie':           {'cs': 66,   'en': 71},
+    'playstation':     {'cs': 184,  'en': 181},
+    'microsoft':       {'cs': 399,  'en': 401},
+    'nintendo':        {'cs': 421,  'en': 423},
+    'valve':           {'cs': 4166, 'en': 607},
+    'technologie':     {'cs': 24,   'en': 28},
+    'ekonomika':       {'cs': 64,   'en': 82},
+    'mimoherni':       {'cs': 54,   'en': 56},
+    'cesko-slovensko': {'cs': 33,   'en': None},
+}
+
 
 class Topic(BaseModel):
     """Jedno téma z analýzy herních článků."""

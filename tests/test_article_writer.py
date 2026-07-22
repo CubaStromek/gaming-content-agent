@@ -234,3 +234,41 @@ TITULEK EN: Test Title
         topic = {'topic': 'Test', 'title': 'Test', 'angle': '', 'context': '', 'seo_keywords': '', 'sources': []}
         result = article_writer.write_article(topic, ["text"])
         assert 'error' in result
+
+    def _write_with_output(self, mock_api, text):
+        mock_message = MagicMock()
+        mock_message.content = [MagicMock(text=text)]
+        mock_message.usage = MagicMock(input_tokens=1000, output_tokens=500)
+        mock_message.stop_reason = 'end_turn'
+        mock_api.return_value = mock_message
+        topic = {'topic': 'Test', 'title': 'Test', 'angle': '', 'context': '', 'seo_keywords': '', 'sources': []}
+        return article_writer.write_article(topic, ["text"])
+
+    @patch('article_writer._call_api')
+    def test_parses_rubrika_and_strips_line(self, mock_api):
+        result = self._write_with_output(mock_api, """TITULEK CZ: Titulek
+RUBRIKA: valve
+
+=== ČESKY ===
+<p>Článek o Steamu.</p>""")
+        assert result['subcategory'] == 'valve'
+        assert 'RUBRIKA' not in result['cs']
+
+    @patch('article_writer._call_api')
+    def test_rubrika_zadna_means_no_subcategory(self, mock_api):
+        result = self._write_with_output(mock_api, """TITULEK CZ: Titulek
+RUBRIKA: zadna
+
+=== ČESKY ===
+<p>Článek.</p>""")
+        assert 'subcategory' not in result
+        assert 'RUBRIKA' not in result['cs']
+
+    @patch('article_writer._call_api')
+    def test_invalid_rubrika_ignored(self, mock_api):
+        result = self._write_with_output(mock_api, """TITULEK CZ: Titulek
+RUBRIKA: sega
+
+=== ČESKY ===
+<p>Článek.</p>""")
+        assert 'subcategory' not in result

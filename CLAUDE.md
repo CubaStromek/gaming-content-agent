@@ -87,6 +87,7 @@ python /Users/openclaw/AI-Projects/gaming-content-agent/manual_article.py \
 | `--title` | ne | Vlastní CZ titulek (jinak vygeneruje Claude) |
 | `--seo-keywords` | ne | SEO klíčová slova oddělená čárkou |
 | `--status-tag` | ne | news, update, leak, critical, success, indie, review, trailer, rumor, info, finance, tema, preview |
+| `--category` | ne | Podrubrika Zpráv/News: aaa, indie, playstation, microsoft, nintendo, valve, technologie, ekonomika, mimoherni, cesko-slovensko. Bez zadání vybere Claude automaticky při psaní článku (metadata řádek RUBRIKA); zadaná hodnota LLM klasifikaci přebije. Mapování na WP category ID: `models.SUBCATEGORY_IDS` |
 
 ### Pipeline
 

@@ -1,5 +1,15 @@
 # Changelog — Gaming Content Agent
 
+## 2026-07-22 — Automatické zařazování do podrubrik Zpráv/News
+
+Články šly dosud natvrdo jen do rubriky Zprávy (9) / News (12). Nově je Claude při psaní článku rovnou klasifikuje do podrubriky:
+
+- **`models.SUBCATEGORY_IDS`** — jediný zdroj pravdy pro podrubriky a jejich WP category ID: aaa, indie, playstation, microsoft, nintendo, valve, technologie, ekonomika, mimoherni, cesko-slovensko (bez EN ekvivalentu). Zdroj: WP REST API gamefo.cz.
+- **`article_writer`** — nový metadata řádek `RUBRIKA:` v promptu (stejné API volání jako KEYWORD/META/STORY_CARDS, žádné vícenáklady); pravidlo nejkonkrétnější rubriky (platforma/firma > obecná aaa/ekonomika), `zadna` = bez podrubriky. Validace proti `SUBCATEGORY_IDS`, neznámá hodnota → warning + jen Zprávy.
+- **`publish_pipeline`** — publikuje do `[Zprávy, podrubrika]` CZ i EN (cesko-slovensko jen CZ); `topic['subcategory']` (ruční override) má přednost před LLM klasifikací; podrubrika se loguje do publish_log.
+- **`manual_article`** — nový volitelný parametr `--category` (choices z `SUBCATEGORY_IDS`) pro ruční přebití z Telegramu.
+- Testy: `tests/test_publish_pipeline.py` (TestSubcategory, 6 testů), `tests/test_article_writer.py` (3 testy na parsování RUBRIKA).
+
 ## 2026-07-10 — Fallback kandidáti: když jsou top témata duplicitní, publikuj další v pořadí
 
 Běhy 10. 7. v 8:00 a 11:00 nepublikovaly nic — analyzátor vrátil jen 2 témata a LLM dedup obě zahodil (Palworld 1.0 launch, Xbox layoffs). Odteď:

@@ -22,13 +22,15 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 import config
 import article_writer
 import publish_pipeline
+from models import SUBCATEGORY_IDS
 from logger import setup_logger
 
 log = setup_logger('manual_article')
 
 
 def publish_manual_article(topic_name, game_name, source_urls, title=None,
-                           seo_keywords=None, status_tag='news', length='long'):
+                           seo_keywords=None, status_tag='news', length='long',
+                           category=None):
     """
     Generuje a publikuje článek na základě ručně zadaného tématu.
 
@@ -39,6 +41,8 @@ def publish_manual_article(topic_name, game_name, source_urls, title=None,
         title: Volitelný CZ titulek (jinak vygeneruje Claude)
         seo_keywords: Volitelný seznam SEO klíčových slov
         status_tag: Status tag pro WP (default 'news')
+        category: Volitelná podrubrika Zpráv (slug z SUBCATEGORY_IDS);
+                  přebije LLM klasifikaci z article_writer
 
     Returns:
         dict s výsledky nebo None při chybě
@@ -96,6 +100,8 @@ def publish_manual_article(topic_name, game_name, source_urls, title=None,
         'status_tag': status_tag,
         'virality_score': 0,
     }
+    if category:
+        topic['subcategory'] = category
 
     # 3. Generování článku (CZ + EN)
     log.info("Generuji článek přes Claude AI (délka: %s)...", length)
@@ -189,6 +195,8 @@ Příklady:
     parser.add_argument('--sources', required=True, help='Zdrojové URL oddělené čárkou')
     parser.add_argument('--seo-keywords', default=None, help='SEO klíčová slova oddělená čárkou')
     parser.add_argument('--status-tag', default='news', help='Status tag: news, update, leak, critical, success, indie, review, trailer, rumor, info, finance, tema, preview')
+    parser.add_argument('--category', default=None, choices=sorted(SUBCATEGORY_IDS),
+                        help='Podrubrika Zpráv (jinak vybere Claude automaticky)')
     parser.add_argument('--length', default='long', choices=['short', 'medium', 'long'], help='Délka článku: short (800-1500), medium (2000-3500), long (5000-8000 znaků, default)')
 
     args = parser.parse_args()
@@ -209,6 +217,7 @@ Příklady:
             seo_keywords=seo_keywords,
             status_tag=args.status_tag,
             length=args.length,
+            category=args.category,
         )
 
     sys.exit(0 if result else 1)

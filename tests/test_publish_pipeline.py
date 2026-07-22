@@ -158,3 +158,53 @@ class TestPublishArticle:
         pp.publish_article(topic, article, title='T')
         assert wired['create_draft'][0]['status_tag'] == 'news'
 
+
+class TestSubcategory:
+    """Podrubriky Zpráv/News — LLM klasifikace z article_writer + ruční override."""
+
+    @pytest.fixture(autouse=True)
+    def _brand_logo(self, monkeypatch):
+        monkeypatch.setattr(pp.brand_logos, 'resolve_brand_logo_strict', lambda g: 8905)
+
+    def test_subcategory_appended_to_both_langs(self, wired, topic, article):
+        article['subcategory'] = 'valve'
+        pp.publish_article(topic, article, title='T')
+        cs, en = wired['create_draft']
+        assert cs['category_ids'] == [9, 4166]
+        assert en['category_ids'] == [12, 607]
+        published = [l for l in wired['log'] if l['action'] == 'published']
+        assert published[0]['subcategory'] == 'valve'
+
+    def test_no_subcategory_keeps_parent_only(self, wired, topic, article):
+        pp.publish_article(topic, article, title='T')
+        cs, en = wired['create_draft']
+        assert cs['category_ids'] == [9]
+        assert en['category_ids'] == [12]
+
+    def test_subcategory_without_en_equivalent(self, wired, topic, article):
+        article['subcategory'] = 'cesko-slovensko'
+        pp.publish_article(topic, article, title='T')
+        cs, en = wired['create_draft']
+        assert cs['category_ids'] == [9, 33]
+        assert en['category_ids'] == [12]  # EN ekvivalent neexistuje
+
+    def test_unknown_subcategory_ignored(self, wired, topic, article):
+        article['subcategory'] = 'nesmysl'
+        pp.publish_article(topic, article, title='T')
+        cs, en = wired['create_draft']
+        assert cs['category_ids'] == [9]
+        assert en['category_ids'] == [12]
+        published = [l for l in wired['log'] if l['action'] == 'published']
+        assert published[0]['subcategory'] is None
+
+    def test_topic_override_beats_article(self, wired, topic, article):
+        """manual_article --category má přednost před LLM klasifikací."""
+        topic['subcategory'] = 'indie'
+        article['subcategory'] = 'valve'
+        pp.publish_article(topic, article, title='T')
+        assert wired['create_draft'][0]['category_ids'] == [9, 66]
+
+    def test_category_ids_constant_not_mutated(self, wired, topic, article):
+        article['subcategory'] = 'aaa'
+        pp.publish_article(topic, article, title='T')
+        assert pp.CATEGORY_IDS == {'cs': [9], 'en': [12]}

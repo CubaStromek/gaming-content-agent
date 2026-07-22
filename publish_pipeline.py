@@ -30,7 +30,7 @@ import brand_logos
 import internal_linking
 import publish_log
 from article_postprocess import sanitize_article_html
-from models import VALID_STATUS_TAGS
+from models import VALID_STATUS_TAGS, SUBCATEGORY_IDS
 from logger import setup_logger
 from fb_generator.generate_fb_post import generate_fb_post
 
@@ -344,6 +344,24 @@ def publish_article(topic, article, title, run_id=None, source='auto',
     status_tag = normalize_status_tag(topic.get('status_tag'))
     log.info("Status tag: '%s'", status_tag)
 
+    # Rubriky: vždy Zprávy/News + volitelná podrubrika. Klasifikuje LLM při
+    # psaní článku (article['subcategory']), ruční publikace může přebít
+    # přes topic['subcategory'] (manual_article --category).
+    subcategory = topic.get('subcategory') or article.get('subcategory')
+    cs_category_ids = list(CATEGORY_IDS['cs'])
+    en_category_ids = list(CATEGORY_IDS['en'])
+    if subcategory:
+        sub_ids = SUBCATEGORY_IDS.get(subcategory)
+        if sub_ids:
+            cs_category_ids.append(sub_ids['cs'])
+            if sub_ids['en']:
+                en_category_ids.append(sub_ids['en'])
+            log.info("Podrubrika: '%s' (cs=%d, en=%s)",
+                     subcategory, sub_ids['cs'], sub_ids['en'])
+        else:
+            log.warning("Neznámá podrubrika '%s' — publikuji jen do Zpráv", subcategory)
+            subcategory = None
+
     source_info = '\n'.join(source_urls) if source_urls else None
     focus_kw = resolve_focus_keyword(article.get('focus_keyword_cs'), game_name, title, lang='cs')
 
@@ -359,7 +377,7 @@ def publish_article(topic, article, title, run_id=None, source='auto',
     cs_result, cs_err = wp_publisher.create_draft(
         title=title,
         content=cs_content,
-        category_ids=CATEGORY_IDS['cs'],
+        category_ids=cs_category_ids,
         tag_names=tag_names,
         lang='cs',
         featured_image_id=featured_image_id,
@@ -395,7 +413,7 @@ def publish_article(topic, article, title, run_id=None, source='auto',
         en_result, en_err = wp_publisher.create_draft(
             title=en_title,
             content=en_content,
-            category_ids=CATEGORY_IDS['en'],
+            category_ids=en_category_ids,
             tag_names=tag_names,
             lang='en',
             featured_image_id=featured_image_id,
@@ -456,6 +474,7 @@ def publish_article(topic, article, title, run_id=None, source='auto',
         'title': title,
         'score': topic.get('virality_score', 0),
         'status_tag': status_tag,
+        'subcategory': subcategory,
         'game_name': game_name,
         'cs_post_id': cs_result['id'],
         'en_post_id': en_result['id'] if en_result else None,
