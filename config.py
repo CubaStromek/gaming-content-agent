@@ -50,7 +50,11 @@ WP_URL = os.getenv("WP_URL", "")
 WP_USER = os.getenv("WP_USER", "")
 WP_APP_PASSWORD = os.getenv("WP_APP_PASSWORD", "")
 
-# RAWG.io API (herní databáze - obrázky)
+# IGDB / Twitch API (herní databáze - obrázky, primární zdroj od 8/2026)
+IGDB_CLIENT_ID = os.getenv("IGDB_CLIENT_ID", "")
+IGDB_CLIENT_SECRET = os.getenv("IGDB_CLIENT_SECRET", "")
+
+# RAWG.io API (herní databáze - obrázky, fallback — dlouhodobě nespolehlivé)
 RAWG_API_KEY = os.getenv("RAWG_API_KEY", "")
 
 # X.com (Twitter) API

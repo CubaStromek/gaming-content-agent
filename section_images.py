@@ -11,6 +11,7 @@ import json
 import re
 import requests
 import config
+import igdb_client
 import wp_publisher
 from logger import setup_logger
 
@@ -155,8 +156,10 @@ def get_or_fetch_screenshots(game_name, max_count=5):
         log.info("Screenshoty pro Story Mode: %d z WP cache (title dedup)", len(existing))
         return build_section_images_meta(existing)
 
-    # 2. Fallback RAWG → upload
-    urls = fetch_rawg_screenshots(game_name, max_count=max_count)
+    # 2. Fallback stažení: IGDB (primární od výpadku RAWG 8/2026) → RAWG → upload
+    urls = igdb_client.fetch_screenshots(game_name, max_count=max_count)
+    if not urls:
+        urls = fetch_rawg_screenshots(game_name, max_count=max_count)
     if not urls:
         return None
 
@@ -185,7 +188,7 @@ def get_or_fetch_screenshots(game_name, max_count=5):
     if not uploaded:
         return None
 
-    log.info("Screenshoty pro Story Mode: %d uploadnuto z RAWG", len(uploaded))
+    log.info("Screenshoty pro Story Mode: %d uploadnuto (IGDB/RAWG)", len(uploaded))
     return build_section_images_meta(uploaded)
 
 

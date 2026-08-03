@@ -1,5 +1,15 @@
 # Changelog — Gaming Content Agent
 
+## 2026-08-03 — Migrace obrázků na IGDB + featured fallback řetěz (výpadek RAWG)
+
+RAWG.io od 2. 8. ~20:00 kompletně nedostupné (origin infrastruktura vč. vlastní status stránky, Cloudflare 522/521; služba je dlouhodobě neudržovaná — celodenní výpadek už v 5/2024). Důsledek: 4 články vyšly bez featured image, Beast of Reincarnation navíc bez Story Mode screenshotů.
+
+- **Nový modul `igdb_client.py`** — IGDB (databáze her od Twitche) jako **primární zdroj obrázků**: OAuth2 client credentials na id.twitch.tv (token cache v procesu, 1× refresh při 401), fulltext search s preferencí výsledku se screenshoty/artworky (fulltext často vrací DLC bez obrázků), featured = artwork → screenshot → cover, Story Mode screenshoty `t_screenshot_huge`. Config: `IGDB_CLIENT_ID` / `IGDB_CLIENT_SECRET` v .env; bez credentials se IGDB tiše přeskočí.
+- **`publish_pipeline.search_game_image()`** — nový wrapper IGDB → RAWG fallback; volá ho `resolve_featured_image` i `backfill_featured.py`. `section_images.get_or_fetch_screenshots` a `dayreel.download_image` stejně.
+- **Featured image fallback řetěz** (`resolve_featured_image`): po IGDB/RAWG a brand logu nově pokračuje → **první Story Mode screenshot z WP cache** → **generické GAMEfo logo** (`brand_logos.GAMEFO_LOGO = 401`). Článek už nikdy nevyjde bez náhledového obrázku.
+- **Nový skript `backfill_featured.py`** — idempotentní zpětná oprava: čte poslední publish_log záznamy, přes WP REST doplní chybějící featured (0 nebo placeholder logo → povýší) i `gameinfo_section_images` meta (aktivuje Story Mode). `--limit`, `--dry-run`. Spuštěn 3. 8.: BG3, Wolverine EN, God of War doplněny ze screenshot cache; Beast of Reincarnation dočasně GAMEfo logo.
+- Testy: `tests/test_igdb_client.py` (12, mockované HTTP) + autouse fixture v `conftest.py` vyprazdňující IGDB credentials (žádná živá volání z testů). Celkem 298 testů.
+
 ## 2026-07-22 — Automatické zařazování do podrubrik Zpráv/News
 
 Články šly dosud natvrdo jen do rubriky Zprávy (9) / News (12). Nově je Claude při psaní článku rovnou klasifikuje do podrubriky:

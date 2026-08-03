@@ -9,6 +9,12 @@ from typing import Optional
 
 # Media IDs verified via WP REST API on 2026-05-17.
 # Update if logos are replaced; values are wp_posts.ID of attachment.
+
+# Generické GAMEfo logo (site icon, 511x459) — úplně poslední fallback featured
+# image, když selže RAWG i brand match (výpadek RAWG.io 2026-08-02/03 nechal
+# články úplně bez náhledu). Media ID ověřeno přes REST 2026-08-03.
+GAMEFO_LOGO = 401
+
 BRAND_LOGOS = {
     'playstation': 7070,
     'ps plus': 7458,

@@ -12,6 +12,19 @@ from unittest.mock import patch
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import config  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_live_igdb(monkeypatch):
+    """Vyprázdní IGDB credentials — testy nesmí dělat živá volání na Twitch/IGDB.
+
+    (igdb_client.is_configured() → False → celá IGDB větev se přeskočí; testy,
+    které IGDB testují, si credentials nastaví vlastním monkeypatchem.)
+    """
+    monkeypatch.setattr(config, 'IGDB_CLIENT_ID', '', raising=False)
+    monkeypatch.setattr(config, 'IGDB_CLIENT_SECRET', '', raising=False)
+
 
 @pytest.fixture
 def sample_articles():

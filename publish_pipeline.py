@@ -22,6 +22,7 @@ from datetime import datetime
 import requests
 
 import config
+import igdb_client
 import wp_publisher
 import youtube_embed
 import section_images
@@ -81,6 +82,14 @@ def publish_lock(wait=False, wait_timeout=900, poll_interval=10):
         except Exception:
             pass
         fp.close()
+
+
+def search_game_image(game_name):
+    """Obrázek hry: IGDB (primární od výpadku RAWG 8/2026) → RAWG fallback."""
+    image_url = igdb_client.search_game_image(game_name)
+    if image_url:
+        return image_url
+    return search_rawg_image(game_name)
 
 
 def search_rawg_image(game_name):
@@ -199,9 +208,9 @@ def resolve_featured_image(game_name, title, topic=None):
     # RAWG screenshoty → WP meta pro Story Mode v appce (ne inline v HTML)
     section_images_meta = section_images.get_or_fetch_screenshots(game_name)
 
-    image_url = search_rawg_image(game_name)
+    image_url = search_game_image(game_name)
     if image_url:
-        log.info("RAWG image nalezen, uploaduji...")
+        log.info("Game image nalezen, uploaduji...")
         media_id, _, err = wp_publisher.upload_media(image_url, title=title)
         if media_id:
             featured_image_id = media_id
@@ -214,6 +223,21 @@ def resolve_featured_image(game_name, title, topic=None):
         if brand_logo_id:
             featured_image_id = brand_logo_id
             log.info("RAWG nenasel image, pouzivam brand logo (ID: %d)", brand_logo_id)
+
+    # Poslední záchrany — článek nesmí vyjít bez náhledu (výpadek RAWG.io
+    # 2026-08-02/03 nechal 4 články bez featured image): nejdřív první Story
+    # Mode screenshot z WP cache, pak generické GAMEfo logo.
+    if not featured_image_id and section_images_meta:
+        first_screenshot = json.loads(section_images_meta)[0].get('media_id')
+        if first_screenshot:
+            featured_image_id = first_screenshot
+            log.info("RAWG i brand fallback selhaly, featured = prvni Story Mode "
+                     "screenshot (ID: %d)", featured_image_id)
+
+    if not featured_image_id:
+        featured_image_id = brand_logos.GAMEFO_LOGO
+        log.info("Zadny obrazek k dispozici, featured = genericke GAMEfo logo (ID: %d)",
+                 featured_image_id)
 
     return featured_image_id, section_images_meta, image_url
 
