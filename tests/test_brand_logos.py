@@ -27,7 +27,7 @@ class TestResolveBrandLogoStrict:
         assert bl.resolve_brand_logo_strict(name) == bl.BRAND_LOGOS[expected_brand]
 
     @pytest.mark.parametrize('name', [
-        # skutečné hry obsahující brand token nesmí dostat logo (jdou na RAWG)
+        # skutečné hry obsahující brand token nesmí dostat logo (jdou do IGDB)
         'Microsoft Flight Simulator',
         'EA Sports FC 26',
         'Steamworld Dig',
@@ -47,7 +47,7 @@ class TestResolveBrandLogoStrict:
 
 
 class TestResolveBrandLogoFallback:
-    """Původní volná shoda (fallback po RAWG) zůstává funkční."""
+    """Původní volná shoda (fallback po hledání obrázku) zůstává funkční."""
 
     def test_substring_match_in_title(self):
         assert bl.resolve_brand_logo('Gothic', 'Gothic míří na Xbox Game Pass') \

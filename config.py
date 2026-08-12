@@ -54,7 +54,9 @@ WP_APP_PASSWORD = os.getenv("WP_APP_PASSWORD", "")
 IGDB_CLIENT_ID = os.getenv("IGDB_CLIENT_ID", "")
 IGDB_CLIENT_SECRET = os.getenv("IGDB_CLIENT_SECRET", "")
 
-# RAWG.io API (herní databáze - obrázky, fallback — dlouhodobě nespolehlivé)
+# RAWG.io API — LEGACY. Z pipeline vyhozeno 2026-08-12 (po výpadku 8/2026
+# nenaběhlo, samé timeouty). Zůstává jen kvůli scripts/oneoff/, nové kódy
+# obrázky berou z igdb_client.
 RAWG_API_KEY = os.getenv("RAWG_API_KEY", "")
 
 # X.com (Twitter) API

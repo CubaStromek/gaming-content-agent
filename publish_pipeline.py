@@ -1,7 +1,7 @@
 """Sdílená publish pipeline pro auto_publish.py a manual_article.py.
 
 Vše po vygenerování článku (article_writer.write_article) až po publish_log:
-YouTube embed, featured image (brand-first → RAWG → brand fallback), focus
+YouTube embed, featured image (brand-first → IGDB → brand fallback), focus
 keyword, publikace CZ+EN na WP, FB post obrázky, social media, publish_log.
 
 Vzniklo extrakcí duplicitního kódu z auto_publish.py a manual_article.py —
@@ -84,35 +84,17 @@ def publish_lock(wait=False, wait_timeout=900, poll_interval=10):
         fp.close()
 
 
-def search_game_image(game_name):
-    """Obrázek hry: IGDB (primární od výpadku RAWG 8/2026) → RAWG fallback."""
-    image_url = igdb_client.search_game_image(game_name)
-    if image_url:
-        return image_url
-    return search_rawg_image(game_name)
+def search_game_image(game_name, exact_only=False):
+    """Obrázek hry z IGDB. Vrací URL nebo None.
 
+    `exact_only` = dotaz je značka, ne hra: uznat jen přesnou shodu názvu
+    (viz `igdb_client.name_matches`).
 
-def search_rawg_image(game_name):
-    """Vyhledá obrázek hry na RAWG.io. Vrací URL nebo None."""
-    if not config.RAWG_API_KEY:
-        return None
-
-    try:
-        resp = requests.get(
-            'https://api.rawg.io/api/games',
-            params={'key': config.RAWG_API_KEY, 'search': game_name, 'page_size': 1},
-            timeout=10,
-        )
-        if resp.status_code != 200:
-            return None
-
-        results = resp.json().get('results', [])
-        if results and results[0].get('background_image'):
-            return results[0]['background_image']
-    except Exception as e:
-        log.warning("RAWG search error for '%s': %s", game_name, e)
-
-    return None
+    RAWG.io tu byl do 2026-08-12 jako fallback. Vyhozen: po výpadku 8/2026 se
+    už nezvedl, každé volání končilo `Read timed out (10 s)` — přidával ~20 s
+    na článek a v srpnu nezachránil ani jeden obrázek.
+    """
+    return igdb_client.search_game_image(game_name, exact_only=exact_only)
 
 
 def extract_excerpt(html_content, max_len=200):
@@ -139,33 +121,47 @@ def normalize_status_tag(raw_tag):
 
 
 def resolve_game_name(topic):
-    """Název hry pro RAWG/SEO/social: game_name z tématu, fallback na topic."""
+    """Název hry pro IGDB/SEO/social: game_name z tématu, fallback na topic."""
     raw = topic.get('game_name', '')
     topic_name = topic.get('topic', 'Neznámé')
     return raw if (raw and raw != 'N/A') else topic_name
 
 
-def embed_youtube(article, game_name):
+def embed_youtube(article, game_name, topic=None):
     """Vloží YouTube embed do CZ i EN verze (in-place na dict `article`).
+
+    Články o konkrétní hře dostávají video VŽDY — dřívější keyword brána
+    (embed jen při zmínce trailer/video/gameplay v textu) byla křehká:
+    Onimusha preview 6. 8. 2026 vyšla bez traileru, protože vygenerovaný
+    text žádné z klíčových slov nepoužil.
+
+    Keyword brána zůstává jen tam, kde by YouTube query vracela náhodná
+    videa: témata bez reálné hry (game_name=N/A → query je celá česká věta
+    tématu) a brand témata (PlayStation, Steam… — viz resolve_featured_image).
 
     Video se hledá JEDNOU a stejné ID se vkládá do obou verzí — dřívější kód
     hledal až 3× (2 yt-dlp subprocesy navíc) a CZ/EN mohly dostat různá videa.
     """
-    cs_has_video = youtube_embed.has_video_reference(article['cs'], lang='cs')
-    en_has_video = bool(article.get('en')) and youtube_embed.has_video_reference(article['en'], lang='en')
+    raw_game = (topic or {}).get('game_name', game_name)
+    is_real_game = (bool(raw_game) and raw_game != 'N/A'
+                    and not brand_logos.resolve_brand_logo_strict(game_name))
 
-    if not (cs_has_video or en_has_video):
-        log.info("Žádná zmínka o videu v článku, přeskakuji YouTube embed")
-        return article
+    if not is_real_game:
+        cs_has_video = youtube_embed.has_video_reference(article['cs'], lang='cs')
+        en_has_video = bool(article.get('en')) and youtube_embed.has_video_reference(article['en'], lang='en')
+        if not (cs_has_video or en_has_video):
+            log.info("Téma bez konkrétní hry a bez zmínky o videu, přeskakuji YouTube embed")
+            return article
 
     query = f"{game_name} official trailer 2026"
     log.info("Hledám YouTube video: %s", query)
-    videos = youtube_embed.search_youtube(query)
-    if not videos:
+    # Titulkový filtr jen u reálné hry — u N/A témat je game_name celá věta
+    video = youtube_embed.find_embeddable_video(
+        query, game_name=game_name if is_real_game else None)
+    if not video:
         log.warning("YouTube video nenalezeno pro: %s", query)
         return article
 
-    video = videos[0]
     log.info("Nalezeno video: %s (%s)", video['title'], video['url'])
     article['cs'] = youtube_embed.force_embed_youtube(article['cs'], video['id'], lang='cs')
     if article.get('en'):
@@ -173,42 +169,71 @@ def embed_youtube(article, game_name):
     return article
 
 
-def resolve_featured_image(game_name, title, topic=None):
-    """Featured image: brand-first → RAWG upload → brand logo fallback.
+def resolve_featured_image(game_name, title, topic=None, article=None):
+    """Featured image: brand-first → IGDB upload → brand logo fallback.
 
     Vrací (featured_image_id, section_images_meta, image_url).
-    `image_url` je VŽDY definované (None pokud se RAWG nepoužil) — původní
-    kód ho přiřazoval jen v RAWG větvi, takže brand téma buď spadlo na
+    `image_url` je VŽDY definované (None pokud se obrázek nehledal) — původní
+    kód ho přiřazoval jen v obrázkové větvi, takže brand téma buď spadlo na
     UnboundLocalError, nebo použilo obrázek předchozího tématu ve smyčce.
+
+    `article` je výstup z article_writer — bere se z něj ENTITA (viz
+    `_resolve_search_entity`), kanonický anglický název subjektu pro témata,
+    kde analyzer žádnou konkrétní hru neurčil.
     """
     featured_image_id = brand_logos.resolve_brand_logo_strict(game_name)
     section_images_meta = None
     image_url = None
 
     if featured_image_id:
-        log.info("Brand tema '%s' → brand logo (ID: %d), RAWG preskocen",
+        log.info("Brand tema '%s' → brand logo (ID: %d), IGDB preskocen",
                  game_name, featured_image_id)
         return featured_image_id, section_images_meta, image_url
 
     # Bez reálné hry (analyzer vrátil game_name = N/A) je game_name jen fallback
-    # na téma — celá česká věta. RAWG je databáze her a na takový dotaz VŽDY
-    # vrátí nesmyslnou hru (viz "Petice za záchranu disků" → náhodný screenshot),
-    # a brand fallback pod RAWG se pak nikdy nespustí. Když tedy žádná hra není,
-    # zkus nejdřív brand logo z titulku/tématu/SEO a RAWG přeskoč.
+    # na téma — celá česká věta. IGDB je databáze her a na takový dotaz vrátí
+    # nesmyslnou hru (viz "Petice za záchranu disků" → náhodný screenshot),
+    # a brand fallback pod ním se pak nikdy nespustí. Když tedy žádná hra není,
+    # zkus nejdřív brand logo z titulku/tématu/SEO a hledání přeskoč.
     raw_game = (topic or {}).get('game_name', '')
     has_real_game = bool(raw_game) and raw_game != 'N/A'
-    if not has_real_game:
+    entity_name = (article or {}).get('entity_name')
+    entity_type = (article or {}).get('entity_type')
+
+    # Brand-first zkratka NEplatí, když LLM označí entitu za hru: „Pokémon
+    # Pokopia" obsahuje značku Pokémon, ale je to konkrétní hra a zaslouží si
+    # vlastní artwork, ne obecné logo. Brand logo ji pak stejně zachytí ve
+    # fallbacku níž, pokud IGDB nic nenajde.
+    if not has_real_game and entity_type != 'hra':
         seo = (topic or {}).get('seo_keywords', '')
-        brand_id = brand_logos.resolve_brand_logo(title, game_name, seo)
+        # entity_name je kanonický anglický název ("Nintendo"), takže se trefí
+        # do BRAND_LOGOS i tam, kde je titulek česky a skloňovaný.
+        brand_id = brand_logos.resolve_brand_logo(entity_name, title, game_name, seo)
         if brand_id:
-            log.info("Bez reálné hry, brand match v titulku/tématu → brand logo "
-                     "(ID: %d), RAWG preskocen", brand_id)
+            log.info("Bez reálné hry, brand match (entita '%s') → brand logo "
+                     "(ID: %d), IGDB preskocen", entity_name or '—', brand_id)
             return brand_id, section_images_meta, image_url
 
-    # RAWG screenshoty → WP meta pro Story Mode v appce (ne inline v HTML)
-    section_images_meta = section_images.get_or_fetch_screenshots(game_name)
+    # Co poslat do IGDB. U témat bez konkrétní hry je game_name celá česká věta
+    # tématu — takový dotaz vrací náhodnou hru, takže se použije ENTITA z
+    # article_writeru, a když chybí, nehledá se vůbec.
+    if has_real_game:
+        search_name, exact_only = game_name, False
+    elif entity_name:
+        # Značka bez vlastního loga (Roblox…): IGDB smí odpovědět, ale jen když
+        # opravdu trefí tu značku — "Pokémon" jinak vrátí "Name That Pokemon".
+        search_name, exact_only = entity_name, (entity_type == 'znacka')
+        log.info("Bez konkrétní hry, hledám podle entity '%s' (%s)",
+                 entity_name, entity_type or 'typ neznámý')
+    else:
+        log.info("Bez použitelné entity pro '%s', IGDB preskocen", game_name)
+        return brand_logos.GAMEFO_LOGO, section_images_meta, image_url
 
-    image_url = search_game_image(game_name)
+    # Screenshoty → WP meta pro Story Mode v appce (ne inline v HTML)
+    if not exact_only:
+        section_images_meta = section_images.get_or_fetch_screenshots(search_name)
+
+    image_url = search_game_image(search_name, exact_only=exact_only)
     if image_url:
         log.info("Game image nalezen, uploaduji...")
         media_id, _, err = wp_publisher.upload_media(image_url, title=title)
@@ -219,19 +244,19 @@ def resolve_featured_image(game_name, title, topic=None):
             log.warning("Upload image selhal: %s", err)
 
     if not featured_image_id:
-        brand_logo_id = brand_logos.resolve_brand_logo(game_name, title)
+        brand_logo_id = brand_logos.resolve_brand_logo(entity_name, game_name, title)
         if brand_logo_id:
             featured_image_id = brand_logo_id
-            log.info("RAWG nenasel image, pouzivam brand logo (ID: %d)", brand_logo_id)
+            log.info("IGDB nenasel image, pouzivam brand logo (ID: %d)", brand_logo_id)
 
-    # Poslední záchrany — článek nesmí vyjít bez náhledu (výpadek RAWG.io
+    # Poslední záchrany — článek nesmí vyjít bez náhledu (výpadek zdroje obrázků
     # 2026-08-02/03 nechal 4 články bez featured image): nejdřív první Story
     # Mode screenshot z WP cache, pak generické GAMEfo logo.
     if not featured_image_id and section_images_meta:
         first_screenshot = json.loads(section_images_meta)[0].get('media_id')
         if first_screenshot:
             featured_image_id = first_screenshot
-            log.info("RAWG i brand fallback selhaly, featured = prvni Story Mode "
+            log.info("IGDB i brand fallback selhaly, featured = prvni Story Mode "
                      "screenshot (ID: %d)", featured_image_id)
 
     if not featured_image_id:
@@ -356,10 +381,11 @@ def publish_article(topic, article, title, run_id=None, source='auto',
         article['en'] = sanitize_article_html(article['en'])
 
     # YouTube embed (jedno hledání pro obě verze)
-    article = embed_youtube(article, game_name)
+    article = embed_youtube(article, game_name, topic)
 
     # Featured image + Story Mode screenshoty
-    featured_image_id, section_images_meta, image_url = resolve_featured_image(game_name, title, topic)
+    featured_image_id, section_images_meta, image_url = resolve_featured_image(
+        game_name, title, topic, article)
 
     # SEO keywords jako tagy
     seo_keywords = topic.get('seo_keywords', '')

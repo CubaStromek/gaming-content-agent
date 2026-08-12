@@ -126,3 +126,77 @@ class TestFetchScreenshots:
         cover_only = {'name': 'Y', 'cover': {'image_id': 'cov9'}}
         wire_post(monkeypatch, [FakeResponse(payload=[cover_only])])
         assert igdb_client.fetch_screenshots('Y') == []
+
+
+class TestExactOnly:
+    """Značka bez vlastního loga: IGDB smí odpovědět jen na přesnou shodu."""
+
+    def test_name_matches_accepts_exact_and_prefix(self):
+        assert igdb_client.name_matches('Roblox', 'Roblox')
+        assert igdb_client.name_matches('Roblox', 'Roblox Studio')
+        assert igdb_client.name_matches('Pokémon', 'Pokemon Legends')  # bez diakritiky
+
+    def test_name_matches_rejects_incidental_hit(self):
+        assert not igdb_client.name_matches('Pokémon', 'Name That Pokemon')
+        assert not igdb_client.name_matches(
+            'Nintendo', 'Animal Crossing: New Horizons - Nintendo Switch 2 Edition')
+
+    def test_exact_only_discards_mismatch(self, monkeypatch):
+        junk = {'name': 'Name That Pokemon', 'artworks': [{'image_id': 'a1'}]}
+        wire_post(monkeypatch, [FakeResponse(payload=[junk])])
+        assert igdb_client.search_game_image('Pokémon', exact_only=True) is None
+
+    def test_exact_only_keeps_match(self, monkeypatch):
+        hit = {'name': 'Roblox', 'artworks': [{'image_id': 'a1'}]}
+        wire_post(monkeypatch, [FakeResponse(payload=[hit])])
+        assert 'a1' in igdb_client.search_game_image('Roblox', exact_only=True)
+
+    def test_default_is_unrestricted(self, monkeypatch):
+        """Reálná hra: fulltext smí vrátit i edici/pokračování."""
+        wire_post(monkeypatch, [FakeResponse(payload=[{'name': 'The Witcher IV',
+                                                       'artworks': [{'image_id': 'a1'}]}])])
+        assert 'a1' in igdb_client.search_game_image('The Witcher')
+
+
+class TestNonAsciiBody:
+    """Regrese: názvy s diakritikou (Pokémon, Ghost of Yōtei) vracely 400.
+
+    `requests` počítá Content-Length jako `len(str)` = počet ZNAKŮ, ale tělo
+    odešle v UTF-8 → hlavička kratší než data, server ořízne koncový `;`
+    a IGDB odpoví „Syntax Error: Missing `;` at end of query".
+    """
+
+    def test_body_is_utf8_bytes(self, monkeypatch):
+        sent = {}
+
+        def fake_post(url, **kwargs):
+            if url.startswith(igdb_client._TOKEN_URL):
+                return FakeResponse(payload={'access_token': 'tok', 'expires_in': 3600})
+            sent['data'] = kwargs['data']
+            return FakeResponse(payload=[GAME_FULL])
+
+        monkeypatch.setattr(igdb_client.requests, 'post', fake_post)
+        igdb_client.search_game_image('Ghost of Yōtei')
+
+        assert isinstance(sent['data'], bytes)
+        assert 'Yōtei'.encode('utf-8') in sent['data']
+        assert sent['data'].endswith(b';')
+
+    def test_content_length_matches_byte_length(self, monkeypatch):
+        """Skutečná příčina: hlavička se musí shodovat s délkou odeslaných dat."""
+        sent = {}
+
+        def fake_post(url, **kwargs):
+            if url.startswith(igdb_client._TOKEN_URL):
+                return FakeResponse(payload={'access_token': 'tok', 'expires_in': 3600})
+            sent['prepared'] = requests.Request('POST', url, data=kwargs['data']).prepare()
+            return FakeResponse(payload=[GAME_FULL])
+
+        monkeypatch.setattr(igdb_client.requests, 'post', fake_post)
+        igdb_client.fetch_screenshots('Pokémon TCG Pocket')
+
+        prepared = sent['prepared']
+        body = prepared.body
+        if isinstance(body, str):  # str tělo → urllib3 ho pošle jako UTF-8
+            body = body.encode('utf-8')
+        assert int(prepared.headers['Content-Length']) == len(body)

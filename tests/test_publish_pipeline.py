@@ -48,6 +48,7 @@ def wired(monkeypatch):
     monkeypatch.setattr(pp.wp_publisher, 'upload_media', lambda url, title='': (555, 'https://wp/img.jpg', None))
     monkeypatch.setattr(pp.wp_publisher, 'strip_first_heading', lambda h: h)
     monkeypatch.setattr(pp.youtube_embed, 'has_video_reference', lambda h, lang='cs': False)
+    monkeypatch.setattr(pp.youtube_embed, 'find_embeddable_video', lambda q, game_name=None: None)
     monkeypatch.setattr(pp.section_images, 'get_or_fetch_screenshots', lambda g: None)
     monkeypatch.setattr(pp.internal_linking, 'enrich_with_internal_links',
                         lambda html, tags, lang='cs': html)
@@ -55,7 +56,7 @@ def wired(monkeypatch):
                         lambda **kw: (calls['social'].append(kw) or {'x': 'ok'}))
     monkeypatch.setattr(pp.publish_log, 'log_decision', lambda d: calls['log'].append(d))
     monkeypatch.setattr(pp, 'generate_fb_post', lambda **kw: calls['fb'].append(kw) or kw['output_path'])
-    monkeypatch.setattr(pp, 'search_rawg_image', lambda g: 'https://rawg.io/img.jpg')
+    monkeypatch.setattr(pp, 'search_game_image', lambda g, **kw: 'https://images.igdb.com/img.jpg')
     return calls
 
 
@@ -68,28 +69,28 @@ class TestResolveFeaturedImage:
         assert meta is None
         assert image_url is None  # definované, žádný UnboundLocalError / stale hodnota
 
-    def test_rawg_topic_returns_image_url(self, monkeypatch):
+    def test_game_topic_returns_image_url(self, monkeypatch):
         monkeypatch.setattr(pp.brand_logos, 'resolve_brand_logo_strict', lambda g: None)
         monkeypatch.setattr(pp.brand_logos, 'resolve_brand_logo', lambda *a: None)
         monkeypatch.setattr(pp.section_images, 'get_or_fetch_screenshots', lambda g: {'imgs': 1})
-        monkeypatch.setattr(pp, 'search_rawg_image', lambda g: 'https://rawg.io/x.jpg')
+        monkeypatch.setattr(pp, 'search_game_image', lambda g, **kw: 'https://images.igdb.com/x.jpg')
         monkeypatch.setattr(pp.wp_publisher, 'upload_media', lambda url, title='': (42, 'src', None))
         fid, meta, image_url = pp.resolve_featured_image(
             'Elden Ring', 'Titulek', {'game_name': 'Elden Ring'})
         assert fid == 42
-        assert image_url == 'https://rawg.io/x.jpg'
+        assert image_url == 'https://images.igdb.com/x.jpg'
 
-    def test_brand_news_no_real_game_uses_logo_not_rawg(self, monkeypatch):
-        """Regrese: game_name=N/A + brand v titulku → brand logo, NE RAWG.
+    def test_brand_news_no_real_game_uses_logo_not_search(self, monkeypatch):
+        """Regrese: game_name=N/A + brand v titulku → brand logo, NE herní DB.
 
         Reálný bug: 'Petice za záchranu disků na PlayStation' dostala náhodný
-        screenshot hry z RAWG, protože strict gate spadl na celé české větě
-        a brand fallback pod RAWG se nikdy nespustil (RAWG vždy něco vrátí).
+        screenshot hry, protože strict gate spadl na celé české větě a brand
+        fallback pod hledáním se nikdy nespustil (fulltext vždy něco vrátí).
         """
         monkeypatch.setattr(pp.brand_logos, 'resolve_brand_logo_strict', lambda g: None)
-        # RAWG by (jako vždy) něco vrátilo — nesmí se použít
-        monkeypatch.setattr(pp, 'search_rawg_image',
-                            lambda g: (_ for _ in ()).throw(AssertionError('RAWG nesmí běžet')))
+        # Fulltext by (jako vždy) něco vrátil — nesmí se použít
+        monkeypatch.setattr(pp, 'search_game_image',
+                            lambda g, **kw: (_ for _ in ()).throw(AssertionError('IGDB nesmí běžet')))
         topic = {
             'game_name': 'N/A',
             'seo_keywords': 'PlayStation, Sony',
@@ -102,6 +103,128 @@ class TestResolveFeaturedImage:
         assert fid == pp.brand_logos.BRAND_LOGOS['playstation']
         assert meta is None
         assert image_url is None
+
+
+class TestEntityDrivenSearch:
+    """ENTITA z article_writeru: kanonický anglický název subjektu.
+
+    Bez ní se do IGDB posílal `game_name`, což je u témat s game_name=N/A
+    celá česká věta ('Roblox v krizi: Podíl akcií padá o 70 %'). IGDB na to
+    nic nenajde → článek vyšel s generickým GAMEfo logem (10 ze 13 srpnových
+    placeholderů).
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_brand_gate(self, monkeypatch):
+        monkeypatch.setattr(pp.brand_logos, 'resolve_brand_logo_strict', lambda g: None)
+
+    NA_TOPIC = {'game_name': 'N/A', 'seo_keywords': '', 'topic': 'České téma bez hry'}
+
+    def test_no_entity_skips_search_entirely(self, monkeypatch):
+        """Chybí ENTITA → radši placeholder než náhodná hra z české věty."""
+        monkeypatch.setattr(pp, 'search_game_image',
+                            lambda g, **kw: (_ for _ in ()).throw(AssertionError('IGDB nesmí běžet')))
+        monkeypatch.setattr(pp.section_images, 'get_or_fetch_screenshots',
+                            lambda g: (_ for _ in ()).throw(AssertionError('screenshoty nesmí běžet')))
+
+        fid, meta, image_url = pp.resolve_featured_image(
+            'Herní průmysl propouští, krize pokračuje',
+            'Propouštění pokračuje i letos', self.NA_TOPIC)
+
+        assert fid == pp.brand_logos.GAMEFO_LOGO
+        assert image_url is None
+
+    def test_entity_game_is_searched_instead_of_czech_sentence(self, monkeypatch):
+        queried = []
+        monkeypatch.setattr(pp, 'search_game_image',
+                            lambda g, **kw: queried.append(g) or 'https://igdb/x.jpg')
+        monkeypatch.setattr(pp.section_images, 'get_or_fetch_screenshots', lambda g: None)
+        monkeypatch.setattr(pp.wp_publisher, 'upload_media', lambda url, **kw: (55, url, None))
+
+        article = {'entity_name': 'The Witcher', 'entity_type': 'hra'}
+        fid, meta, image_url = pp.resolve_featured_image(
+            'Witcher seriál na Netflixu – finální sezona se posouvá na 2027',
+            'Witcher se posouvá', self.NA_TOPIC, article)
+
+        assert queried == ['The Witcher']  # ne celá česká věta
+        assert fid == 55
+
+    def test_entity_brand_prefers_logo_over_igdb(self, monkeypatch):
+        monkeypatch.setattr(pp, 'search_game_image',
+                            lambda g, **kw: (_ for _ in ()).throw(AssertionError('IGDB nesmí běžet')))
+
+        article = {'entity_name': 'Devolver Digital', 'entity_type': 'znacka'}
+        fid, meta, image_url = pp.resolve_featured_image(
+            'Devolver Digital chce z burzy', 'Devolver mizí z burzy',
+            self.NA_TOPIC, article)
+
+        assert fid == pp.brand_logos.BRAND_LOGOS['devolver']
+
+    def test_brand_without_logo_uses_exact_match_gate(self, monkeypatch):
+        """Značka bez loga smí do IGDB, ale jen na přesnou shodu názvu.
+
+        Brand match je vypnutý schválně — test ověřuje mechanismus, ne to,
+        která loga zrovna v media library jsou.
+        """
+        seen = {}
+        monkeypatch.setattr(pp.brand_logos, 'resolve_brand_logo', lambda *a: None)
+        monkeypatch.setattr(pp, 'search_game_image',
+                            lambda g, **kw: seen.update(kw, name=g) or None)
+
+        article = {'entity_name': 'Pokémon', 'entity_type': 'znacka'}
+        fid, meta, image_url = pp.resolve_featured_image(
+            'Bezpečnostní krize v Pokémon Company', 'Krize v Pokémon Company',
+            self.NA_TOPIC, article)
+
+        assert seen == {'exact_only': True, 'name': 'Pokémon'}
+        assert fid == pp.brand_logos.GAMEFO_LOGO  # neshoda → placeholder, ne cizí hra
+
+    def test_game_entity_with_brand_token_skips_brand_shortcut(self, monkeypatch):
+        """'Pokémon Pokopia' je hra, ne značka — musí dostat vlastní artwork.
+
+        Regrese: po doplnění Pokémon loga přebíral brand match i konkrétní hry,
+        které mají značku v názvu, a článek dostal obecné logo místo artworku.
+        """
+        queried = []
+        monkeypatch.setattr(pp, 'search_game_image',
+                            lambda g, **kw: queried.append(g) or 'https://igdb/x.jpg')
+        monkeypatch.setattr(pp.section_images, 'get_or_fetch_screenshots', lambda g: None)
+        monkeypatch.setattr(pp.wp_publisher, 'upload_media', lambda url, **kw: (77, url, None))
+
+        article = {'entity_name': 'Pokémon Pokopia', 'entity_type': 'hra'}
+        fid, meta, image_url = pp.resolve_featured_image(
+            'Pokémon Pokopia 2.0.0 mění ukládání', 'Pokopia 2.0.0 mění ukládání',
+            self.NA_TOPIC, article)
+
+        assert queried == ['Pokémon Pokopia']
+        assert fid == 77
+        assert fid != pp.brand_logos.BRAND_LOGOS['pokemon']
+
+    def test_game_entity_falls_back_to_brand_logo(self, monkeypatch):
+        """Když IGDB na hru nic nenajde, brand logo entity ji pořád zachytí."""
+        monkeypatch.setattr(pp, 'search_game_image', lambda g, **kw: None)
+        monkeypatch.setattr(pp.section_images, 'get_or_fetch_screenshots', lambda g: None)
+
+        article = {'entity_name': 'Pokémon Pokopia', 'entity_type': 'hra'}
+        fid, meta, image_url = pp.resolve_featured_image(
+            'Pokémon Pokopia 2.0.0 mění ukládání', 'Pokopia 2.0.0 mění ukládání',
+            self.NA_TOPIC, article)
+
+        assert fid == pp.brand_logos.BRAND_LOGOS['pokemon']
+
+    def test_real_game_ignores_entity(self, monkeypatch):
+        """Když analyzer hru zná, ENTITA do toho nemluví."""
+        queried = []
+        monkeypatch.setattr(pp, 'search_game_image',
+                            lambda g, **kw: queried.append((g, kw)) or None)
+        monkeypatch.setattr(pp.section_images, 'get_or_fetch_screenshots', lambda g: None)
+        monkeypatch.setattr(pp.brand_logos, 'resolve_brand_logo', lambda *a: None)
+
+        article = {'entity_name': 'Nintendo', 'entity_type': 'znacka'}
+        pp.resolve_featured_image('Elden Ring', 'Titulek',
+                                  {'game_name': 'Elden Ring'}, article)
+
+        assert queried == [('Elden Ring', {'exact_only': False})]
 
 
 class TestPublishArticle:
@@ -118,11 +241,11 @@ class TestPublishArticle:
         published = [l for l in wired['log'] if l['action'] == 'published']
         assert len(published) == 1
         assert published[0]['run_id'] == 'run1'
-        # brand téma → žádný RAWG obrázek → žádné FB obrázky (a žádný crash)
+        # brand téma → žádný stažený obrázek → žádné FB obrázky (a žádný crash)
         assert wired['fb'] == []
         assert wired['social'][0]['image_path'] is None
 
-    def test_rawg_path_generates_fb_images(self, wired, topic, article, monkeypatch):
+    def test_image_path_generates_fb_images(self, wired, topic, article, monkeypatch):
         monkeypatch.setattr(pp.brand_logos, 'resolve_brand_logo_strict', lambda g: None)
         monkeypatch.setattr(pp.brand_logos, 'resolve_brand_logo', lambda *a: None)
 
@@ -208,3 +331,50 @@ class TestSubcategory:
         article['subcategory'] = 'aaa'
         pp.publish_article(topic, article, title='T')
         assert pp.CATEGORY_IDS == {'cs': [9], 'en': [12]}
+
+
+class TestEmbedYoutube:
+    """Always-embed: článek o reálné hře dostane video VŽDY, keyword brána
+    zůstává jen pro témata bez hry (N/A) a brand témata.
+
+    Reálný případ: Onimusha preview 6. 8. 2026 vyšla bez traileru, protože
+    text nepoužil žádné z klíčových slov (trailer/video/gameplay…)."""
+
+    @pytest.fixture(autouse=True)
+    def _no_brand(self, monkeypatch):
+        monkeypatch.setattr(pp.brand_logos, 'resolve_brand_logo_strict', lambda g: None)
+
+    def test_real_game_embeds_without_video_mention(self, monkeypatch):
+        monkeypatch.setattr(pp.youtube_embed, 'find_embeddable_video',
+                            lambda q, game_name=None: {'id': 'vid123', 'title': 'Trailer', 'url': 'u'})
+        article = {'cs': '<p>Text bez klíčových slov o videu.</p><h2>Sekce</h2><p>Obsah.</p>',
+                   'en': '<p>Plain text, no keywords.</p><h2>Section</h2><p>Body.</p>'}
+        out = pp.embed_youtube(article, 'Onimusha: Way of the Sword',
+                               {'game_name': 'Onimusha: Way of the Sword'})
+        assert 'vid123' in out['cs'] and 'vid123' in out['en']
+        # embed patří na konec úvodu (před první <h2>), ne mezi nadpis a text
+        assert out['cs'].index('vid123') < out['cs'].index('<h2>')
+
+    def test_na_game_without_mention_skips(self, monkeypatch):
+        monkeypatch.setattr(pp.youtube_embed, 'find_embeddable_video',
+                            lambda q, game_name=None: (_ for _ in ()).throw(
+                                AssertionError('YouTube search nesmí běžet')))
+        article = {'cs': '<p>Petice za záchranu fyzických her sbírá podpisy.</p>', 'en': ''}
+        out = pp.embed_youtube(article, 'Petice za záchranu fyzických her', {'game_name': 'N/A'})
+        assert 'wp:embed' not in out['cs']
+
+    def test_na_game_with_mention_embeds(self, monkeypatch):
+        monkeypatch.setattr(pp.youtube_embed, 'find_embeddable_video',
+                            lambda q, game_name=None: {'id': 'vid456', 'title': 'T', 'url': 'u'})
+        article = {'cs': '<p>Sony zveřejnila nový trailer k výročí.</p>', 'en': ''}
+        out = pp.embed_youtube(article, 'PlayStation výročí', {'game_name': 'N/A'})
+        assert 'vid456' in out['cs']
+
+    def test_brand_game_without_mention_skips(self, monkeypatch):
+        monkeypatch.setattr(pp.brand_logos, 'resolve_brand_logo_strict', lambda g: 8905)
+        monkeypatch.setattr(pp.youtube_embed, 'find_embeddable_video',
+                            lambda q, game_name=None: (_ for _ in ()).throw(
+                                AssertionError('YouTube search nesmí běžet')))
+        article = {'cs': '<p>Steam slaví výročí slevami.</p>', 'en': ''}
+        out = pp.embed_youtube(article, 'Steam', {'game_name': 'Steam'})
+        assert 'wp:embed' not in out['cs']

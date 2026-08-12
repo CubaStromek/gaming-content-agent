@@ -83,7 +83,7 @@ python /Users/openclaw/AI-Projects/gaming-content-agent/manual_article.py \
 |----------|---------|-------|
 | `--topic` | ano | Popis tématu článku |
 | `--sources` | ano | Zdrojové URL oddělené čárkou (min 1, max 5) |
-| `--game-name` | ne | Název hry (default = topic). Použito pro IGDB/RAWG obrázek, SEO, social media. **Téma o platformě/značce bez konkrétní hry** (PlayStation, Xbox, Steam Deck, Steam Machine, Sony, Microsoft, Valve…): zadej brand (`--game-name "PlayStation"`) nebo `--game-name "N/A"` — jinak jde do IGDB/RAWG celý topic a featured image bude náhodný screenshot cizí hry |
+| `--game-name` | ne | Název hry (default = topic). Použito pro IGDB obrázek, SEO, social media. **Téma o platformě/značce bez konkrétní hry** (PlayStation, Xbox, Steam Deck, Steam Machine, Sony, Microsoft, Valve…): zadej brand (`--game-name "PlayStation"`) nebo `--game-name "N/A"` — jinak jde do IGDB celý topic a featured image bude náhodný screenshot cizí hry |
 | `--title` | ne | Vlastní CZ titulek (jinak vygeneruje Claude) |
 | `--seo-keywords` | ne | SEO klíčová slova oddělená čárkou |
 | `--status-tag` | ne | news, update, leak, critical, success, indie, review, trailer, rumor, info, finance, tema, preview |
@@ -91,7 +91,7 @@ python /Users/openclaw/AI-Projects/gaming-content-agent/manual_article.py \
 
 ### Pipeline
 
-`Zdroje → article_writer (CZ+EN) → YouTube embed → IGDB/RAWG obrázek → WordPress publish → FB post obrázky → Social media (X.com, FB, Threads)`
+`Zdroje → article_writer (CZ+EN) → YouTube embed → IGDB obrázek / brand logo → WordPress publish → FB post obrázky → Social media (X.com, FB, Threads)`
 
 ### Příklad z Telegramu
 

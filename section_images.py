@@ -1,10 +1,10 @@
 """
-Section Images - RAWG screenshoty pro Story Mode v mobilní appce.
-Stahuje short_screenshots z RAWG API a ukládá je jako WP post meta
+Section Images - IGDB screenshoty pro Story Mode v mobilní appce.
+Stahuje screenshoty z IGDB a ukládá je jako WP post meta
 (gameinfo_section_images). Na webu se nezobrazují — jen v appce.
 
-Před stažením z RAWG nejdřív hledá existující obrázky ve WP Media Library
-podle názvu hry — šetří RAWG API volání i WP storage.
+Před stažením z IGDB nejdřív hledá existující obrázky ve WP Media Library
+podle názvu hry — šetří IGDB volání i WP storage.
 """
 
 import json
@@ -92,50 +92,12 @@ def find_existing_screenshots(game_name, min_count=3, max_count=5):
         return []
 
 
-def fetch_rawg_screenshots(game_name, max_count=5):
-    """
-    Stáhne screenshoty hry z RAWG API (short_screenshots).
-    Vrací list URL obrázků (max max_count), prázdný list při chybě.
-    """
-    if not game_name or game_name == 'N/A':
-        return []
-
-    if not config.RAWG_API_KEY:
-        log.warning("RAWG_API_KEY není nastavený, přeskakuji screenshoty")
-        return []
-
-    try:
-        resp = requests.get(
-            'https://api.rawg.io/api/games',
-            params={'key': config.RAWG_API_KEY, 'search': game_name, 'page_size': 1},
-            timeout=10,
-        )
-        if resp.status_code != 200:
-            log.warning("RAWG API error %d pro '%s'", resp.status_code, game_name)
-            return []
-
-        results = resp.json().get('results', [])
-        if not results:
-            log.info("RAWG: žádné výsledky pro '%s'", game_name)
-            return []
-
-        screenshots = results[0].get('short_screenshots', [])
-        urls = [s['image'] for s in screenshots if s.get('image')]
-
-        urls = urls[:max_count]
-        log.info("RAWG screenshoty pro '%s': %d nalezeno", game_name, len(urls))
-        return urls
-
-    except Exception as e:
-        log.warning("RAWG screenshots error pro '%s': %s", game_name, e)
-        return []
-
 
 def get_or_fetch_screenshots(game_name, max_count=5):
     """
     Hlavní entry point pro Story Mode screenshoty.
     1. Hledá existující ve WP Media Library (žádný upload)
-    2. Fallback: stáhne z RAWG API a uploadne do WP
+    2. Fallback: stáhne z IGDB a uploadne do WP
 
     Vrací JSON string pro WP meta, nebo None.
     """
@@ -156,10 +118,8 @@ def get_or_fetch_screenshots(game_name, max_count=5):
         log.info("Screenshoty pro Story Mode: %d z WP cache (title dedup)", len(existing))
         return build_section_images_meta(existing)
 
-    # 2. Fallback stažení: IGDB (primární od výpadku RAWG 8/2026) → RAWG → upload
+    # 2. Fallback stažení: IGDB → upload
     urls = igdb_client.fetch_screenshots(game_name, max_count=max_count)
-    if not urls:
-        urls = fetch_rawg_screenshots(game_name, max_count=max_count)
     if not urls:
         return None
 
@@ -188,7 +148,7 @@ def get_or_fetch_screenshots(game_name, max_count=5):
     if not uploaded:
         return None
 
-    log.info("Screenshoty pro Story Mode: %d uploadnuto (IGDB/RAWG)", len(uploaded))
+    log.info("Screenshoty pro Story Mode: %d uploadnuto (IGDB)", len(uploaded))
     return build_section_images_meta(uploaded)
 
 

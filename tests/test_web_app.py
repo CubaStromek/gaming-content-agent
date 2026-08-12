@@ -232,3 +232,28 @@ class TestPathTraversal:
                 data='{"run_id":"../../etc","topic_index":0}',
             )
             assert resp.status_code == 400
+
+
+class TestGameSearchApi:
+    """/api/games/search — nahradilo /api/rawg/search po vyhození RAWG (8/2026)."""
+
+    def test_missing_query_returns_400(self, app_client):
+        resp = app_client.get('/api/games/search?q=')
+        assert resp.status_code == 400
+
+    def test_returns_games_from_igdb(self, app_client):
+        games = [{'id': 1, 'name': 'Elden Ring',
+                  'background': 'https://images.igdb.com/a.jpg',
+                  'screenshots': ['https://images.igdb.com/a.jpg']}]
+        with patch('igdb_client.is_configured', return_value=True), \
+             patch('igdb_client.search_games', return_value=games) as mock_search:
+            resp = app_client.get('/api/games/search?q=elden+ring')
+            assert resp.status_code == 200
+            assert json.loads(resp.data)['games'] == games
+            mock_search.assert_called_once_with('elden ring')
+
+    def test_igdb_failure_returns_502(self, app_client):
+        with patch('igdb_client.is_configured', return_value=True), \
+             patch('igdb_client.search_games', side_effect=RuntimeError('boom')):
+            resp = app_client.get('/api/games/search?q=x')
+            assert resp.status_code == 502

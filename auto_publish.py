@@ -30,7 +30,6 @@ log = setup_logger('auto_publish')
 # Zpětně kompatibilní aliasy — logika žije v publish_pipeline (sdílená
 # s manual_article.py).
 _publish_lock = publish_pipeline.publish_lock
-search_rawg_image = publish_pipeline.search_rawg_image
 _extract_excerpt = publish_pipeline.extract_excerpt
 
 # Publish limit na běh. Analyzátor vrací až 5 kandidátů seřazených podle

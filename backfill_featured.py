@@ -4,11 +4,11 @@ Vznikl při výpadku RAWG.io 2026-08-02/03: články tehdy vycházely úplně be
 náhledového obrázku (fallback řetěz končil u brand loga) a bez Story Mode
 (žádné screenshoty). Skript projde poslední záznamy v publish_log a u postů
 s featured_media 0 (nebo nouzovým GAMEfo logem) doplní obrázek stejným řetězem
-jako publish_pipeline: RAWG image → Story Mode screenshot → brand logo →
+jako publish_pipeline: IGDB image → Story Mode screenshot → brand logo →
 GAMEfo logo. Zároveň doplní chybějící gameinfo_section_images meta (aktivuje
 Story Mode) u témat s reálnou hrou.
 
-Idempotentní — bezpečné pouštět opakovaně. Po náběhu RAWG povýší nouzová
+Idempotentní — bezpečné pouštět opakovaně. Povýší nouzová
 GAMEfo loga na skutečné obrázky; posty s jiným featured obrázkem nechává být.
 
 Použití:
@@ -30,7 +30,7 @@ from publish_pipeline import search_game_image
 log = setup_logger(__name__)
 
 # featured_media hodnoty považované za "chybí obrázek" — 0 (žádný) a nouzové
-# GAMEfo logo, které má být při dostupném RAWG povýšeno na skutečný obrázek.
+# GAMEfo logo, které má být při dostupném zdroji povýšeno na skutečný obrázek.
 _PLACEHOLDER_IDS = (0, brand_logos.GAMEFO_LOGO)
 
 
@@ -87,8 +87,8 @@ def heal_entry(entry, dry_run=False):
     game_name = entry.get('game_name') or ''
     title = entry.get('title') or ''
     # resolve_game_name fallback: game_name == topic znamená, že analyzer žádnou
-    # reálnou hru neurčil (brand/obecné téma) — RAWG by na celou českou větu
-    # vrátil nesmysl, takže screenshoty ani RAWG image nezkoušíme.
+    # reálnou hru neurčil (brand/obecné téma) — IGDB by na celou českou větu
+    # vrátil nesmysl, takže screenshoty ani obrázek nezkoušíme.
     has_real_game = bool(game_name) and game_name != entry.get('topic')
 
     post_ids = [pid for pid in (entry.get('cs_post_id'), entry.get('en_post_id')) if pid]
@@ -118,7 +118,7 @@ def heal_entry(entry, dry_run=False):
     log.info("— '%s' (posty %s): featured chybí u %s, screenshoty u %s",
              title, post_ids, needs_featured or 'nikoho', needs_meta or 'nikoho')
 
-    # Screenshoty: existující meta z druhé jazykové verze, jinak WP cache/RAWG
+    # Screenshoty: existující meta z druhé jazykové verze, jinak WP cache/IGDB
     meta_json = existing_meta
     if not meta_json and has_real_game:
         meta_json = section_images.get_or_fetch_screenshots(game_name)

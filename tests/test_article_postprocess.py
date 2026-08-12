@@ -140,3 +140,34 @@ class TestSanitizeArticleHtml:
 
     def test_empty_input_passthrough(self):
         assert pp.sanitize_article_html('') == ''
+
+
+class TestParseEntity:
+    """ENTITA: kanonický název subjektu pro vyhledání náhledového obrázku."""
+
+    def test_game(self):
+        assert pp.parse_entity('Diablo IV | hra') == ('Diablo IV', 'hra')
+
+    def test_brand(self):
+        assert pp.parse_entity('Nintendo | znacka') == ('Nintendo', 'znacka')
+
+    def test_strips_quotes_and_markdown(self):
+        assert pp.parse_entity('**"Roblox"** | znacka') == ('Roblox', 'znacka')
+
+    def test_sentence_is_rejected(self):
+        """LLM občas ignoruje formát a napíše celé téma — to do IGDB nesmí."""
+        assert pp.parse_entity(
+            'Roblox v krizi: Podíl akcií padá o 70 % | znacka') == (None, None)
+
+    def test_long_name_without_punctuation_rejected(self):
+        assert pp.parse_entity(
+            'Nintendo Switch 2 překonala GameCube v prodejích | znacka') == (None, None)
+
+    def test_missing_type_keeps_name(self):
+        assert pp.parse_entity('Roblox') == ('Roblox', None)
+
+    def test_unknown_type_keeps_name(self):
+        assert pp.parse_entity('Roblox | platforma') == ('Roblox', None)
+
+    def test_empty(self):
+        assert pp.parse_entity('') == (None, None)

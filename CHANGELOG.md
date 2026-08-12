@@ -1,5 +1,59 @@
 # Changelog — Gaming Content Agent
 
+## 2026-08-12 — RAWG.io vyhozeno z pipeline
+
+Po výpadku 8/2026 se RAWG nezvedlo — každé volání v srpnu skončilo `Read timed out (10 s)`. Jako fallback pod IGDB přidávalo ~20 s na článek (2 volání: screenshoty + featured) a nezachránilo ani jeden obrázek. IGDB ho plně nahradilo.
+
+- **`publish_pipeline`** — smazáno `search_rawg_image`, `search_game_image` je nově tenký wrapper nad IGDB. Alias v `auto_publish` zrušen.
+- **`section_images`** — smazáno `fetch_rawg_screenshots`, Story Mode screenshoty bere jen z IGDB.
+- **`dayreel`** — smazána inline kopie `search_rawg_image`; obrázkový fallback (3. v pořadí za yt-dlp trailerem a WP featured image) jede na IGDB.
+- **Dashboard** — `/api/rawg/search` → **`/api/games/search`** (`web/blueprints/game_search_api.py`, starý blueprint smazán). Vyhledávání obrázků v ručním publikování bylo kvůli mrtvému RAWG nefunkční. Nová `igdb_client.search_games()` vrací stejný tvar `{id, name, background, screenshots}`, takže JS se změnil jen v URL. Ověřeno živě.
+- **`config.RAWG_API_KEY`** ponechán a označen LEGACY — používá ho už jen archivní `scripts/oneoff/publish_crimson_desert.py`.
+- Testy: `TestGameSearchApi` (3 nové), RAWG mocky v `test_publish_pipeline` přepsané na `search_game_image`. Celkem 350.
+
+## 2026-08-12 — Oprava: IGDB vracelo 400 u KAŽDÉHO názvu s diakritikou
+
+Od nasazení IGDB (3. 8.) padal každý dotaz na hru s ne-ASCII znakem — v logu 20× `IGDB API error 400: Syntax Error: Missing ';' at end of query`, ačkoliv dotaz `;` na konci má. Postižené: Pokémon Pokopia, Pokémon TCG Pocket, Ghost of Yōtei a všechna N/A témata s českým titulkem. Důsledek: žádný featured image ani Story Mode screenshoty → článek vyšel s generickým GAMEfo logem (RAWG fallback nezabral, viz níže).
+
+Příčina je v `requests` 2.31.0: `super_len()` počítá `Content-Length` jako `len(str)` = počet **znaků**, ale urllib3 tělo odešle v **UTF-8**. U `Ghost of Yōtei` je hlavička 46 a tělo 47 bajtů → server request ořízne o poslední bajt, tedy přesně o koncový `;`. ASCII názvy (Kingdom Come: Deliverance II) proto fungovaly a chyba vypadala náhodně.
+
+- **`igdb_client._query`** — tělo se posílá jako `body.encode('utf-8')`, ne `str`. Ověřeno živě proti IGDB: `Ghost of Yōtei` → 200 + artwork.
+- Testy: `tests/test_igdb_client.py::TestNonAsciiBody` (2 nové) — kontroluje typ `bytes` i shodu `Content-Length` s délkou v bajtech; ověřeno, že na starém kódu oba padají (`assert 107 == 108`). Celkem 327 testů.
+
+**RAWG je mrtvý fallback:** ve všech srpnových případech skončil `Read timed out (timeout=10)` — přidává ~20 s na článek a nezachránil nic.
+
+## 2026-08-12 — ENTITA: do IGDB se přestala posílat česká věta
+
+Druhá, větší příčina placeholderů (10 ze 13 srpnových). U témat, kde analyzer neurčí konkrétní hru (`game_name = N/A`), dosazoval `resolve_game_name()` celé téma — českou větu („Roblox v krizi: Podíl akcií padá o 70 % kvůli poklesu počtu hráčů") — a ta šla do IGDB jako dotaz na název hry. Databáze her na to buď nenajde nic, nebo vrátí náhodný titul.
+
+- **`article_writer`** — nový metadata řádek `ENTITA: <anglický název> | hra|znacka` vedle KEYWORD/TITULEK/RUBRIKA. Kanonický název hlavního subjektu článku, jen pro hledání obrázku (z textu se maže jako ostatní metadata). **Žádné API volání navíc** — jede v témže requestu jako článek, ~15 output tokenů.
+- **`article_postprocess.parse_entity`** — parsování + brána proti tomu, když LLM formát ignoruje a napíše celou větu (dvojtečka/pomlčka v názvu, > 40 znaků, > 6 slov → zahodit). Radši nehledat než hádat.
+- **`publish_pipeline.resolve_featured_image(…, article=None)`** — pořadí u témat bez hry: brand logo (nově se do shody posílá i `entity_name`, takže „Nintendo" se trefí i z českého skloňovaného titulku) → IGDB podle entity → GAMEfo logo. Bez použitelné entity se **IGDB ani RAWG nevolá vůbec**.
+- **`igdb_client.name_matches` + `search_game_image(exact_only=)`** — u entit typu `znacka` se výsledek uzná jen při shodě názvu nebo prefixu („Roblox" → „Roblox" ✓, „Pokémon" → „Name That Pokemon" ✗, „Nintendo" → „Animal Crossing: New Horizons – Nintendo Switch 2 Edition" ✗). Bez téhle brány by značky bez loga dostávaly náhodné hry. Při `exact_only` se RAWG přeskočí — vrací jen URL bez názvu, kontrolu udělat nejde.
+- **`brand_logos`** — 9 nových značek. Roblox (11359) a Devolver (11242) už v knihovně byly; **Nintendo (11489), Pokémon (11490), Blizzard (11491), CD Projekt Red (11492), Ubisoft (11493), Rockstar (11494) a Summer Game Fest (11495)** nahrány 2026-08-12 jako `brand-*.jpg`. Zdroje: Wikimedia Commons rastery přes jejich API (libovolné šířky náhledů už vracejí 400, povolené velikosti jen z jejich seznamu) + oficiální press assety (cdprojekt.com, staticctf.ubisoft.com). Průhlednost sloučena na bílou — černé logo Summer Game Fest by na transparentu v dark mode zmizelo; u CD Projektu ořezány prázdné okraje. `resolve_brand_logo` používá `BRAND_LOGOS.get()` místo `[]`, takže keyword značky bez loga nezhavaruje publikaci.
+- **Brand-first zkratka neplatí pro `entity_type == 'hra'`** — „Pokémon Pokopia" obsahuje značku Pokémon, ale je to konkrétní hra a patří jí vlastní artwork. Odchyceno až koncovým měřením: po nahrání Pokémon loga začal brand match přebíjet i konkrétní hry. Brand logo je zachytí až ve fallbacku, když IGDB nic nenajde.
+- Testy: `TestEntityDrivenSearch` (7), `TestParseEntity` (8), `TestExactOnly` (5). Celkem 347.
+
+**Ověřeno na 13 reálných srpnových placeholderech:** Sonnet 4.6 vrátil 13/13 správných entit i typů (jediná vada — překlep „Pokémon Kopopia"). Proti živému IGDB má nově obrázek **13 z 13** (dřív 0) — 4× herní artwork, 9× brand logo.
+
+## 2026-08-06 — YouTube embed do každého článku o konkrétní hře + oprava rozbitého yt-dlp hledání
+
+Onimusha: Way of the Sword preview (6. 8.) vyšla bez traileru. Dvě nezávislé příčiny:
+
+1. **Keyword brána**: embed se vkládal jen při zmínce trailer/video/gameplay/ukázka… v textu — vygenerovaný text žádné z těch slov nepoužil. Z principu křehké (regex `záběr[yů]` navíc nepokrýval ani všechny pády).
+2. **yt-dlp hledání bylo v produkci MRTVÉ od 21. 7.** (poslední „Nalezeno video" v logu): plná extrakce výsledků padala na age-restricted videích („Sign in to confirm your age" — top 2 výsledky pro Onimushu jsou 18+) a bot-checku/POT. Log to maskoval — `stderr[:200]` ukázal jen urllib3 warning ze začátku, skutečný ERROR je na konci.
+
+Změny:
+
+- **`publish_pipeline.embed_youtube`** — článek s reálnou hrou (`game_name` ≠ N/A a není brand dle `brand_logos.resolve_brand_logo_strict`) dostává YouTube embed **vždy**, bez ohledu na text. Keyword brána zůstává jen pro témata bez hry (YouTube query by byla celá česká věta tématu → náhodné video, stejný problém jako dřív RAWG obrázky) a brand témata (PlayStation, Steam…).
+- **`youtube_embed.search_youtube`** — přepnuto na `--flat-playlist` (bez plné extrakce → age-gate/bot-check pády se hledání netýkají, ~2 s na 5 kandidátů); stdout se parsuje i při returncode ≠ 0 (částečné výsledky); stderr se loguje od konce (`[-300:]`).
+- **Nové `youtube_embed.check_embeddable` + `find_embeddable_video`** — age-restricted video by v embedu na webu stejně nehrálo (šedý box „Watch on YouTube"), takže se kandidáti ověřují plnou extrakcí: prokázaný age-gate/vypnutý embed → přeskočit dalšího kandidáta; bot-check/POT/síť → neznámo, video se použije (blokuje jen náš scraper, ne návštěvníky). Ověřeno živě: Onimusha → přeskočeny 2× 18+ trailer, vybrán embedovatelný Capcom Spotlight Overview Trailer.
+- **`youtube_embed._insert_embed_block`** — když text video nezmiňuje (nově hlavní cesta), embed se vkládá **před první `<h2>`** = na konec úvodu; dřívější fallback za `</h2>` by video dal mezi nadpis a text sekce.
+- **`youtube_embed.title_matches_game`** — relevanční filtr kandidátů: aspoň polovina významových tokenů názvu hry musí být v titulku videa + blacklist „concept/fan made". Reálné úlovky z backfill dry-runu: indie „Red Odyssey" by dostala trailer na film Jason Bourne 6, „Assassin's Creed Odyssey" Nolanův film The Odyssey. Filtr se používá jen u reálné hry (u N/A témat je game_name celá věta).
+- **`youtube_embed.embed_youtube_in_html`** smazána — mrtvý kód (nikdo nevolal) s vlastní, nyní odlišnou rozhodovací logikou.
+- **Nový skript `backfill_youtube.py`** — zpětné doplnění embedů do článků publikovaných od 21. 7. (období rozbitého hledání): čte publish_log, přeskakuje posty s existujícím YouTube, brand/N-A témata; jedno video pro CZ+EN pár. Idempotentní, `--since`, `--limit`, `--dry-run`. Ověřeno: update publikovaného postu NEspouští push notifikace (`gamefo-pwa.php` guard `old_status === 'publish'`).
+- Testy: `tests/test_youtube_embed.py` (nový, 21 testů) + `tests/test_publish_pipeline.py` (TestEmbedYoutube, 4 testy; `find_embeddable_video` mock ve `wired` fixture). Celkem 323.
+
 ## 2026-08-03 — Migrace obrázků na IGDB + featured fallback řetěz (výpadek RAWG)
 
 RAWG.io od 2. 8. ~20:00 kompletně nedostupné (origin infrastruktura vč. vlastní status stránky, Cloudflare 522/521; služba je dlouhodobě neudržovaná — celodenní výpadek už v 5/2024). Důsledek: 4 články vyšly bez featured image, Beast of Reincarnation navíc bez Story Mode screenshotů.

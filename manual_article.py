@@ -36,7 +36,7 @@ def publish_manual_article(topic_name, game_name, source_urls, title=None,
 
     Args:
         topic_name: Popis tématu (např. "Gothic remake - vše co víme")
-        game_name: Název hry pro RAWG, SEO, obrázky
+        game_name: Název hry pro IGDB, SEO, obrázky
         source_urls: Seznam URL zdrojových článků
         title: Volitelný CZ titulek (jinak vygeneruje Claude)
         seo_keywords: Volitelný seznam SEO klíčových slov

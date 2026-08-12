@@ -919,7 +919,7 @@
             container.innerHTML = '<div style="color:#6b7280;font-size:0.65rem;">Searching...</div>';
 
             try {
-                const resp = await fetch('/api/rawg/search?q=' + encodeURIComponent(query));
+                const resp = await fetch('/api/games/search?q=' + encodeURIComponent(query));
                 const data = await resp.json();
                 if (data.error) { container.innerHTML = '<div style="color:var(--terminal-red);font-size:0.65rem;">' + escapeHtml(data.error) + '</div>'; return; }
 

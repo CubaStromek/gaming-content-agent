@@ -42,24 +42,33 @@ def has_video_reference(html: str, lang: str = 'cs') -> bool:
     return bool(pattern.search(html))
 
 
-def search_youtube(query: str, max_results: int = 1) -> list:
+# Kolik kandidátů z vyhledávání zkoušet, než to vzdáme
+_SEARCH_CANDIDATES = 5
+
+
+def _yt_dlp_bin() -> str:
+    """yt-dlp ze stejného adresáře jako Python interpreter (venv/bin/), jinak PATH."""
+    path = os.path.join(os.path.dirname(sys.executable), 'yt-dlp')
+    return path if os.path.isfile(path) else 'yt-dlp'
+
+
+def search_youtube(query: str, max_results: int = _SEARCH_CANDIDATES) -> list:
     """
-    Vyhledá videa na YouTube pomocí yt-dlp.
+    Vyhledá videa na YouTube pomocí yt-dlp FLAT searchem (bez plné extrakce
+    jednotlivých videí). Plná extrakce padala na age-restricted výsledcích
+    ("Sign in to confirm your age") a bot-checku — kvůli tomu embed v produkci
+    nefungoval od 21. 7. 2026. Flat search vrací id/title/url bez těchto pádů.
+
     Vrací seznam dict s 'id', 'title', 'url'.
     """
-    # Najdi yt-dlp ve stejném adresáři jako aktuální Python interpreter (venv/bin/)
-    yt_dlp_bin = os.path.join(os.path.dirname(sys.executable), 'yt-dlp')
-    if not os.path.isfile(yt_dlp_bin):
-        yt_dlp_bin = 'yt-dlp'  # fallback na PATH
-
     try:
         result = subprocess.run(
             [
-                yt_dlp_bin,
+                _yt_dlp_bin(),
                 f'ytsearch{max_results}:{query}',
+                '--flat-playlist',
                 '--dump-json',
                 '--no-download',
-                '--no-playlist',
                 '--quiet',
             ],
             capture_output=True,
@@ -67,23 +76,26 @@ def search_youtube(query: str, max_results: int = 1) -> list:
             timeout=30,
         )
 
-        if result.returncode != 0:
-            log.warning("yt-dlp search failed: %s", result.stderr[:200])
-            return []
-
+        # stdout parsovat i při returncode != 0 — částečné výsledky se počítají
         videos = []
         for line in result.stdout.strip().split('\n'):
             if not line:
                 continue
             try:
                 data = json.loads(line)
+                vid = data.get('id', '')
                 videos.append({
-                    'id': data.get('id', ''),
+                    'id': vid,
                     'title': data.get('title', ''),
-                    'url': data.get('webpage_url', ''),
+                    'url': data.get('url') or data.get('webpage_url')
+                        or f'https://www.youtube.com/watch?v={vid}',
                 })
             except json.JSONDecodeError:
                 continue
+
+        if not videos and result.returncode != 0:
+            # Konec stderr, ne začátek — začátek bývá jen urllib3 warning
+            log.warning("yt-dlp search failed: %s", result.stderr[-300:])
 
         return videos
 
@@ -96,6 +108,107 @@ def search_youtube(query: str, max_results: int = 1) -> list:
     except Exception as e:
         log.warning("YouTube search error: %s", e)
         return []
+
+
+def check_embeddable(video_id: str):
+    """
+    Ověří plnou extrakcí, jestli video půjde přehrát v embedu na webu.
+
+    Vrací:
+        True  — extrakce OK, age_limit 0 a embed není zakázaný
+        False — PROKÁZANĚ nehratelné: age-restricted (YouTube v embedu
+                nepřehraje, jen šedý box "Watch on YouTube") nebo vypnutý embed
+        None  — nelze zjistit (bot-check "confirm you're not a bot", POT
+                provider, síť…) — to blokuje jen náš scraper, ne návštěvníky,
+                video je pro embed pravděpodobně v pořádku
+    """
+    try:
+        result = subprocess.run(
+            [
+                _yt_dlp_bin(),
+                f'https://www.youtube.com/watch?v={video_id}',
+                '--dump-json',
+                '--no-download',
+                '--no-playlist',
+                '--quiet',
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except Exception:
+        return None
+
+    if result.returncode == 0:
+        try:
+            data = json.loads(result.stdout.strip().splitlines()[-1])
+        except (json.JSONDecodeError, IndexError):
+            return None
+        if (data.get('age_limit') or 0) > 0:
+            return False
+        if data.get('playable_in_embed') is False:
+            return False
+        return True
+
+    if 'confirm your age' in result.stderr:
+        return False
+    return None
+
+
+# Markery titulků, které skoro jistě nejsou oficiální video ke hře
+# (fanouškovské "concept" trailery neexistujících filmů apod.)
+_FAKE_TITLE_MARKERS = ('concept', 'fan made', 'fan-made')
+_TITLE_STOPWORDS = {'the', 'of', 'and', 'for', 'a', 'an'}
+
+
+def title_matches_game(title: str, game_name: str) -> bool:
+    """
+    Hrubá kontrola, že video patří ke hře: aspoň polovina významových tokenů
+    z názvu hry je v titulku videa. Chrání před úplně cizími videi — reálné
+    případy z backfillu 6. 8.: 'Red Odyssey' (indie) → trailer na film Jason
+    Bourne 6, 'Assassin's Creed Odyssey' → Nolanův film The Odyssey.
+    Záměrně volná (FF 14 vs XIV projde) — je to lapač nesmyslů, ne přesný match.
+    """
+    t = title.lower()
+    if any(m in t for m in _FAKE_TITLE_MARKERS):
+        return False
+    # Interpunkci v titulku kolabovat — jinak token "stalker" nikdy nematchne
+    # titulek "S.T.A.L.K.E.R. 2: ..." a filtr odmítne všechny oficiální trailery
+    collapsed_title = re.sub(r'[^a-z0-9]+', '', t)
+    g = game_name.lower()
+    tokens = [tok for tok in re.findall(r'[a-z0-9]+', g)
+              if len(tok) > 1 and tok not in _TITLE_STOPWORDS]
+    if not tokens:
+        # game_name je samý akronym/číslo ("S.T.A.L.K.E.R. 2") — porovnej
+        # celé zkolabované názvy
+        collapsed_game = re.sub(r'[^a-z0-9]+', '', g)
+        return not collapsed_game or collapsed_game in collapsed_title
+    hits = sum(1 for tok in tokens if tok in t or tok in collapsed_title)
+    return hits * 2 >= len(tokens)
+
+
+def find_embeddable_video(query: str, game_name: str = None):
+    """
+    Flat search + výběr prvního kandidáta, který (a) odpovídá hře podle
+    titulku (jen když je game_name zadané) a (b) není prokazatelně
+    nehratelný v embedu (přeskočí age-restricted videa — např. Onimusha
+    trailery, kde jsou první DVA výsledky 18+).
+
+    Vrací dict {'id', 'title', 'url'} nebo None.
+    """
+    candidates = search_youtube(query)
+    for video in candidates:
+        if game_name and not title_matches_game(video['title'], game_name):
+            log.info("Kandidát '%s' neodpovídá hře '%s', zkouším další",
+                     video['title'], game_name)
+            continue
+        verdict = check_embeddable(video['id'])
+        if verdict is False:
+            log.info("Kandidát '%s' je age-restricted/bez embedu, zkouším další",
+                     video['title'])
+            continue
+        return video
+    return None
 
 
 def build_youtube_gutenberg_block(video_id: str) -> str:
@@ -136,59 +249,29 @@ def _insert_embed_block(html: str, embed_block: str, lang: str = 'cs') -> str:
     if insert_pos > 0:
         return html[:insert_pos] + embed_block + html[insert_pos:]
 
-    # 2. Fallback: vlož za blockquote (po úvodu, před první sekcí)
+    # 2. Fallback: konec úvodu — před první <h2> sekci. Od always-embed
+    #    (články bez zmínky o videu) je tohle hlavní cesta; vložení AŽ ZA
+    #    </h2> by video dalo mezi nadpis a text sekce.
+    h2_match = re.search(r'<h2[\s>]', html)
+    if h2_match:
+        pos = h2_match.start()
+        return html[:pos] + embed_block + html[pos:]
+
+    # 3. Fallback: vlož za blockquote (po úvodu)
     bq_match = re.search(r'</blockquote>', html)
     if bq_match:
         pos = bq_match.end()
-        return html[:pos] + embed_block + html[pos:]
-
-    # 3. Fallback: vlož po prvním <h2>...</h2>
-    h2_match = re.search(r'</h2>', html)
-    if h2_match:
-        pos = h2_match.end()
         return html[:pos] + embed_block + html[pos:]
 
     # 4. Poslední fallback: přidej na konec
     return html + embed_block
 
 
-def embed_youtube_in_html(html: str, game_name: str, lang: str = 'cs') -> str:
-    """
-    Hlavní funkce: detekuje video odkaz v článku, vyhledá na YouTube
-    a vloží embed blok do HTML.
-
-    Args:
-        html: HTML obsah článku
-        game_name: Název hry pro YouTube search query
-        lang: 'cs' nebo 'en'
-
-    Returns:
-        Upravené HTML s YouTube embedem, nebo původní HTML pokud nic nenalezeno.
-    """
-    if not has_video_reference(html, lang):
-        log.info("Žádná zmínka o videu v článku, přeskakuji YouTube embed")
-        return html
-
-    # Sestav search query
-    query = f"{game_name} official trailer 2026"
-    log.info("Hledám YouTube video: %s", query)
-
-    videos = search_youtube(query)
-    if not videos:
-        log.warning("YouTube video nenalezeno pro: %s", query)
-        return html
-
-    video = videos[0]
-    log.info("Nalezeno video: %s (%s)", video['title'], video['url'])
-
-    embed_block = '\n' + build_youtube_gutenberg_block(video['id']) + '\n'
-    return _insert_embed_block(html, embed_block, lang)
-
-
 def force_embed_youtube(html: str, video_id: str, lang: str = 'cs') -> str:
     """
     Vloží YouTube embed do HTML bez kontroly klíčových slov.
-    Používá se když video už bylo nalezeno pro jinou jazykovou verzi.
+    Jediný vstup z publish_pipeline — hledání i rozhodnutí, JESTLI embedovat,
+    řeší publish_pipeline.embed_youtube (jedno video pro CZ i EN verzi).
     """
     embed_block = '\n' + build_youtube_gutenberg_block(video_id) + '\n'
     return _insert_embed_block(html, embed_block, lang)

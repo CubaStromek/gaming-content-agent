@@ -188,6 +188,42 @@ def insert_separators_before_h2(html: str) -> str:
     return result
 
 
+ENTITY_TYPES = ('hra', 'znacka')
+
+# Znaky, které v kanonickém jménu značky/hry nemají co dělat — jejich výskyt
+# znamená, že LLM místo jména vrátilo popis události ("Roblox v krizi: akcie…").
+_ENTITY_JUNK = re.compile(r'[:;–—]|\.\.\.')
+
+
+def parse_entity(raw: str) -> tuple:
+    """Rozparsuje řádek `ENTITA: Nintendo | znacka` na (jméno, typ).
+
+    Vrací (None, None), když jméno nevypadá jako kanonický název — LLM občas
+    ignoruje formát a napíše celou českou větu tématu. Právě ta se dřív
+    posílala do IGDB jako dotaz a vracela náhodný screenshot cizí hry, takže
+    raději nic než hádat: volající pak spadne na brand logo.
+    """
+    if not raw:
+        return None, None
+
+    # Pořadí: markdown zvenku, teprve pak uvozovky (**"Roblox"** → Roblox).
+    parts = [p.strip().strip('*').strip('"\'').strip() for p in raw.split('|')]
+    name = parts[0] if parts else ''
+    kind = parts[1].lower() if len(parts) > 1 else ''
+
+    if not name or _ENTITY_JUNK.search(name):
+        return None, None
+    # Kanonické názvy jsou krátké; delší řetězec je věta, ne jméno.
+    if len(name) > 40 or len(name.split()) > 6:
+        return None, None
+    if kind not in ENTITY_TYPES:
+        # Typ chybí nebo je nesmyslný — jméno je použitelné, typ neznámý.
+        log.warning("ENTITA bez platného typu: '%s' (typ '%s')", name, kind)
+        return name, None
+
+    return name, kind
+
+
 def extract_story_cards(text: str, lang: str) -> Optional[List[Dict]]:
     """Najde STORY_CARDS <lang>: [...] v AI výstupu, vrátí list dictů nebo None.
 

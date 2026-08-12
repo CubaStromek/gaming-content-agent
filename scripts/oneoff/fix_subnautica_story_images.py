@@ -16,7 +16,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import config
 import wp_publisher
-from section_images import fetch_rawg_screenshots, build_section_images_meta, _slugify
+from section_images import build_section_images_meta, _slugify
+from igdb_client import fetch_screenshots
 
 
 POST_IDS = [7214, 7215]
@@ -80,17 +81,17 @@ def main():
                 print("  Section images: PRÁZDNÉ")
 
     # 2. Stáhni správné screenshoty z RAWG
-    print(f"\n[2] Stahuji screenshoty z RAWG pro '{GAME_NAME}'...")
-    screenshots_urls = fetch_rawg_screenshots(GAME_NAME, max_count=5)
+    print(f"\n[2] Stahuji screenshoty z IGDB pro '{GAME_NAME}'...")
+    screenshots_urls = fetch_screenshots(GAME_NAME, max_count=5)
 
     if not screenshots_urls:
-        print("  RAWG nevrátil žádné screenshoty!")
+        print("  IGDB nevrátil žádné screenshoty!")
         print("  Zkouším alternativní hledání...")
         # Fallback: zkus 'subnautica-2' přímo
-        screenshots_urls = fetch_rawg_screenshots("Subnautica 2", max_count=5)
+        screenshots_urls = fetch_screenshots("Subnautica 2", max_count=5)
 
     if not screenshots_urls:
-        print("  FATAL: Žádné screenshoty nenalezeny. Zkus ručně zadat slug na RAWG.")
+        print("  FATAL: Žádné screenshoty nenalezeny. Zkus ručně zadat název hry.")
         sys.exit(1)
 
     print(f"  Nalezeno {len(screenshots_urls)} screenshotů:")

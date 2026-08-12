@@ -108,6 +108,7 @@ from article_postprocess import (
     make_first_paragraph_quote as _make_first_paragraph_quote,
     insert_separators_before_h2 as _insert_separators_before_h2,
     extract_story_cards as _extract_story_cards,
+    parse_entity as _parse_entity,
 )
 
 
@@ -372,6 +373,7 @@ NIC z následujícího se v článku nesmí objevit. Pokud něco napíšeš, sma
   META CZ: [český meta description, 140-155 znaků, VŽDY ukončené tečkou/otazníkem, obsahuje KEYWORD CZ, musí lákat k prokliku]
   META EN: [anglický meta description, 140-155 znaků, VŽDY ukončené tečkou/otazníkem, obsahuje KEYWORD EN, musí lákat k prokliku]
   RUBRIKA: [právě JEDNA hodnota z: aaa | indie | playstation | microsoft | nintendo | valve | technologie | ekonomika | mimoherni | cesko-slovensko | zadna. Podrubrika Zpráv podle HLAVNÍHO tématu článku: aaa = velkorozpočtové hry a jejich studia (Rockstar, Ubisoft, CD Projekt…); indie = nezávislé hry a malá studia; playstation = Sony/PlayStation (konzole, exkluzivity, PS Plus); microsoft = Microsoft/Xbox (konzole, Game Pass, Bethesda/ABK studia); nintendo = Nintendo (Switch, first-party hry); valve = Valve/Steam (platforma, Steam Deck/Machine, Half-Life); technologie = hardware a technika mimo jednu platformu (GPU, RAM, VR, handheldy obecně); ekonomika = byznys, prodeje, akvizice, propouštění bez vazby na jednu firmu/platformu; mimoherni = přesahy mimo hry (film, seriály, esport, společnost); cesko-slovensko = česká/slovenská studia a scéna. Pokud sedí víc rubrik, vyber NEJKONKRÉTNĚJŠÍ — rubrika platformy/firmy má přednost před obecnou (aaa, ekonomika). Pokud nic jednoznačně nesedí, napiš zadna.]
+  ENTITA: [anglický název HLAVNÍHO subjektu článku + svislítko + typ. Používá se JEN k vyhledání náhledového obrázku v herní databázi, do textu se nedostane. Formát: `název | hra` nebo `název | znacka`. Typ `hra` = konkrétní hra nebo herní série, kterou lze najít v databázi her (`Diablo IV | hra`, `The Witcher | hra`, `Big Walk | hra`). Typ `znacka` = firma, studio, vydavatel, konzole, platforma, obchod nebo akce (`Nintendo | znacka`, `Roblox | znacka`, `Devolver Digital | znacka`, `Summer Game Fest | znacka`). PRAVIDLA: (1) VŽDY anglicky a v kanonickém tvaru, jak se jméno píše oficiálně — ne česky, ne skloňované, bez roku a bez podtitulu článku. (2) Nikdy nepiš celou větu ani popis události — jen holé jméno. (3) Když je článek o konzoli nebo firmě a žádná konkrétní hra v něm nedominuje, je to `znacka`, i kdyby se nějaká hra v textu zmiňovala. (4) Když článek srovnává víc her, vyber tu, které se text věnuje nejvíc. Příklady: článek „Nintendo Switch 2 překonala GameCube v prodejích" → `Nintendo | znacka`; „Roblox v krizi, akcie padají o 70 %" → `Roblox | znacka`; „Witcher seriál na Netflixu se posouvá na 2027" → `The Witcher | hra`.]
   STORY_CARDS CZ: [JEDNO-ŘÁDKOVÝ JSON array 3-5 objektů ve tvaru {{"heading": "max 40 znaků", "body": "max 160 znaků, 1-2 věty"}}. Toto NENÍ shrnutí článku po sekcích — vyber 3-5 nejdůležitějších bodů (klíčový fakt → kontext/úhel → důsledek). Každá karta = 1 myšlenka, čte se na svislé mobilní obrazovce SAMOSTATNĚ, čtenář vidí jen tu jednu kartu a musí pochopit pointu bez ostatních. Bez HTML, bez markdown, plain text v JSON stringu. Heading je věcný (ne otázka, ne clickbait). Body 1-2 reálné věty. Příklad jedné karty: {{"heading":"Rockstar drží termín přes rok","body":"Od oznámení v roce 2024 GTA 6 nezměnilo datum vydání, což je u AAA tahounů nezvyklé."}}]
   STORY_CARDS EN: [Same logic in English, JSON array 3-5 objects {{"heading": "max 40 chars", "body": "max 160 chars, 1-2 sentences"}}. NEVER mention Czech Republic / Czech players. Plain text only, no HTML, no markdown.]
 - KRITICKÉ: V nadpisech (h2) NEPOUŽÍVEJ Title Case! Velké písmeno POUZE na začátku věty a u vlastních jmen. ŠPATNĚ: "Nová Éra Pro Herní Průmysl". SPRÁVNĚ: "Nová éra pro herní průmysl". ŠPATNĚ: "What This Means For Players". SPRÁVNĚ: "What this means for players".
@@ -444,6 +446,8 @@ Vygeneruj nyní výstup ve formátu popsaném výše (KEYWORD/TITULEK/META/STORY
         keyword_cs = None
         keyword_en = None
         subcategory = None
+        entity_name = None
+        entity_type = None
 
         title_cs_match = re.search(r'^\s*TITULEK\s*CZ:\s*(.+)$', result_text, re.MULTILINE)
         title_en_match = re.search(r'^\s*TITULEK\s*EN:\s*(.+)$', result_text, re.MULTILINE)
@@ -452,6 +456,7 @@ Vygeneruj nyní výstup ve formátu popsaném výše (KEYWORD/TITULEK/META/STORY
         keyword_cs_match = re.search(r'^\s*KEYWORD\s*CZ:\s*(.+)$', result_text, re.MULTILINE)
         keyword_en_match = re.search(r'^\s*KEYWORD\s*EN:\s*(.+)$', result_text, re.MULTILINE)
         subcategory_match = re.search(r'^\s*RUBRIKA:\s*(.+)$', result_text, re.MULTILINE)
+        entity_match = re.search(r'^\s*ENTITA:\s*(.+)$', result_text, re.MULTILINE)
         story_cards_cs = _extract_story_cards(result_text, 'CZ')
         story_cards_en = _extract_story_cards(result_text, 'EN')
         # Fallback na starý formát
@@ -482,11 +487,15 @@ Vygeneruj nyní výstup ve formátu popsaném výše (KEYWORD/TITULEK/META/STORY
             elif raw_subcat not in ('zadna', 'žádná', 'none'):
                 log.warning("Neznámá RUBRIKA z LLM: '%s' — článek půjde jen do Zpráv", raw_subcat)
 
+        if entity_match:
+            entity_name, entity_type = _parse_entity(entity_match.group(1))
+
         # Odstraň řádky s titulky, klíčovými slovy a meta popisy z textu, aby se nedostaly do HTML
         result_text = re.sub(r'^\s*TITULEK\s*(?:CZ|EN)?:\s*.+$', '', result_text, flags=re.MULTILINE)
         result_text = re.sub(r'^\s*META\s*(?:CZ|EN):\s*.+$', '', result_text, flags=re.MULTILINE)
         result_text = re.sub(r'^\s*KEYWORD\s*(?:CZ|EN)?:\s*.+$', '', result_text, flags=re.MULTILINE)
         result_text = re.sub(r'^\s*RUBRIKA:\s*.+$', '', result_text, flags=re.MULTILINE)
+        result_text = re.sub(r'^\s*ENTITA:\s*.+$', '', result_text, flags=re.MULTILINE)
         # STORY_CARDS může být víceřádkový JSON, mažeme od labelu po uzavírací ]
         result_text = re.sub(r'^\s*STORY_CARDS\s*(?:CZ|EN):\s*\[[\s\S]*?\]\s*$', '', result_text, flags=re.MULTILINE)
         result_text = result_text.strip()
@@ -548,6 +557,10 @@ Vygeneruj nyní výstup ve formátu popsaném výše (KEYWORD/TITULEK/META/STORY
         if subcategory:
             result['subcategory'] = subcategory
             log.info("RUBRIKA: %s", subcategory)
+        if entity_name:
+            result['entity_name'] = entity_name
+            result['entity_type'] = entity_type
+            log.info("ENTITA: %s (%s)", entity_name, entity_type)
         if story_cards_cs:
             result['story_cards_cs'] = story_cards_cs
             log.info("STORY_CARDS CZ: %d karet", len(story_cards_cs))
