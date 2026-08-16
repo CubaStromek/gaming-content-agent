@@ -111,8 +111,15 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'game
 MAX_ARTICLES_PER_SOURCE = _env_int("MAX_ARTICLES_PER_SOURCE", 10)
 MIN_VIRALITY_SCORE = _env_int("MIN_VIRALITY_SCORE", 50)
 
-# Model pro generování článků
-ARTICLE_MODEL = "claude-sonnet-4-6"
+# Model pro český článek — jediná fáze, kde se platí za porozumění zdroji.
+# Měřeno 15. 8. 2026 na článku o S.T.A.L.K.E.R. 2: Sonnet 4.6 zaměnil příčinu
+# a následek (vinil systém A-Life místo toho, že nefungoval), Opus 5 tutéž
+# pasáž napsal správně a doplnil kontext, který ve zdroji nebyl.
+ARTICLE_MODEL = os.getenv("ARTICLE_MODEL", "claude-opus-5")
+
+# Model pro anglickou lokalizaci a EN metadata. Překlad hotového českého textu
+# je mechanická práce — nemá smysl na ni platit sazbu Opusu.
+TRANSLATION_MODEL = os.getenv("TRANSLATION_MODEL", "claude-sonnet-4-6")
 
 # Model pro analýzu (přepisovatelný přes .env). Haiku 4.5 je 5× levnější než Sonnet
 # a pro výběr top témat z RSS feedů plně dostačuje.

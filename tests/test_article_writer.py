@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 import article_writer
+import config
 
 
 class TestParseTopicsFromReport:
@@ -194,7 +195,7 @@ class TestWriteArticle:
     @patch('article_writer._call_api')
     def test_returns_cs_and_en(self, mock_api):
         mock_message = MagicMock()
-        mock_message.content = [MagicMock(text="""TITULEK CZ: Testovací titulek
+        mock_message.content = [MagicMock(type="text", text="""TITULEK CZ: Testovací titulek
 TITULEK EN: Test Title
 
 === ČESKY ===
@@ -227,6 +228,69 @@ TITULEK EN: Test Title
         assert result['corrected_title'] == 'Testovací titulek'
         assert result['en_title'] == 'Test Title'
 
+    def test_response_text_skips_thinking_blocks(self):
+        """U modelů s přemýšlením není content[0] textový blok. Dřív se četlo
+        content[0].text a padalo to na 'ThinkingBlock' object has no attribute
+        'text' — tenhle test tu regresi hlídá."""
+        thinking = MagicMock(type="thinking")
+        del thinking.text  # ThinkingBlock .text opravdu nemá
+        text_block = MagicMock(type="text", text="<p>Článek.</p>")
+        message = MagicMock(content=[thinking, text_block])
+        assert article_writer._response_text(message) == "<p>Článek.</p>"
+
+    def test_modern_models_skip_temperature(self):
+        """Sonnet 5 / Opus 5 / Opus 4.7+ vracejí na nedefaultní temperature 400."""
+        assert article_writer._is_modern("claude-opus-5")
+        assert article_writer._is_modern("claude-sonnet-5")
+        assert article_writer._is_modern("claude-opus-4-8")
+        assert not article_writer._is_modern("claude-sonnet-4-6")
+        assert not article_writer._is_modern("claude-haiku-4-5-20251001")
+
+    @patch('article_writer._call_api')
+    def test_english_comes_from_second_call(self, mock_api):
+        """Český článek a anglická lokalizace jsou dvě volání, každé na svém
+        modelu. EN text musí pocházet z druhého volání, ne z prvního."""
+        def response(text):
+            m = MagicMock()
+            m.content = [MagicMock(type="text", text=text)]
+            m.usage = MagicMock(input_tokens=1000, output_tokens=500)
+            m.stop_reason = 'end_turn'
+            return m
+
+        mock_api.side_effect = [
+            response("TITULEK CZ: Český titulek\n\n=== ČESKY ===\n<p>Český článek.</p>"),
+            response("TITULEK EN: English title\nKEYWORD EN: test\n\n=== ENGLISH ===\n<p>English article.</p>"),
+        ]
+
+        topic = {'topic': 'T', 'title': 'T', 'angle': '', 'context': '', 'seo_keywords': '', 'sources': []}
+        result = article_writer.write_article(topic, ["source"])
+
+        assert 'Český článek' in result['cs']
+        assert 'English article' in result['en']
+        assert result['en_title'] == 'English title'
+        assert result['focus_keyword_en'] == 'test'
+        # dvě volání, každé na svém modelu
+        models = [c.args[1] for c in mock_api.call_args_list]
+        assert models == [config.ARTICLE_MODEL, config.TRANSLATION_MODEL]
+        # náklady i tokeny se sčítají přes obě fáze
+        assert result['tokens_out'] == 1000
+
+    @patch('article_writer._call_api')
+    def test_failed_localization_still_publishes_czech(self, mock_api):
+        """Když spadne EN fáze, český článek se musí vrátit — ne celý spadnout."""
+        ok = MagicMock()
+        ok.content = [MagicMock(type="text", text="TITULEK CZ: T\n\n=== ČESKY ===\n<p>Český text.</p>")]
+        ok.usage = MagicMock(input_tokens=100, output_tokens=200)
+        ok.stop_reason = 'end_turn'
+        mock_api.side_effect = [ok, Exception("EN model spadl")]
+
+        topic = {'topic': 'T', 'title': 'T', 'angle': '', 'context': '', 'seo_keywords': '', 'sources': []}
+        result = article_writer.write_article(topic, ["source"])
+
+        assert 'error' not in result
+        assert 'Český text' in result['cs']
+        assert result['en'] == ''
+
     @patch('article_writer._call_api')
     def test_handles_api_error(self, mock_api):
         mock_api.side_effect = Exception("API Error")
@@ -237,7 +301,7 @@ TITULEK EN: Test Title
 
     def _write_with_output(self, mock_api, text):
         mock_message = MagicMock()
-        mock_message.content = [MagicMock(text=text)]
+        mock_message.content = [MagicMock(type="text", text=text)]
         mock_message.usage = MagicMock(input_tokens=1000, output_tokens=500)
         mock_message.stop_reason = 'end_turn'
         mock_api.return_value = mock_message

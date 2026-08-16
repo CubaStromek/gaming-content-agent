@@ -34,9 +34,14 @@ _extract_excerpt = publish_pipeline.extract_excerpt
 
 # Publish limit na běh. Analyzátor vrací až 5 kandidátů seřazených podle
 # důležitosti (claude_analyzer.CANDIDATE_TOPICS) — dedup je profiltruje a
-# publikují se první 2 přeživší. Níže seřazení kandidáti slouží jako záloha,
+# publikuje se první přeživší. Níže seřazení kandidáti slouží jako záloha,
 # když nejvirálnější témata už vyšla dřív (jinak běh nepublikoval nic).
-MAX_TOPICS_PER_RUN = 2
+#
+# Od 16. 8. 2026 jeden článek na běh: dřív to byly 2 články × 5 běhů = 10 denně,
+# teď 1 × 8 běhů = 8 denně. Objem tedy nese rozvrh v LaunchAgentu
+# (com.gamefo.autopublish, každých 105 minut od 8:00), ne tahle konstanta —
+# díky tomu nevycházejí dva články ve stejnou minutu.
+MAX_TOPICS_PER_RUN = config._env_int("MAX_TOPICS_PER_RUN", 1)
 
 
 def _pick_topics(articles, run_dir, run_id):

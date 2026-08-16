@@ -1,5 +1,25 @@
 # Changelog — Gaming Content Agent
 
+## 2026-08-16 — Český článek na Opus 5, anglická verze zvlášť
+
+Podnět: ve vydaném článku o S.T.A.L.K.E.R. 2 stálo, že *„A-Life byl označován za hlavní příčinu toho, proč se Zóna cítila spíš jako střelnice"*. Dvě vady v jedné větě — kalk („Zóna se cítila") a hlavně obrácená kauzalita: za mrtvý svět nemohl systém A-Life, ale to, že po vydání nefungoval.
+
+Audit 50 vydaných článků (34 323 slov) ukázal, že **kalky nejsou systémový problém** — neživé „cítí se" má jediný skutečný výskyt v celém vzorku a em-dash drží 3,6/1000 slov proti 15–25 u nepromptovaného AI textu. Velký seznam zakázaných anglicismů by tedy léčil nemoc, která se skoro nevyskytuje. Problém je jeden odlehlý případ na článek, a ten vzniká **špatným pochopením zdroje**, ne stylem.
+
+A/B na totožném zadání (téma + scrapnutý zdroj z ostrého běhu 15. 8. ve 14:00): Sonnet 4.6 kauzalitu zaměnil, Sonnet 5 se tématu vyhnul a napsal 551 slov (pod povinným minimem 600), **Opus 5 pasáž napsal správně** a doplnil kontext, který ve zdroji nebyl.
+
+- **`config`** — `ARTICLE_MODEL` nově `claude-opus-5` a přepsatelný přes env (dřív natvrdo Sonnet 4.6). Přibyl `TRANSLATION_MODEL` (default `claude-sonnet-4-6`).
+- **`article_writer`** — generování rozděleno na dvě volání: český článek + CZ metadata na `ARTICLE_MODEL`, anglická lokalizace + EN metadata na `TRANSLATION_MODEL`. Půlka výstupních tokenů byl překlad, na který nemá smysl platit sazbu Opusu. Selhání EN fáze článek nezabije — publikuje se jen česky.
+- **`article_writer._call_api`** — u moderních modelů (`-opus-5`, `-sonnet-5`, `-opus-4-7/8`, `fable`, `mythos`) se vynechává `temperature` (jinak HTTP 400) a zvyšuje `max_tokens`, protože strop platí na přemýšlení i text dohromady.
+- **`article_writer._response_text`** — nová funkce. Dřív se četlo `content[0].text`, což u modelů s přemýšlením padá na `'ThinkingBlock' object has no attribute 'text'`. Opraveno i v generátoru podcastů.
+- **Prompt** — přibyly dvě jazykové poznámky (neživá věc se necítí; nezačínat větu příslovcem z anglické stavby) a sekce o směru příčiny a následku s tou konkrétní A-Life chybou jako příkladem. Vyhozeno protiřečení u EN verze (prompt zároveň chtěl „ne doslovný překlad" i „přesný překlad"). Opraveny zdvojené složené závorky v STORY_CARDS (pozůstatek po f-stringu).
+- **`_MODEL_PRICING`** — Opus byl na 15/75 $ z éry Opusu 3; Opus 5 stojí 5/25 $, takže cost logy u něj nadsazovaly trojnásobně.
+- **`.env.example`** — `ANALYSIS_MODEL=claude-sonnet-4-20250514` odstraněno, ten model API vrací 404. Kdo si example zkopíroval, rozbil si analýzu.
+- Testy: 4 nové (přeskočení thinking bloku, detekce moderních modelů, dvoufázový tok, přežití pádu EN fáze), celkem 354. U regrese s thinking blokem ověřeno, že na starém kódu skutečně padá.
+- **Objem a rozvrh** — z 10 článků denně na 8. Dřív 2 články × 5 běhů (8/11/14/17/20), nově **1 článek × 8 běhů po 105 minutách: 8:00, 9:45, 11:30, 13:15, 15:00, 16:45, 18:30, 20:15**. Objem tak nese rozvrh, ne `MAX_TOPICS_PER_RUN` (nově 1, přepsatelné přes env) — a hlavně nevycházejí dva články ve stejnou minutu. Rozvrh je v `~/Library/LaunchAgents/com.gamefo.autopublish.plist`, po úpravě znovu načten přes `launchctl unload/load` a ověřen v `launchctl print`.
+
+- Ověřeno ostrým během na stejném zadání: CZ 697 slov, EN 905 slov, správná kauzalita, nula kalků, kompletní metadata, **$0,20 za článek** (při teplé cache ~$0,16).
+
 ## 2026-08-12 — RAWG.io vyhozeno z pipeline
 
 Po výpadku 8/2026 se RAWG nezvedlo — každé volání v srpnu skončilo `Read timed out (10 s)`. Jako fallback pod IGDB přidávalo ~20 s na článek (2 volání: screenshoty + featured) a nezachránilo ani jeden obrázek. IGDB ho plně nahradilo.

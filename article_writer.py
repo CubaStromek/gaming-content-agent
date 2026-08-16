@@ -33,6 +33,23 @@ def _is_retryable(exc):
     return False
 
 
+# Modely, které odmítají nedefaultní temperature/top_p/top_k chybou 400 a mají
+# zároveň ve výchozím stavu zapnuté přemýšlení (počítá se do max_tokens).
+_MODERN_MODEL = re.compile(r'-(?:opus|sonnet|fable|mythos)-5\b|-opus-4-[78]\b')
+
+
+def _is_modern(model: str) -> bool:
+    return bool(_MODERN_MODEL.search(model or ''))
+
+
+def _response_text(message) -> str:
+    """Text z odpovědi. U modelů s přemýšlením není content[0] textový blok,
+    takže se nesmí sahat na content[0].text — spadlo by to na ThinkingBlock."""
+    return "".join(
+        b.text for b in message.content if getattr(b, 'type', None) == 'text'
+    )
+
+
 def _call_api(client, model, max_tokens, temperature, messages):
     """Volání Claude API přes STREAMING.
 
@@ -40,15 +57,19 @@ def _call_api(client, model, max_tokens, temperature, messages):
     takže ho nezabije NAT/CGNAT/VPN idle-timeout u dlouhých requestů (>180s) —
     což byla příčina APIConnectionError přes NordVPN/Starlink (placený výstup
     do koše). get_final_message() vrací stejný Message objekt jako
-    messages.create(), takže call-sites (.content / .usage) zůstávají beze změny.
+    messages.create(), takže call-sites (.usage) zůstávají beze změny.
     messages je list zpráv (může obsahovat multi-block content s cache_control).
+
+    U moderních modelů se temperature vynechává (jinak HTTP 400) a max_tokens
+    se navyšuje — je to strop na přemýšlení i text dohromady.
     """
-    with client.messages.stream(
-        model=model,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        messages=messages,
-    ) as stream:
+    kwargs = {"model": model, "max_tokens": max_tokens, "messages": messages}
+    if _is_modern(model):
+        kwargs["max_tokens"] = max(max_tokens, 32000)
+    else:
+        kwargs["temperature"] = temperature
+
+    with client.messages.stream(**kwargs) as stream:
         return stream.get_final_message()
 
 
@@ -69,7 +90,10 @@ if _HAS_TENACITY:
 # podle substringu v config.ARTICLE_MODEL. Dřív byl Sonnet hardcoded, takže
 # při přepnutí modelu byly cost logy řádově vedle.
 _MODEL_PRICING = {
-    'opus': (15.00, 75.00, 1.50, 18.75),
+    # Sazba za 1M tokenů: (vstup, výstup, cache read, cache write).
+    # Opus byl na 15/75 z éry Opusu 3 — Opus 5 stojí 5/25, takže cost logy
+    # u něj nadsazovaly zhruba trojnásobně (ověřeno na testu 15. 8. 2026).
+    'opus': (5.00, 25.00, 0.50, 6.25),
     'sonnet': (3.00, 15.00, 0.30, 3.75),
     'haiku': (1.00, 5.00, 0.10, 1.25),
 }
@@ -230,6 +254,107 @@ def parse_topics_from_report(report_text: str) -> List[Dict]:
     return topics
 
 
+_EN_PROMPT = """Z hotového českého článku vytvoř ANGLICKOU verzi pro mezinárodní publikum (USA, UK, západní Evropa).
+
+Není to doslovný překlad, je to lokalizace: zachovej úhel, tón, strukturu i všechny <h2> sekce a fakta, ale piš přirozenou angličtinou, ne přeloženou češtinou.
+
+PRAVIDLA:
+- NIKDY nezmiňuj "Czech", "Czech Republic", "Czech players/gamers/market", "in Czechia" — ani v titulku, ani v meta, ani v textu. Kde česká verze mluví o českých hráčích, použij obecnější pojem ("players", "PC gamers", "Steam users", "Western audiences") podle kontextu. Výjimka: fakticky podstatné téma, třeba české studio jako Warhorse (CD Projekt je polské, ne české).
+- Formát: ČISTÉ HTML (<h2>, <p>, <strong>), žádný markdown.
+- V <h2> NEPOUŽÍVEJ Title Case. ŠPATNĚ: "What This Means For Players". SPRÁVNĚ: "What this means for players".
+- Zachovej délku originálu, MINIMUM 600 slov.
+- NEPŘIDÁVEJ <h1> ani sekci "Sources".
+
+NA ZAČÁTEK výstupu uveď na samostatných řádcích:
+  KEYWORD EN: [main SEO keyword in English, 1-2 words, SHORT — Rank Math scores exact match in title/H2/intro, long-tail phrases lower the score. Priority: 1) exact game/platform/studio name ("xbox", "gta 6", "gothic remake"), 2) max 2 words. NEVER 3+ word phrases.]
+  TITULEK EN: [English title, MAX 60 characters, KEYWORD EN in the first third, no clickbait, no rhetorical questions, no colon teasers]
+  META EN: [English meta description, 140-155 characters, ends with punctuation, contains KEYWORD EN]
+  STORY_CARDS EN: [ONE-LINE JSON array of 3-5 objects {"heading": "max 40 chars", "body": "max 160 chars, 1-2 sentences"}. Not a section-by-section summary — the 3-5 most important points (key fact → context/angle → consequence). Each card is read standalone on a vertical mobile screen. Plain text only, no HTML, no markdown. Never mention the Czech Republic.]
+
+SEO KONTROLA před odevzdáním: KEYWORD EN je v TITULEK EN (první třetina), v prvním odstavci, v META EN, alespoň v jednom <h2> a v textu minimálně 3×.
+
+FORMÁT VÝSTUPU:
+=== ENGLISH ===
+<článek v angličtině jako HTML>"""
+
+
+def _localize_to_english(client, cs_html: str, title_cs: Optional[str],
+                         keyword_cs: Optional[str]) -> Dict:
+    """Druhá fáze: z hotového českého článku udělá anglickou verzi + EN metadata.
+
+    Běží na TRANSLATION_MODEL, protože překlad hotového textu je mechanická
+    práce — cenu Opusu má smysl platit jen za české psaní v první fázi.
+    Selhání téhle fáze nesmí zabít celý článek: vrací {'error': ...} a volající
+    článek publikuje jen česky.
+    """
+    if not cs_html:
+        return {'error': 'prázdný český článek'}
+
+    context = f"""=== ČESKÝ ČLÁNEK K LOKALIZACI ===
+ČESKÝ TITULEK: {title_cs or ''}
+ČESKÝ KEYWORD: {keyword_cs or ''}
+
+{cs_html}
+
+Vygeneruj nyní EN metadata a anglickou verzi ve formátu popsaném výše."""
+
+    messages = [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": _EN_PROMPT, "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": context},
+        ],
+    }]
+
+    try:
+        message = _call_api(client, config.TRANSLATION_MODEL, 8192, 0.7, messages)
+        if message.stop_reason == 'max_tokens':
+            return {'error': 'EN výstup useknut na max_tokens'}
+
+        text = _response_text(message)
+
+        def _line(label):
+            m = re.search(r'^\s*' + label + r':\s*(.+)$', text, re.MULTILINE)
+            return m.group(1).strip().strip('"\'').strip('*') if m else None
+
+        keyword_en = _line(r'KEYWORD\s*EN')
+        title_en = _line(r'TITULEK\s*EN')
+        meta_en = _line(r'META\s*EN')
+        story_cards_en = _extract_story_cards(text, 'EN')
+
+        body = text
+        body = re.sub(r'^\s*(?:KEYWORD|TITULEK|META)\s*EN:\s*.+$', '', body, flags=re.MULTILINE)
+        body = re.sub(r'^\s*STORY_CARDS\s*EN:\s*\[[\s\S]*?\]\s*$', '', body, flags=re.MULTILINE)
+
+        m = re.search(r'===\s*ENGLISH\s*===\s*([\s\S]*)$', body)
+        en_html = (m.group(1) if m else body).strip()
+
+        en_html = _strip_markdown_artifacts(en_html)
+        en_html = _insert_separators_before_h2(en_html)
+        en_html = _make_first_paragraph_quote(en_html)
+        en_html = _strip_generated_sources(en_html)
+
+        cost, cache_read, cache_write = _estimate_cost(message.usage, config.TRANSLATION_MODEL)
+        log.info("EN lokalizace [%s]: in=%d (cache read=%d, write=%d), out=%d, $%.4f",
+                 config.TRANSLATION_MODEL, message.usage.input_tokens, cache_read,
+                 cache_write, message.usage.output_tokens, cost)
+
+        return {
+            'en': en_html,
+            'en_title': title_en,
+            'meta_en': meta_en,
+            'keyword_en': keyword_en.lower() if keyword_en else None,
+            'story_cards_en': story_cards_en,
+            'tokens_in': message.usage.input_tokens,
+            'tokens_out': message.usage.output_tokens,
+            'cache_read': cache_read,
+            'cache_write': cache_write,
+            'cost': cost,
+        }
+    except Exception as e:  # noqa: BLE001
+        return {'error': str(e)}
+
+
 def write_article(topic: Dict, source_texts: List[str], length: str = 'medium') -> Dict:
     """
     Vygeneruje clanek pomoci Claude API
@@ -351,9 +476,15 @@ NIC z následujícího se v článku nesmí objevit. Pokud něco napíšeš, sma
 - Délkové požadavky najdeš v sekci ZADÁNÍ níže
 - Formát: ČISTÉ HTML (<h2>, <p>, <strong>)
 - NEPOUŽÍVEJ markdown! Žádné ```, ---, #, ** — POUZE HTML tagy
-- Styl: analytický, s názorem. NE neutrální zpravodajský tón. Nebojí se mít postoj.
-  - CZ verze: pro české herní publikum (můžeš zmínit český trh, české hráče, lokální kontext).
-  - EN verze: pro MEZINÁRODNÍ anglicky mluvící publikum (USA, UK, západní Evropa). NIKDY nezmiňuj "Czech players", "Czech market", "Czech gamers", "in the Czech Republic" ani jinou referenci na Českou republiku. EN verze není překlad pro Čechy čtoucí anglicky — je to článek pro globální čtenáře. Pokud CZ verze říká "čeští hráči", v EN použij obecnější pojem: "players", "PC gamers", "console players", "Steam users", "Western audiences" apod. dle kontextu.
+- Styl: analytický, s názorem. NE neutrální zpravodajský tón. Nebojí se mít postoj. Píšeš pro české herní publikum (můžeš zmínit český trh, české hráče, lokální kontext).
+
+=== ČEŠTINA (piš česky, nepřekládej z angličtiny) ===
+Zdroje jsou anglické, článek je český. Nepřevádět anglickou vazbu do češtiny slovo od slova:
+- Neživá věc se v češtině NECÍTÍ. ŠPATNĚ: "Zóna se cítila spíš jako střelnice." SPRÁVNĚ: "Zóna působila spíš jako střelnice." (Člověk nebo komunita se cítit může — to je v pořádku.)
+- Nezačínej větu příslovcem převzatým z anglické stavby. ŠPATNĚ: "Mechanicky zásadnější je změna systému A-Life." SPRÁVNĚ: "Zásadnější zásah do hratelnosti je změna systému A-Life."
+
+=== VĚCNÁ SPRÁVNOST PŘÍČIN A NÁSLEDKŮ (KRITICKÉ) ===
+Než napíšeš, že něco něco způsobilo, ověř si ve zdroji SMĚR té vazby. Nejčastější chyba je zaměnit funkci za její selhání: když hráči kritizovali, že svět působí mrtvě, nemůže za to systém, který ho má oživovat — může za to jeho NEFUNKČNOST. ŠPATNĚ: "A-Life byl označován za příčinu toho, proč Zóna působila jako střelnice." SPRÁVNĚ: "Za hlavní příčinu byl označován rozbitý A-Life, který po vydání prakticky nefungoval." Pokud si směrem nejsi jistý, napiš jen to, co zdroj tvrdí, a kauzalitu vynech.
 - Zahrň konkrétní fakta a čísla (to je zásadní pro důvěryhodnost analýzy)
 - NEZMIŇUJ zdroje v textu článku (ne "podle IGN...")
 - NEPŘIDÁVEJ h1 nadpis — ten bude jako titulek článku
@@ -367,41 +498,29 @@ NIC z následujícího se v článku nesmí objevit. Pokud něco napíšeš, sma
   - Musí mít ÚHEL (ne jen "X oznámil Y"), ale úhel = informace navíc nebo zasazení do kontextu, NE rétorická figura.
 - NA ZAČÁTEK výstupu VŽDY uveď titulky, klíčová slova a meta popisy na samostatných řádcích:
   KEYWORD CZ: [hlavní SEO klíčové slovo v češtině, 1-2 slova, KRÁTKÉ — Rank Math hodnotí přesnou shodu v titulku/H2/úvodu, takže long-tail fráze score srážejí. Priorita: 1) přesný název hry/platformy/studia ("xbox", "gta 6", "gothic remake", "silksong", "rockstar"), 2) max 2 slova ("herní leaky", "gaming awards"). NIKDY 3+ slovné fráze typu "gta 6 datum vydání leak". Pokud jsou výše zadaná SEO KLÍČOVÁ SLOVA, vyber z nich nejkratší a nejsilnější, jinak navrhni sám.]
-  KEYWORD EN: [main SEO keyword in English, 1-2 words, SHORT — Rank Math scores exact match in title/H2/intro, long-tail phrases lower the score. Priority: 1) exact game/platform/studio name ("xbox", "gta 6", "gothic remake", "silksong", "rockstar"), 2) max 2 words ("gaming leaks", "indie awards"). NEVER 3+ word phrases. Same logic as CZ.]
   TITULEK CZ: [český titulek, MAX 60 znaků, KEYWORD CZ v první třetině]
-  TITULEK EN: [anglický titulek, MAX 60 znaků, KEYWORD EN v první třetině]
   META CZ: [český meta description, 140-155 znaků, VŽDY ukončené tečkou/otazníkem, obsahuje KEYWORD CZ, musí lákat k prokliku]
-  META EN: [anglický meta description, 140-155 znaků, VŽDY ukončené tečkou/otazníkem, obsahuje KEYWORD EN, musí lákat k prokliku]
   RUBRIKA: [právě JEDNA hodnota z: aaa | indie | playstation | microsoft | nintendo | valve | technologie | ekonomika | mimoherni | cesko-slovensko | zadna. Podrubrika Zpráv podle HLAVNÍHO tématu článku: aaa = velkorozpočtové hry a jejich studia (Rockstar, Ubisoft, CD Projekt…); indie = nezávislé hry a malá studia; playstation = Sony/PlayStation (konzole, exkluzivity, PS Plus); microsoft = Microsoft/Xbox (konzole, Game Pass, Bethesda/ABK studia); nintendo = Nintendo (Switch, first-party hry); valve = Valve/Steam (platforma, Steam Deck/Machine, Half-Life); technologie = hardware a technika mimo jednu platformu (GPU, RAM, VR, handheldy obecně); ekonomika = byznys, prodeje, akvizice, propouštění bez vazby na jednu firmu/platformu; mimoherni = přesahy mimo hry (film, seriály, esport, společnost); cesko-slovensko = česká/slovenská studia a scéna. Pokud sedí víc rubrik, vyber NEJKONKRÉTNĚJŠÍ — rubrika platformy/firmy má přednost před obecnou (aaa, ekonomika). Pokud nic jednoznačně nesedí, napiš zadna.]
   ENTITA: [anglický název HLAVNÍHO subjektu článku + svislítko + typ. Používá se JEN k vyhledání náhledového obrázku v herní databázi, do textu se nedostane. Formát: `název | hra` nebo `název | znacka`. Typ `hra` = konkrétní hra nebo herní série, kterou lze najít v databázi her (`Diablo IV | hra`, `The Witcher | hra`, `Big Walk | hra`). Typ `znacka` = firma, studio, vydavatel, konzole, platforma, obchod nebo akce (`Nintendo | znacka`, `Roblox | znacka`, `Devolver Digital | znacka`, `Summer Game Fest | znacka`). PRAVIDLA: (1) VŽDY anglicky a v kanonickém tvaru, jak se jméno píše oficiálně — ne česky, ne skloňované, bez roku a bez podtitulu článku. (2) Nikdy nepiš celou větu ani popis události — jen holé jméno. (3) Když je článek o konzoli nebo firmě a žádná konkrétní hra v něm nedominuje, je to `znacka`, i kdyby se nějaká hra v textu zmiňovala. (4) Když článek srovnává víc her, vyber tu, které se text věnuje nejvíc. Příklady: článek „Nintendo Switch 2 překonala GameCube v prodejích" → `Nintendo | znacka`; „Roblox v krizi, akcie padají o 70 %" → `Roblox | znacka`; „Witcher seriál na Netflixu se posouvá na 2027" → `The Witcher | hra`.]
-  STORY_CARDS CZ: [JEDNO-ŘÁDKOVÝ JSON array 3-5 objektů ve tvaru {{"heading": "max 40 znaků", "body": "max 160 znaků, 1-2 věty"}}. Toto NENÍ shrnutí článku po sekcích — vyber 3-5 nejdůležitějších bodů (klíčový fakt → kontext/úhel → důsledek). Každá karta = 1 myšlenka, čte se na svislé mobilní obrazovce SAMOSTATNĚ, čtenář vidí jen tu jednu kartu a musí pochopit pointu bez ostatních. Bez HTML, bez markdown, plain text v JSON stringu. Heading je věcný (ne otázka, ne clickbait). Body 1-2 reálné věty. Příklad jedné karty: {{"heading":"Rockstar drží termín přes rok","body":"Od oznámení v roce 2024 GTA 6 nezměnilo datum vydání, což je u AAA tahounů nezvyklé."}}]
-  STORY_CARDS EN: [Same logic in English, JSON array 3-5 objects {{"heading": "max 40 chars", "body": "max 160 chars, 1-2 sentences"}}. NEVER mention Czech Republic / Czech players. Plain text only, no HTML, no markdown.]
+  STORY_CARDS CZ: [JEDNO-ŘÁDKOVÝ JSON array 3-5 objektů ve tvaru {"heading": "max 40 znaků", "body": "max 160 znaků, 1-2 věty"}. Toto NENÍ shrnutí článku po sekcích — vyber 3-5 nejdůležitějších bodů (klíčový fakt → kontext/úhel → důsledek). Každá karta = 1 myšlenka, čte se na svislé mobilní obrazovce SAMOSTATNĚ, čtenář vidí jen tu jednu kartu a musí pochopit pointu bez ostatních. Bez HTML, bez markdown, plain text v JSON stringu. Heading je věcný (ne otázka, ne clickbait). Body 1-2 reálné věty. Příklad jedné karty: {"heading":"Rockstar drží termín přes rok","body":"Od oznámení v roce 2024 GTA 6 nezměnilo datum vydání, což je u AAA tahounů nezvyklé."}}]
 - KRITICKÉ: V nadpisech (h2) NEPOUŽÍVEJ Title Case! Velké písmeno POUZE na začátku věty a u vlastních jmen. ŠPATNĚ: "Nová Éra Pro Herní Průmysl". SPRÁVNĚ: "Nová éra pro herní průmysl". ŠPATNĚ: "What This Means For Players". SPRÁVNĚ: "What this means for players".
 - KRITICKÉ: META CZ/EN NESMÍ být uťaté v půli věty! Krátký svébytný popis (1-2 věty) končící interpunkcí — NIKDY NE kopie úvodního odstavce.
 - NEPŘIDÁVEJ sekci "Zdroje" ani "Sources" — přidají se automaticky
 
 === SEO CHECKLIST (povinné, ne doporučení) ===
 Před odesláním článku zkontroluj, že platí VŠECHNO:
-1. KEYWORD CZ je v TITULEK CZ, v první třetině. (Totéž EN.)
-2. KEYWORD CZ je v prvním odstavci CZ článku (do 100 znaků od začátku). (Totéž EN.)
-3. KEYWORD CZ je v META CZ. (Totéž EN.)
-4. KEYWORD CZ se v celém CZ článku objeví minimálně 3× (přirozeně, ne spam). (Totéž EN.)
-5. Alespoň jeden <h2> v CZ článku obsahuje KEYWORD nebo jeho variantu. (Totéž EN.)
-6. TITULEK CZ/EN má max 60 znaků.
-7. CZ článek má MINIMUM 600 slov (ideál podle požadované délky výše). Spočítej si slova před odevzdáním. Pokud je méně, dopiš odstavec s kontextem/srovnáním/důsledkem — NE vatou ("ukáže čas", "uvidíme"), ale konkrétními informacemi nebo úhlem navíc. Totéž platí pro EN.
-8. EN verze NEOBSAHUJE žádnou zmínku o "Czech", "Czech Republic", "Czech players/gamers/market", "in Czechia" apod. — ani v titulku, ani v meta, ani v textu. EN je pro mezinárodní publikum. Výjimka: fakticky relevantní téma (české studio jako Warhorse, CD Projekt je polské — ne české).
+1. KEYWORD CZ je v TITULEK CZ, v první třetině.
+2. KEYWORD CZ je v prvním odstavci článku (do 100 znaků od začátku).
+3. KEYWORD CZ je v META CZ.
+4. KEYWORD CZ se v celém článku objeví minimálně 3× (přirozeně, ne spam).
+5. Alespoň jeden <h2> obsahuje KEYWORD nebo jeho variantu.
+6. TITULEK CZ má max 60 znaků.
+7. Článek má MINIMUM 600 slov (ideál podle požadované délky výše). Spočítej si slova před odevzdáním — tohle je tvrdá hranice, pod ní Rank Math hlásí chybu. Pokud je méně, dopiš odstavec s kontextem/srovnáním/důsledkem — NE vatou ("ukáže čas", "uvidíme"), ale konkrétními informacemi nebo úhlem navíc.
 Pokud některý bod nesedí, PŘEPIŠ titulek nebo úvod, ne článek celý. U bodu 7 rozšiř analytický obsah.
 
-POSTUP:
-1. Nejdřív napiš článek v ČEŠTINĚ (BEZ sekce zdrojů) — s úhlem, s názorem, ne neutrální referát. Cílové publikum: čeští hráči.
-2. Potom vytvoř ANGLICKOU verzi (zachovej úhel, tón a strukturu, ale LOKALIZUJ pro mezinárodní publikum). Není to doslovný překlad — odkazy na "české hráče / český trh / Českou republiku" nahraď obecnějšími pojmy ("players", "PC gamers", "Western players", "the audience" apod.). V EN verzi se ČR nezmiňuje vůbec, pokud to není fakticky podstatné téma (např. české studio jako Warhorse).
-
-FORMÁT VÝSTUPU:
+FORMÁT VÝSTUPU (nejdřív metadata na samostatných řádcích, pak článek):
 === ČESKY ===
-<článek v češtině jako HTML>
-
-=== ENGLISH ===
-<přesný překlad českého článku výše>"""
+<článek v češtině jako HTML, BEZ sekce zdrojů>"""
 
     dynamic_prompt = f"""=== ZADÁNÍ ===
 TÉMA: {topic.get('topic', '')}
@@ -415,7 +534,7 @@ DÉLKA ČLÁNKU: {length_instruction}
 ZDROJOVÉ TEXTY (použij JEN pro fakta, ne jako šablonu):
 {sources_combined}
 
-Vygeneruj nyní výstup ve formátu popsaném výše (KEYWORD/TITULEK/META/STORY_CARDS metadata, pak === ČESKY === a === ENGLISH === sekce)."""
+Vygeneruj nyní výstup ve formátu popsaném výše (KEYWORD/TITULEK/META/RUBRIKA/ENTITA/STORY_CARDS metadata, pak sekce === ČESKY ===)."""
 
     messages = [{
         "role": "user",
@@ -427,8 +546,8 @@ Vygeneruj nyní výstup ve formátu popsaném výše (KEYWORD/TITULEK/META/STORY
 
     try:
         # Velkorysý strop — max_tokens je jen cap, negenerované tokeny nic
-        # nestojí. Dřívější 4096 pro medium (CZ+EN článek + metadata + story
-        # cards ≈ 3500-4500 tokenů) občas tiše usekl EN verzi.
+        # nestojí. Anglická verze se od 16. 8. 2026 generuje zvlášť, takže
+        # tahle fáze vyrábí jen český článek + metadata.
         max_tokens = 16384 if length == 'long' else 8192
         message = _call_api(client, config.ARTICLE_MODEL, max_tokens, 0.7, messages)
 
@@ -436,7 +555,7 @@ Vygeneruj nyní výstup ve formátu popsaném výše (KEYWORD/TITULEK/META/STORY
             log.error("Výstup useknut na max_tokens (%d) — článek by byl neúplný", max_tokens)
             return {'error': f'Output truncated at max_tokens={max_tokens}'}
 
-        result_text = message.content[0].text
+        result_text = _response_text(message)
 
         # Extrahuj titulky, klíčová slova a meta CZ/EN
         corrected_title = None
@@ -524,20 +643,37 @@ Vygeneruj nyní výstup ve formátu popsaném výše (KEYWORD/TITULEK/META/STORY
         # Odstraň AI-generované zdroje (nepřidáváme žádné)
         cs_html = _strip_generated_sources(cs_html)
 
-        if en_html:
-            en_html = _strip_generated_sources(en_html)
-
         total_cost, cache_read, cache_write = _estimate_cost(message.usage, config.ARTICLE_MODEL)
+        tokens_in = message.usage.input_tokens
+        tokens_out = message.usage.output_tokens
 
-        log.info("Article tokens: in=%d (cache read=%d, write=%d), out=%d, $%.4f",
-                 message.usage.input_tokens, cache_read, cache_write,
-                 message.usage.output_tokens, total_cost)
+        log.info("CZ článek [%s]: in=%d (cache read=%d, write=%d), out=%d, $%.4f",
+                 config.ARTICLE_MODEL, tokens_in, cache_read, cache_write,
+                 tokens_out, total_cost)
+
+        # --- FÁZE 2: anglická lokalizace samostatným (levnějším) voláním ---
+        en = _localize_to_english(client, cs_html, corrected_title, keyword_cs)
+        if en.get('error'):
+            log.warning("EN lokalizace selhala (%s) — článek půjde jen česky", en['error'])
+        else:
+            en_html = en.get('en', '')
+            en_title = en.get('en_title') or en_title
+            meta_en = en.get('meta_en') or meta_en
+            keyword_en = en.get('keyword_en') or keyword_en
+            story_cards_en = en.get('story_cards_en') or story_cards_en
+            total_cost += en.get('cost', 0.0)
+            tokens_in += en.get('tokens_in', 0)
+            tokens_out += en.get('tokens_out', 0)
+            cache_read += en.get('cache_read', 0)
+            cache_write += en.get('cache_write', 0)
+
+        log.info("Článek celkem: out=%d tokenů, $%.4f", tokens_out, total_cost)
 
         result = {
             'cs': cs_html,
             'en': en_html,
-            'tokens_in': message.usage.input_tokens,
-            'tokens_out': message.usage.output_tokens,
+            'tokens_in': tokens_in,
+            'tokens_out': tokens_out,
             'cache_read': cache_read,
             'cache_write': cache_write,
             'cost': f"${total_cost:.4f}"
@@ -651,7 +787,7 @@ Start directly with the script, no preamble."""
     try:
         message = _call_api(client, config.ARTICLE_MODEL, 4000, 0.8, messages)
 
-        script = message.content[0].text.strip()
+        script = _response_text(message).strip()
 
         total_cost, cache_read, cache_write = _estimate_cost(message.usage, config.ARTICLE_MODEL)
 
