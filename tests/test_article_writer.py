@@ -336,3 +336,78 @@ RUBRIKA: sega
 === ČESKY ===
 <p>Článek.</p>""")
         assert 'subcategory' not in result
+
+class TestEffortParam:
+    """Hloubka přemýšlení (output_config.effort) — účtuje se jako výstupní tokeny."""
+
+    @staticmethod
+    def _raw_call_api():
+        """_call_api bez tenacity obalu, aby test neplatil čekání mezi pokusy."""
+        return getattr(article_writer._call_api, '__wrapped__', article_writer._call_api)
+
+    def _capture(self, model, **kw):
+        """Zachytí argumenty, se kterými _call_api zavolá SDK."""
+        client = MagicMock()
+        self._raw_call_api()(
+            client, model, 8192, 0.7, [{"role": "user", "content": "x"}], **kw
+        )
+        return client.messages.stream.call_args.kwargs
+
+    def test_effort_sent_for_modern_model(self):
+        kwargs = self._capture("claude-opus-5", effort="low")
+        assert kwargs["extra_body"] == {"output_config": {"effort": "low"}}
+        assert "temperature" not in kwargs
+
+    def test_no_effort_no_output_config(self):
+        kwargs = self._capture("claude-opus-5")
+        assert "extra_body" not in kwargs
+
+    def test_effort_skipped_for_old_model(self):
+        """Sonnet 4.5 / Haiku 4.5 na output_config vrací chybu — nesmí se posílat."""
+        kwargs = self._capture("claude-haiku-4-5-20251001", effort="low")
+        assert "extra_body" not in kwargs
+        assert kwargs["temperature"] == 0.7
+
+    def test_cz_prompt_is_not_cached(self):
+        """Cache se u CZ článku nikdy netrefí (běhy 105 min, TTL 5 min) —
+        platil by se jen 25% příplatek za zápis, ze kterého nikdo nečte."""
+        mock_message = MagicMock()
+        mock_message.content = [MagicMock(type="text", text="""TITULEK: T
+
+=== ČESKY ===
+<p>Text.</p>""")]
+        mock_message.usage = MagicMock(input_tokens=100, output_tokens=200)
+
+        with patch('article_writer._call_api', return_value=mock_message) as mock_api:
+            article_writer.write_article(
+                {'topic': 'T', 'title': 'T', 'sources': ['https://example.com']},
+                ["zdrojový text"],
+            )
+
+        # call_args_list[0] = české volání; [1] by byla EN lokalizace, která
+        # svůj (kratší než minimum pro cache) prompt značkovat smí.
+        blocks = mock_api.call_args_list[0][0][4][0]['content']
+        assert not any('cache_control' in b for b in blocks)
+
+    def test_falls_back_when_api_rejects_effort(self):
+        """Odmítnutí parametru nesmí zabít článek — druhý pokus jde bez něj."""
+        import anthropic
+        client = MagicMock()
+        rejection = anthropic.BadRequestError(
+            "output_config: Extra inputs are not permitted",
+            response=MagicMock(status_code=400, headers={}), body=None,
+        )
+        ok = MagicMock()
+        client.messages.stream.side_effect = [rejection, MagicMock(
+            __enter__=MagicMock(return_value=MagicMock(get_final_message=lambda: ok)),
+            __exit__=MagicMock(return_value=False),
+        )]
+
+        result = self._raw_call_api()(
+            client, "claude-opus-5", 8192, 0.7,
+            [{"role": "user", "content": "x"}], effort="low",
+        )
+
+        assert result is ok
+        assert client.messages.stream.call_count == 2
+        assert "extra_body" not in client.messages.stream.call_args.kwargs

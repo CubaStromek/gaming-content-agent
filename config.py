@@ -117,6 +117,13 @@ MIN_VIRALITY_SCORE = _env_int("MIN_VIRALITY_SCORE", 50)
 # pasáž napsal správně a doplnil kontext, který ve zdroji nebyl.
 ARTICLE_MODEL = os.getenv("ARTICLE_MODEL", "claude-opus-5")
 
+# Hloubka přemýšlení u českého článku (low | medium | high | xhigh | max).
+# Opus 5 má adaptivní thinking zapnutý defaultně na `high` a thinking se účtuje
+# jako výstupní tokeny — po přechodu 16. 8. 2026 vyskočil výstup CZ fáze na
+# ~5 000 tokenů (Sonnet 4.6 zvládal CZ+EN dohromady za ~3 200) a cena za článek
+# z $0,067 na $0,21. Přepis novinky ze tří scrapnutých zdrojů `high` nepotřebuje.
+ARTICLE_EFFORT = os.getenv("ARTICLE_EFFORT", "low")
+
 # Model pro anglickou lokalizaci a EN metadata. Překlad hotového českého textu
 # je mechanická práce — nemá smysl na ni platit sazbu Opusu.
 TRANSLATION_MODEL = os.getenv("TRANSLATION_MODEL", "claude-sonnet-4-6")

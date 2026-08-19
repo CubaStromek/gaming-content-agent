@@ -1,5 +1,19 @@
 # Changelog — Gaming Content Agent
 
+## 2026-08-18 — Český článek na `effort: low`
+
+Kontrola nákladů po přechodu na Opus 5: cena za článek vyskočila z **$0,067 na $0,21** (3,1×), denní burn z ~$0,79 na ~$1,66. Sazba Opusu za tím stojí jen z části (výstup $25 vs $15/MTok) — zbytek dělá **objem výstupu**. Sonnet 4.6 psal CZ+EN dohromady za ~3 200 výstupních tokenů, Opus 5 vydává na samotnou češtinu ~5 000. Opus 5 má totiž adaptivní thinking zapnutý defaultně na `effort: high` a thinking se účtuje jako výstup — platilo se za dlouhé rozmýšlení nad přepisem herní novinky ze tří scrapnutých zdrojů.
+
+- **`config`** — nový `ARTICLE_EFFORT` (default `low`, přepsatelné přes env). Hloubka přemýšlení jen pro české volání; EN lokalizace (Sonnet 4.6) i analýza (Haiku 4.5) beze změny.
+- **`article_writer._call_api`** — volitelný parametr `effort`, posílaný jen moderním modelům (starší na `output_config` vracejí chybu). Nainstalované SDK 0.76 nezná `output_config` jako pojmenovaný argument, jde tedy přes `extra_body` syrově v těle requestu — API ho bere bez beta hlavičky.
+- **Pojistka** — odmítne-li API `output_config`, `_call_api` volání jednou zopakuje bez něj a jen zaloguje varování. Důvod: doprava parametru je ověřená zachycením odchozího requestu, ale **ne proti živému API** — 18. 8. ve 20:00 byl vyčerpaný kredit klíče GAME AGENT, takže se nedalo zavolat vůbec nic. Bez pojistky by případné odmítnutí shodilo každý článek.
+- Testy: 4 nové (effort v těle requestu, bez effortu se `output_config` neposílá, starému modelu se neposílá, fallback po odmítnutí), celkem **358**.
+- **Ověřeno proti živému API** (po dobití kreditu ve 20:10): nesmyslná hodnota vrací `400 output_config.effort`, čímž je doloženo, že pole dorazí až na validaci API — a že pojistka na odmítnutí skutečně zabírá. Platný `low` prošel.
+- **Změřeno na běhu ve 20:15** (článek Control Resonant): výstup české fáze **5 342 → 2 673 tokenů** (−50 %), cena CZ volání **$0,190 → $0,119**, celý článek **$0,21 → $0,15** (−28 %). Denní burn ~$1,66 → **~$1,36**, měsíčně ~$50 → ~$41. Článek má 759 slov, tedy nad povinným minimem 600.
+- **`article_writer`** — zrušeno `cache_control` u českého promptu (19. 8.). Cache se nikdy netrefila: běhy jsou 105 minut od sebe, ephemeral TTL je 5 minut, takže v logu stálo pokaždé `cache read=0, write=7360`. Platil se jen 25% příplatek za zápis, ze kterého nikdo nečetl — u Opusu $6,25 místo $5,00 za MTok, tj. ~$0,009 na článek (~$2,2/měsíc). Po zkrácení výstupu na `effort: low` šlo přitom o 39 % ceny českého volání. EN prompt značku ponechává — je kratší než minimum 1024 tokenů pro cache, takže ho API tiše ignoruje (`write=0`) a nic nestojí. Analýza (Haiku) má `write=0` ze stejného důvodu. Test hlídá, že se značka u CZ nevrátí; celkem **359**.
+- ⏳ **Otevřené:** kvalita na jednom vzorku nejde posoudit. Přečíst články z dalších pár běhů, jestli `low` nezhoršil pochopení zdroje — což byl původní důvod přechodu na Opus.
+
+
 ## 2026-08-16 — Český článek na Opus 5, anglická verze zvlášť
 
 Podnět: ve vydaném článku o S.T.A.L.K.E.R. 2 stálo, že *„A-Life byl označován za hlavní příčinu toho, proč se Zóna cítila spíš jako střelnice"*. Dvě vady v jedné větě — kalk („Zóna se cítila") a hlavně obrácená kauzalita: za mrtvý svět nemohl systém A-Life, ale to, že po vydání nefungoval.

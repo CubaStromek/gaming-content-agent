@@ -50,7 +50,7 @@ def _response_text(message) -> str:
     )
 
 
-def _call_api(client, model, max_tokens, temperature, messages):
+def _call_api(client, model, max_tokens, temperature, messages, effort=None):
     """Volání Claude API přes STREAMING.
 
     Streaming drží spojení trvale živé (tokeny tečou průběžně po stovkách ms),
@@ -62,15 +62,37 @@ def _call_api(client, model, max_tokens, temperature, messages):
 
     U moderních modelů se temperature vynechává (jinak HTTP 400) a max_tokens
     se navyšuje — je to strop na přemýšlení i text dohromady.
+
+    effort (low|medium|high|xhigh|max) řídí hloubku přemýšlení, tedy i počet
+    účtovaných výstupních tokenů. Nainstalované SDK 0.76 nezná `output_config`
+    jako pojmenovaný argument, posílá se proto syrově v těle requestu — API ho
+    přijímá bez beta hlavičky. Starším modelům se neposílá (Sonnet 4.5 a Haiku
+    4.5 na něj vracejí chybu).
     """
     kwargs = {"model": model, "max_tokens": max_tokens, "messages": messages}
     if _is_modern(model):
         kwargs["max_tokens"] = max(max_tokens, 32000)
+        if effort:
+            kwargs["extra_body"] = {"output_config": {"effort": effort}}
     else:
         kwargs["temperature"] = temperature
 
-    with client.messages.stream(**kwargs) as stream:
-        return stream.get_final_message()
+    try:
+        with client.messages.stream(**kwargs) as stream:
+            return stream.get_final_message()
+    except anthropic.BadRequestError as e:
+        # Doprava parametru je ověřená jen na odchozím requestu — proti živému
+        # API ne, protože 18. 8. 2026 byl vyčerpaný kredit. Kdyby ho API přece
+        # jen odmítlo, článek se kvůli tomu nesmí ztratit.
+        detail = str(getattr(e, 'message', '') or e)
+        if 'extra_body' not in kwargs or not (
+            'output_config' in detail or 'effort' in detail
+        ):
+            raise
+        log.warning("API odmítlo output_config.effort (%s) — opakuji bez něj", detail[:120])
+        kwargs.pop('extra_body')
+        with client.messages.stream(**kwargs) as stream:
+            return stream.get_final_message()
 
 
 if _HAS_TENACITY:
@@ -536,10 +558,15 @@ ZDROJOVÉ TEXTY (použij JEN pro fakta, ne jako šablonu):
 
 Vygeneruj nyní výstup ve formátu popsaném výše (KEYWORD/TITULEK/META/RUBRIKA/ENTITA/STORY_CARDS metadata, pak sekce === ČESKY ===)."""
 
+    # Bez cache_control záměrně: běhy jsou 105 minut od sebe, ephemeral TTL je
+    # 5 minut, takže se z cache nikdy nečetlo (v logu vždy `cache read=0,
+    # write=7360`). Platil se jen 25% příplatek za zápis, ze kterého nikdo nikdy
+    # nečetl — u Opusu $6,25 místo $5,00 za MTok, ~$0,009 na článek. Nevracet,
+    # dokud nebudou běhy hustší než TTL.
     messages = [{
         "role": "user",
         "content": [
-            {"type": "text", "text": static_prompt, "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": static_prompt},
             {"type": "text", "text": dynamic_prompt},
         ],
     }]
@@ -549,7 +576,8 @@ Vygeneruj nyní výstup ve formátu popsaném výše (KEYWORD/TITULEK/META/RUBRI
         # nestojí. Anglická verze se od 16. 8. 2026 generuje zvlášť, takže
         # tahle fáze vyrábí jen český článek + metadata.
         max_tokens = 16384 if length == 'long' else 8192
-        message = _call_api(client, config.ARTICLE_MODEL, max_tokens, 0.7, messages)
+        message = _call_api(client, config.ARTICLE_MODEL, max_tokens, 0.7, messages,
+                            effort=config.ARTICLE_EFFORT)
 
         if message.stop_reason == 'max_tokens':
             log.error("Výstup useknut na max_tokens (%d) — článek by byl neúplný", max_tokens)

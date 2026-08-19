@@ -45,16 +45,31 @@ Klíčové soubory: `style.css` (2 068 ř.), `functions.php` (2 479 ř.), `asset
 
 **NEPOUŽÍVEJ PowerShell `Compress-Archive`** — backslash cesty nefungují na Linux serverech.
 
-Složka v ZIPu musí = Theme Name (`GAMEfo/`, ne `wp-theme-gameinfo/`). Použij Python:
+**Kořenová složka v ZIPu musí být `gamefo-wordpress-theme/`** — tedy shodná s adresářem, ve kterém téma běží na produkci. NE `GAMEfo/` a NE název s verzí.
+
+Důvod (naraženo 11. 5. 2026): WP rozbaluje ZIP do složky podle jejího názvu. Jiný název = **nový theme slug** = `theme_mods` se uloží pod jiným klíčem = **ztráta všech nastavení Customizeru** (featured sloty per jazyk, FB/YT URL…). Stabilní slug je zachová napříč updaty.
+
 ```python
 import zipfile, os
-with zipfile.ZipFile('GAMEfo_x_x_x.zip', 'w', zipfile.ZIP_DEFLATED) as zipf:
-    for root, dirs, files in os.walk('wp-theme-gameinfo'):
-        for file in files:
-            file_path = os.path.join(root, file)
-            arcname = file_path.replace(os.sep, '/').replace('wp-theme-gameinfo', 'GAMEfo', 1)
-            zipf.write(file_path, arcname)
+ROOT = 'gamefo-wordpress-theme'          # musí sedět s adresářem na produkci
+skip_dirs  = {'.git', 'node_modules', '__MACOSX'}
+skip_files = {'.gitignore', '.DS_Store', '.vapid-keys.local'}
+with zipfile.ZipFile(f'GAMEfo_x_x_x.zip', 'w', zipfile.ZIP_DEFLATED) as z:
+    for root, dirs, files in os.walk('.'):
+        dirs[:] = [d for d in dirs if d not in skip_dirs]
+        for f in files:
+            if f in skip_files or f.endswith('.zip'):
+                continue
+            fp = os.path.join(root, f)
+            z.write(fp, ROOT + '/' + os.path.relpath(fp, '.').replace(os.sep, '/'))
 ```
+
+Ověřit před uploadem, kam téma na produkci reálně ukazuje:
+```bash
+curl -s https://gamefo.cz/ | grep -oE "wp-content/themes/[^/]+/style\.css[^\"']*"
+```
+
+**Mu-pluginy přes theme ZIP neprojdou** — na produkci žijí v `/wp-content/mu-plugins/` a chtějí ruční upload přes Webglobe panel.
 
 ---
 
