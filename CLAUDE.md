@@ -49,27 +49,34 @@ Klíčové soubory: `style.css` (2 068 ř.), `functions.php` (2 479 ř.), `asset
 
 Důvod (naraženo 11. 5. 2026): WP rozbaluje ZIP do složky podle jejího názvu. Jiný název = **nový theme slug** = `theme_mods` se uloží pod jiným klíčem = **ztráta všech nastavení Customizeru** (featured sloty per jazyk, FB/YT URL…). Stabilní slug je zachová napříč updaty.
 
-```python
-import zipfile, os
-ROOT = 'gamefo-wordpress-theme'          # musí sedět s adresářem na produkci
-skip_dirs  = {'.git', 'node_modules', '__MACOSX'}
-skip_files = {'.gitignore', '.DS_Store', '.vapid-keys.local'}
-with zipfile.ZipFile(f'GAMEfo_x_x_x.zip', 'w', zipfile.ZIP_DEFLATED) as z:
-    for root, dirs, files in os.walk('.'):
-        dirs[:] = [d for d in dirs if d not in skip_dirs]
-        for f in files:
-            if f in skip_files or f.endswith('.zip'):
-                continue
-            fp = os.path.join(root, f)
-            z.write(fp, ROOT + '/' + os.path.relpath(fp, '.').replace(os.sep, '/'))
+**Nejdřív zacommitovat, pak buildit.** ZIP se staví z gitu, ne z pracovní složky:
+
+```bash
+cd /Users/openclaw/AI-Projects/gamefo-wordpress-theme
+git archive --format=zip --prefix=gamefo-wordpress-theme/ -o GAMEfo_2_11_0.zip HEAD
 ```
 
-Ověřit před uploadem, kam téma na produkci reálně ukazuje:
+`--prefix` zařídí povinnou kořenovou složku, `HEAD` znamená „přesně to, co je zacommitované".
+
+**Proč zrovna takhle** (naraženo 23. 8. 2026): dřívější recept obcházel git a balil pracovní složku přes `os.walk` s ručním seznamem výjimek. Takový seznam je denylist — vyjmenovává, co vynechat, takže **cokoliv nového, co v adresáři přistane, se automaticky veze na hosting**. Takhle se do ZIPů 2.10.0 a 2.10.1 dostalo 5,7 MB ladicích screenshotů (`test-*.jpg`) a ty pak reálně ležely na produkci. `git archive` je naopak allowlist: co není v gitu, se nasadit nemůže.
+
+Druhý zisk: nasazené se rovná zacommitovanému. Se starým receptem šlo nasadit rozpracovanou změnu, která není v žádném commitu — a `git archive <sha>` naopak kdykoliv znovu postaví přesně ten balíček, co běží na produkci.
+
+Vyloučení se řídí dvěma soubory a nic třetího se neudržuje:
+- **`.gitignore`** — co sem patří, se do ZIPu nedostane už z principu (dočasné soubory, screenshoty, staré ZIPy, `.vapid-keys.local`).
+- **`.gitattributes`** — `export-ignore` pro soubory, které v gitu být mají, ale na hosting nepatří (`MULTILINGUAL-SETUP.md`). Pozor, `git archive` ho čte **z commitu**, takže změna platí až po zacommitování.
+
+Ověřit před uploadem, že ZIP obsahuje jen očekávané soubory a správný kořen:
+```bash
+unzip -l GAMEfo_2_11_0.zip | head -20
+```
+
+A kam téma na produkci reálně ukazuje:
 ```bash
 curl -s https://gamefo.cz/ | grep -oE "wp-content/themes/[^/]+/style\.css[^\"']*"
 ```
 
-**Mu-pluginy přes theme ZIP neprojdou** — na produkci žijí v `/wp-content/mu-plugins/` a chtějí ruční upload přes Webglobe panel.
+**Mu-pluginy ze ZIPu NEVYHAZOVAT.** Do `/wp-content/mu-plugins/` se přes theme ZIP sice nedostanou (tam chtějí ruční upload přes Webglobe panel), ale `functions.php:15-17` je zároveň načítá `require_once` přímo z adresáře tématu — bez nich produkce spadne na fatal error.
 
 ---
 
