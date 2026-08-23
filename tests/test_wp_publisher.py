@@ -338,3 +338,73 @@ class TestResolveTagIdsBatch:
         ids, err = wp_publisher._resolve_tag_ids(['  ', ''])
         assert ids == []
         assert err is None
+
+
+class TestCheckWpAvailable:
+    """Healthcheck opakuje jen to, co má smysl opakovat.
+
+    Regrese k 23. 8. 2026: jediný 8s timeout uprostřed běhu zahodil už
+    vygenerovaný (zaplacený) článek.
+    """
+
+    def test_ok_on_first_attempt(self):
+        with patch('wp_publisher.requests.get') as mock_get:
+            mock_get.return_value = MagicMock(status_code=200)
+            assert wp_publisher.check_wp_available() is True
+            assert mock_get.call_count == 1
+
+    def test_timeout_is_retried_and_can_succeed(self):
+        import requests as rq
+        with patch('wp_publisher.requests.get') as mock_get, \
+             patch('wp_publisher.time.sleep') as mock_sleep:
+            mock_get.side_effect = [rq.exceptions.Timeout(),
+                                    MagicMock(status_code=200)]
+            assert wp_publisher.check_wp_available() is True
+            assert mock_get.call_count == 2
+            mock_sleep.assert_called_once_with(5)
+
+    def test_connection_error_exhausts_attempts(self):
+        import requests as rq
+        with patch('wp_publisher.requests.get') as mock_get, \
+             patch('wp_publisher.time.sleep'):
+            mock_get.side_effect = rq.exceptions.ConnectionError()
+            assert wp_publisher.check_wp_available() is False
+            assert mock_get.call_count == 2
+
+    def test_server_error_is_retried(self):
+        with patch('wp_publisher.requests.get') as mock_get, \
+             patch('wp_publisher.time.sleep'):
+            mock_get.side_effect = [MagicMock(status_code=502),
+                                    MagicMock(status_code=200)]
+            assert wp_publisher.check_wp_available() is True
+            assert mock_get.call_count == 2
+
+    def test_401_not_retried(self):
+        """Špatné heslo opakováním nezmizí."""
+        with patch('wp_publisher.requests.get') as mock_get, \
+             patch('wp_publisher.time.sleep') as mock_sleep:
+            mock_get.return_value = MagicMock(status_code=401)
+            assert wp_publisher.check_wp_available() is False
+            assert mock_get.call_count == 1
+            mock_sleep.assert_not_called()
+
+    def test_403_not_retried_fail2ban(self):
+        """Další request na zabanovanou IP by ban jen prodloužil."""
+        with patch('wp_publisher.requests.get') as mock_get:
+            mock_get.return_value = MagicMock(status_code=403)
+            assert wp_publisher.check_wp_available() is False
+            assert mock_get.call_count == 1
+
+    def test_unexpected_exception_not_retried(self):
+        with patch('wp_publisher.requests.get') as mock_get:
+            mock_get.side_effect = ValueError("boom")
+            assert wp_publisher.check_wp_available() is False
+            assert mock_get.call_count == 1
+
+    def test_attempts_configurable(self):
+        import requests as rq
+        with patch('wp_publisher.requests.get') as mock_get, \
+             patch('wp_publisher.time.sleep'):
+            mock_get.side_effect = rq.exceptions.Timeout()
+            assert wp_publisher.check_wp_available(attempts=4) is False
+            assert mock_get.call_count == 4

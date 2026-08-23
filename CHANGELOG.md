@@ -1,5 +1,17 @@
 # Changelog — Gaming Content Agent
 
+## 2026-08-23 — WP výpadek po generování už nespálí téma
+
+Běh ve 13:00 (`20260823_130001`) skončil `Publikovano 0/1`. Preflight ve 13:00:43 hlásil WP nahoře, generování článku „Diablo 4: Lord of Hatred" trvalo 106 s a healthcheck ve 13:02:36 spadl na 8s timeout. gamefo.cz byl přitom o pár minut později zase v pořádku (0,35 s) — šlo o chvilkový blip, ne o výpadek.
+
+Tři škody, z toho dvě zbytečné: zaplacených **$0,1419** za článek, který se nikam neuložil (cache zrušena 19. 8.); **žádný Telegram alert**, takže se na to přišlo až ručně; a hlavně **spálené téma** — gate jen `continue`-l, běh se dokončil jako úspěšný, uložil historii a zdrojová URL VG247 se dostala do `processed_articles` s dnešním datem. Recenze by tak vypadla z 30denního dedup okna úplně. Pojistka proti tomu v kódu byla (`aborted_mid_run`, `auto_publish.py:363`), ale nastavoval ji jen preflight gate před generováním, ne ten po něm.
+
+- **`auto_publish.run`** — gate po generování nově `aborted_mid_run = True` + `break` místo `continue`, tedy stejně jako preflight gate nad ním. WP dole platí pro všechna témata, nemá smysl pokračovat. Rozhodnutí se loguje jako `aborted` (dřív `skipped`) a odchází Telegram alert s názvem tématu.
+- **`wp_publisher.check_wp_available`** — nové parametry `attempts=2, retry_delay=5`. Opakuje se jen timeout, connection error a 5xx; **4xx se neopakuje** — 401 je špatné heslo a 403 Fail2Ban ban, který by druhý request jen prodloužil. Jediný 8s timeout tedy už nezahodí zaplacený článek.
+- Testy: 12 nových (8 healthcheck, 4 integrační na `run()` včetně kontrolního vzorku, že se bez výpadku historie uložit musí), celkem **371**. Ověřeno proti starému kódu, že 7 z nich skutečně padá — retry testy i všechny tři regresní na gate.
+- Frekvence problému: 18× od dubna, z toho 8× tenhle drahý typ (po generování), naposledy 12. 8.
+- Ztracený článek dopublikován ručně přes `manual_article.py`.
+
 ## 2026-08-18 — Český článek na `effort: low`
 
 Kontrola nákladů po přechodu na Opus 5: cena za článek vyskočila z **$0,067 na $0,21** (3,1×), denní burn z ~$0,79 na ~$1,66. Sazba Opusu za tím stojí jen z části (výstup $25 vs $15/MTok) — zbytek dělá **objem výstupu**. Sonnet 4.6 psal CZ+EN dohromady za ~3 200 výstupních tokenů, Opus 5 vydává na samotnou češtinu ~5 000. Opus 5 má totiž adaptivní thinking zapnutý defaultně na `effort: high` a thinking se účtuje jako výstup — platilo se za dlouhé rozmýšlení nad přepisem herní novinky ze tří scrapnutých zdrojů.

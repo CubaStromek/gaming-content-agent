@@ -43,25 +43,53 @@ def is_configured():
     return config.is_wp_configured()
 
 
-def check_wp_available(timeout=8):
+def check_wp_available(timeout=8, attempts=2, retry_delay=5):
     """
     Rychlý test dostupnosti WP REST API (jeden lehký request).
     Vrací True pokud WP odpovídá, False při timeoutu nebo connection erroru.
     Používá se před sérií uploadů — prevence Fail2Ban banu při výpadku hostingu.
+
+    Krátký výpadek (restart PHP-FPM, přepnutí VPN, chvilkový Webglobe blip)
+    nesmí zahodit už zaplacený článek — proto `attempts` pokusů s pauzou
+    `retry_delay` mezi nimi. Opakuje se jen u timeoutu / connection erroru /
+    5xx; 4xx (401 špatné heslo, 403 Fail2Ban ban) opakováním nezmizí a další
+    request by ban jen prodloužil.
     """
-    try:
-        resp = requests.get(
-            _api_url('posts'),
-            headers=_auth_headers(),
-            params={'per_page': 1},
-            timeout=timeout,
-        )
-        return resp.status_code in (200, 201)
-    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
-        return False
-    except Exception:
-        log.exception("WP healthcheck selhal nečekanou výjimkou")
-        return False
+    for attempt in range(1, attempts + 1):
+        retryable = False
+        try:
+            resp = requests.get(
+                _api_url('posts'),
+                headers=_auth_headers(),
+                params={'per_page': 1},
+                timeout=timeout,
+            )
+            if resp.status_code in (200, 201):
+                if attempt > 1:
+                    log.info("WP healthcheck OK až na %d. pokus", attempt)
+                return True
+            if resp.status_code >= 500:
+                retryable = True
+                log.warning("WP healthcheck: HTTP %d (pokus %d/%d)",
+                            resp.status_code, attempt, attempts)
+            else:
+                log.error("WP healthcheck: HTTP %d — neopakuji "
+                          "(401 = špatné heslo, 403 = Fail2Ban ban)",
+                          resp.status_code)
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+            retryable = True
+            log.warning("WP healthcheck: %s (pokus %d/%d)",
+                        type(exc).__name__, attempt, attempts)
+        except Exception:
+            log.exception("WP healthcheck selhal nečekanou výjimkou")
+            return False
+
+        if not retryable:
+            return False
+        if attempt < attempts:
+            time.sleep(retry_delay)
+
+    return False
 
 
 _GUTENBERG_WRAPS = {

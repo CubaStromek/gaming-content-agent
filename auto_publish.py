@@ -318,17 +318,31 @@ def run():
 
         log.info("Clanek vygenerovan (%s)", article.get('cost', '?'))
 
-        # Rychlý test dostupnosti WP před jakýmkoliv odesíláním
+        # Rychlý test dostupnosti WP před jakýmkoliv odesíláním. WP mohl spadnout
+        # až během generování (trvá ~2 min), takže preflight výš nestačí.
+        # Zastavit celý běh, ne `continue`: WP dole platí pro všechna témata a
+        # `aborted_mid_run` zabrání uložení historie — jinak by se zdroje už
+        # zaplaceného, ale nepublikovaného článku spálily na 30 dní v dedup okně.
         if not wp_publisher.check_wp_available():
-            log.error("WP nedostupný — přeskakuji článek '%s' (prevence Fail2Ban)", topic_name)
+            log.error("WP nedostupný PO generování — zastavuji běh, článek '%s' "
+                      "se zkusí v dalším slotu (prevence Fail2Ban)", topic_name)
             publish_log.log_decision({
-                'action': 'skipped',
+                'action': 'aborted',
                 'reason': 'wp_unavailable',
                 'run_id': run_id,
                 'topic': topic_name,
                 'score': virality,
             })
-            continue
+            telegram_alert.send_alert(
+                "⚠️ <b>GAMEfo autopublish ZASTAVEN</b>\n\n"
+                "WordPress (gamefo.cz) přestal odpovídat <b>až po vygenerování</b> "
+                f"článku „{topic_name}“ — zaplacené generování přišlo vniveč.\n\n"
+                "🔧 Nejpravděpodobnější příčina: <b>spadlá NordVPN</b> "
+                "(Starlink IP na Webglobe blacklistu).\n"
+                "➡️ Zapni VPN; téma se zkusí znovu v dalším slotu."
+            )
+            aborted_mid_run = True
+            break
 
         # Sdílená publish pipeline: YouTube embed, featured image, WP CZ+EN,
         # FB obrázky, social media, publish_log
