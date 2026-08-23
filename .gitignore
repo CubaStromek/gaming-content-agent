@@ -76,3 +76,11 @@ _ul
 Verze šablon/
 *homepage_output.html
 gamefoen.md
+
+# promo-video (Remotion pracoviste rizene dayreel.py) — zdroj ano, artefakty ne
+promo-video/node_modules/
+promo-video/out/
+promo-video/public/article-reel/
+promo-video/public/narration/
+promo-video/public/dayreel/
+promo-video/public/promo-reel/

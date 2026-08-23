@@ -1,0 +1,24 @@
+{
+  "name": "gamefo-promo-video",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "studio": "npx remotion studio src/index.ts",
+    "render:article": "npx remotion render src/index.ts ArticleReel out/article-reel.mp4",
+    "render:article-en": "npx remotion render src/index.ts ArticleReelEN out/article-reel-en.mp4",
+    "render:dayreel": "npx remotion render src/index.ts DayReel out/dayreel.mp4",
+    "render:dayreel-en": "npx remotion render src/index.ts DayReelEN out/dayreel-en.mp4",
+    "render:promo": "npx remotion render src/index.ts PromoReel out/promo-reel.mp4"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.242",
+    "@remotion/transitions": "4.0.242",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "remotion": "4.0.242"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "typescript": "^5.7.0"
+  }
+}
