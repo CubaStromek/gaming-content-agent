@@ -27,6 +27,7 @@ from urllib import request as urlrequest
 import anthropic
 
 import config
+import llm_params
 from logger import setup_logger
 
 log = setup_logger('narrator_dayreel')
@@ -154,14 +155,16 @@ def generate_script(articles: list, lang: str, date: str) -> Optional[dict]:
     try:
         resp = client.messages.create(
             model=config.ANALYSIS_MODEL,
-            max_tokens=1500,
+            # Moderní model do stropu počítá i přemýšlení.
+            max_tokens=llm_params.max_tokens_for(config.ANALYSIS_MODEL, 1500, 8000),
             messages=[{"role": "user", "content": prompt}],
+            **llm_params.sampling_kwargs(config.ANALYSIS_MODEL, 1.0, effort="low"),
         )
     except Exception as e:
         log.error("Claude script API selhalo: %s", e)
         return None
 
-    raw = resp.content[0].text if resp.content else ""
+    raw = llm_params.response_text(resp)
     cleaned = _strip_json_fence(raw)
     try:
         data = json.loads(cleaned)

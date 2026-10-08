@@ -189,6 +189,7 @@ def _llm_is_same_story(client, new_topic: Dict, recent: List[Dict]) -> Tuple[Opt
     VÝROK (ne první výskyt slova „DUPLICITA" uvnitř úvahy).
     """
     import config
+    import llm_params
 
     listing = "\n".join(
         f"{i + 1}. {r['topic']} — {r['title']}"
@@ -222,11 +223,13 @@ def _llm_is_same_story(client, new_topic: Dict, recent: List[Dict]) -> Tuple[Opt
     )
 
     try:
+        # Moderní model (Haiku 5.5) do max_tokens počítá i přemýšlení — 250 by
+        # skončilo uprostřed úvahy bez řádku VÝROK, proto 2000 a effort low.
         msg = client.messages.create(
             model=config.DEDUP_MODEL,
-            max_tokens=250,
-            temperature=0,
+            max_tokens=llm_params.max_tokens_for(config.DEDUP_MODEL, 250, 2000),
             messages=[{"role": "user", "content": prompt}],
+            **llm_params.sampling_kwargs(config.DEDUP_MODEL, 0, effort="low"),
         )
         text = "".join(b.text for b in msg.content if getattr(b, 'type', '') == 'text').strip()
     except Exception as exc:

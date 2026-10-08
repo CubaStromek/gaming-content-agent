@@ -9,7 +9,7 @@
 
 ## Přehled projektu
 
-Automatizovaný systém pro české gaming bloggery. Monitoruje herní weby (~23 RSS feedů, viz `config.RSS_FEEDS` + `custom_feeds.json`), analyzuje trendy Claude AI (Haiku 4.5), posílá denní reporty emailem.
+Automatizovaný systém pro české gaming bloggery. Monitoruje herní weby (~23 RSS feedů, viz `config.RSS_FEEDS` + `custom_feeds.json`), analyzuje trendy Claude AI (Haiku 5.5), posílá denní reporty emailem.
 
 ```
 RSS Feeds → rss_scraper.py → claude_analyzer.py → email_sender.py
@@ -19,7 +19,7 @@ RSS Feeds → rss_scraper.py → claude_analyzer.py → email_sender.py
 
 - **Spuštění:** `python main.py` (pipeline) nebo `python web_app.py` (web UI)
 - **Deduplikace:** `processed_articles.json` — filtruje nové články, čistí po 30 dnech
-- **Modely:** analýza a dedup Haiku 4.5 · český článek Opus 5 (`ARTICLE_MODEL`) · anglická lokalizace Sonnet 4.6 (`TRANSLATION_MODEL`)
+- **Modely:** analýza a dedup Haiku 5.5 (od 8. 10. 2026; parametry podle generace modelu v `llm_params.py`) · český článek Opus 5 (`ARTICLE_MODEL`) · anglická lokalizace Sonnet 4.6 (`TRANSLATION_MODEL`)
 - **Náklady:** ~$0.02–0.06/běh analýzy, ~$0.16 za vygenerovaný článek (CZ Opus 5 + EN Sonnet, měřeno 16. 8. 2026 při teplé cache)
 
 ---

@@ -9,6 +9,7 @@ import anthropic
 import json
 from typing import List, Dict, Optional
 import config
+import llm_params
 import topic_dedup
 import wp_publisher
 from logger import setup_logger
@@ -114,7 +115,8 @@ def _build_common_rules(max_topics: int) -> str:
 def _log_usage_and_cost(message, model: str) -> float:
     """Zaloguje token statistiky a odhad ceny API volání. Vrací odhad v USD.
 
-    Ceník odvozen z modelu (Haiku 4.5: $1/$5 in/out, jinak Sonnet: $3/$15).
+    Ceník odvozen z modelu (Haiku 5.5: $0.10/$0.50 do 100K tokenů promptu,
+    Haiku 4.5: $1/$5, jinak Sonnet: $3/$15).
     """
     _cr = getattr(message.usage, "cache_read_input_tokens", 0)
     _cw = getattr(message.usage, "cache_creation_input_tokens", 0)
@@ -125,7 +127,9 @@ def _log_usage_and_cost(message, model: str) -> float:
              message.usage.input_tokens, cache_read, cache_write)
     log.info("   📊 Output tokeny: %d", message.usage.output_tokens)
 
-    if "haiku" in model.lower():
+    if "haiku-5" in model.lower():
+        p_in, p_out, p_cr, p_cw = 0.10, 0.50, 0.01, 0.125
+    elif "haiku" in model.lower():
         p_in, p_out, p_cr, p_cw = 1.00, 5.00, 0.10, 1.25
     else:
         p_in, p_out, p_cr, p_cw = 3.00, 15.00, 0.30, 3.75
@@ -151,10 +155,11 @@ def _call_analysis_api(client, messages):
     """Volání Claude API. messages je list zpráv (může obsahovat multi-block content s cache_control)."""
     message = client.messages.create(
         model=config.ANALYSIS_MODEL,
-        # 5 kandidátních témat ~ až ×2.5 výstupu oproti původním 2; 4000 by ořezávalo
-        max_tokens=8000,
-        temperature=0.7,
+        # 5 kandidátních témat ~ až ×2.5 výstupu oproti původním 2; 4000 by ořezávalo.
+        # Moderní model do stropu počítá i přemýšlení, proto 16000.
+        max_tokens=llm_params.max_tokens_for(config.ANALYSIS_MODEL, 8000, 16000),
         messages=messages,
+        **llm_params.sampling_kwargs(config.ANALYSIS_MODEL, 0.7, effort="low"),
     )
     return message
 
@@ -223,7 +228,7 @@ VÝSTUP (seřaď od nejdůležitějšího, vytvoř PŘESNĚ {max_topics} témat 
     try:
         message = _call_analysis_api(client, messages)
 
-        result = message.content[0].text
+        result = llm_params.response_text(message)
 
         log.info("✅ Analýza dokončena")
         _log_usage_and_cost(message, config.ANALYSIS_MODEL)
@@ -276,14 +281,16 @@ def _build_analysis_tool(max_topics: int) -> dict:
 @_with_retry
 def _call_structured_api(client, messages, tools):
     """Volání Claude API se strukturovaným výstupem (tool_use). messages je list pro multi-block s cache_control."""
+    # Vynucený tool_choice Haiku 5.5 přijímá; odpověď pak začíná rovnou voláním
+    # nástroje bez přemýšlení, takže effort ani vyšší strop tu nejsou potřeba.
     return client.messages.create(
         model=config.ANALYSIS_MODEL,
         # 5 kandidátních témat ~ až ×2.5 výstupu oproti původním 2; 4000 by ořezávalo
         max_tokens=8000,
-        temperature=0.7,
         tools=tools,
         tool_choice={"type": "tool", "name": "submit_analysis"},
         messages=messages,
+        **llm_params.sampling_kwargs(config.ANALYSIS_MODEL, 0.7),
     )
 
 

@@ -1,5 +1,17 @@
 # Changelog — Gaming Content Agent
 
+## 2026-10-08 — Analýza, dedup a dayreel na Haiku 5.5
+
+Haiku 5.5 (`claude-haiku-5-5`) stojí $0,10 / $0,50 za MTok (prompt do 100K tokenů), Haiku 4.5 stálo $1 / $5. Nový model ale odmítá nedefaultní `temperature` (HTTP 400) a ve výchozím stavu přemýšlí: odpověď začíná blokem `thinking` a přemýšlení se počítá do `max_tokens`.
+
+- **`config.ANALYSIS_MODEL` a `config.DEDUP_MODEL`** — výchozí `claude-haiku-5-5` (přepsatelné přes `.env`, návrat na 4.5 funguje beze změny kódu).
+- **`llm_params.py`** (nový) — parametry podle generace modelu: moderním modelům se neposílá `temperature`, ale `output_config.effort` (přes `extra_body`, SDK 0.76), vyšší strop `max_tokens` a text se čte podle typu bloku. Haiku 4.5 dostává dál `temperature` jako dřív.
+- **`claude_analyzer`** — textová analýza effort `low` a strop 16 000; strukturovaná (vynucený `tool_choice`, Haiku 5.5 ho přijímá a nepřemýšlí) bez `temperature`; `content[0].text` → `llm_params.response_text`. Ceník v `_log_usage_and_cost` zná Haiku 5.5.
+- **`topic_dedup._llm_is_same_story`** — bez `temperature=0`, effort `low`, strop 250 → 2 000 (250 by skončilo uprostřed přemýšlení bez řádku VÝROK).
+- **`narrator_dayreel.generate_script`** — effort `low`, strop 1 500 → 8 000, `content[0].text` → `llm_params.response_text`.
+- Ostrý test 8. 10.: dedup správně u duplicity i ne-duplicity, strukturovaná analýza 3 platná témata za $0,0012 (na Haiku 4.5 by stejné volání stálo ~$0,012), 4 volání celkem $0,0027.
+- Testy: 10 nových (`tests/test_llm_params.py`), celkem **387**.
+
 ## 2026-09-22 — Téma bez stažitelných zdrojů už neshodí celý slot
 
 Běh ve 13:00 (`20260922_130002`) skončil `Publikovano 0/1` za 34 s. Analýza našla 5 témat, LLM dedup ale seznam oříznul na jedno **ještě před stahováním zdrojů** (`needed=MAX_TOPICS_PER_RUN`). Tím jedním byl Minecraft Live 2026 s jediným zdrojem z GameSpotu, který skriptu vrací **403** (blokuje stahování dlouhodobě, v logu od 24. 8. 45 selhání). Záložní hledání v RSS našlo zase tutéž URL, zkusilo ji podruhé a téma se přeskočilo. Zbylí 4 kandidáti se nezkusili, přestože zdroje měli (přehráno nanečisto na datech běhu: #2 Xbox propouštění 2 zdroje, #3–#5 po jednom).

@@ -128,13 +128,15 @@ ARTICLE_EFFORT = os.getenv("ARTICLE_EFFORT", "low")
 # je mechanická práce — nemá smysl na ni platit sazbu Opusu.
 TRANSLATION_MODEL = os.getenv("TRANSLATION_MODEL", "claude-sonnet-4-6")
 
-# Model pro analýzu (přepisovatelný přes .env). Haiku 4.5 je 5× levnější než Sonnet
-# a pro výběr top témat z RSS feedů plně dostačuje.
-ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "claude-haiku-4-5-20251001")
+# Model pro analýzu (přepisovatelný přes .env). Haiku je řádově levnější než Sonnet
+# a pro výběr top témat z RSS feedů plně dostačuje. Od 8. 10. 2026 Haiku 5.5
+# ($0.10/$0.50 za MTok, 10× levnější než Haiku 4.5); parametry volání podle
+# generace modelu řeší llm_params.
+ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "claude-haiku-5-5")
 
 # Model pro sémantický dedup (druhá vrstva po lexikálním filtru). Haiku stačí —
 # rozhoduje jen ANO/NE, jestli jde o tutéž novinku i při přejmenované entitě.
-DEDUP_MODEL = os.getenv("DEDUP_MODEL", "claude-haiku-4-5-20251001")
+DEDUP_MODEL = os.getenv("DEDUP_MODEL", "claude-haiku-5-5")
 
 # Maximální délka summary při scrapování RSS (znaky)
 SUMMARY_MAX_LENGTH = _env_int("SUMMARY_MAX_LENGTH", 500)
