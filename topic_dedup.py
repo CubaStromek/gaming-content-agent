@@ -6,7 +6,7 @@ Porovnává nová témata s historií v publish_log (posledních 7 dní).
 import json
 import re
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Tuple
+from typing import Callable, Dict, Iterator, List, Optional, Tuple
 from database import get_db
 from logger import setup_logger
 
@@ -253,37 +253,36 @@ def _llm_is_same_story(client, new_topic: Dict, recent: List[Dict]) -> Tuple[Opt
     return (None, reason)
 
 
-def llm_filter_duplicate_topics(topics: List[Dict], needed: Optional[int] = None) -> Tuple[List[Dict], List[Dict]]:
+def iter_llm_unique_topics(topics: List[Dict],
+                           on_duplicate: Optional[Callable[[Dict], None]] = None) -> Iterator[Dict]:
     """Sémantická druhá vrstva dedupu (po lexikálním `filter_duplicate_topics`).
 
     Chytá případy, kdy se entita mezi běhy přejmenuje (ráno „bezejmenná závodní hra
     Maverick Games", odpoledne „Clutch") — na to lexikální shoda jména ani Jaccard
-    nestačí. Vrací (unique, duplicates) se stejným `_dedup_match` formátem.
+    nestačí.
 
-    `needed`: kolik přeživších témat volajícímu stačí (publish limit). Jakmile jich
-    tolik projde, zbylí níže seřazení kandidáti se už LLM nekontrolují (šetří volání)
-    a tiše se zahodí — stejně by se nepublikovali.
+    Líný generátor: kandidát se LLM kontroluje, až když si o něj volající řekne.
+    auto_publish tak bere kandidáty jen do chvíle, kdy jeden opravdu napíše —
+    zbylé níže seřazené nekontroluje (šetří volání), a když téma odpadne z jiného
+    důvodu (nestažitelné zdroje), prostě si řekne o další. Duplicity se nevydávají,
+    ale předají `on_duplicate` se stejným `_dedup_match` formátem jako lexikální vrstva.
     """
     if not topics:
-        return (topics, [])
+        return
 
     recent = get_recent_published_topics()
     if not recent:
-        return (topics[:needed] if needed else topics, [])
+        yield from topics
+        return
 
     import anthropic
     import config
     client = anthropic.Anthropic(api_key=config.CLAUDE_API_KEY, max_retries=2)
 
-    unique, duplicates = [], []
-    for i, topic in enumerate(topics):
-        if needed is not None and len(unique) >= needed:
-            log.info("LLM dedup: mám %d témat (limit), %d zbylých kandidátů nekontroluji",
-                     len(unique), len(topics) - i)
-            break
+    for topic in topics:
         idx, reason = _llm_is_same_story(client, topic, recent)
         if idx is None:
-            unique.append(topic)
+            yield topic
             continue
         match = recent[idx - 1]
         log.warning(
@@ -298,9 +297,8 @@ def llm_filter_duplicate_topics(topics: List[Dict], needed: Optional[int] = None
             'sim_score': None,
             'match_type': 'llm',
         }
-        duplicates.append(enriched)
-
-    return (unique, duplicates)
+        if on_duplicate:
+            on_duplicate(enriched)
 
 
 def format_recent_topics_for_prompt(days: int = 3) -> str:

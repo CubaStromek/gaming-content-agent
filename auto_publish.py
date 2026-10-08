@@ -1,7 +1,7 @@
 """
 Auto Publish Pipeline
 Automaticky stahne RSS, analyzuje, napise clanky a publikuje na GAMEfo.cz
-Spousteno 5x denne pres launchd (8:00, 11:00, 14:00, 17:00, 20:00)
+Spousteno 3x denne pres launchd (8:00, 13:00, 19:00)
 """
 
 import os
@@ -32,25 +32,38 @@ log = setup_logger('auto_publish')
 _publish_lock = publish_pipeline.publish_lock
 _extract_excerpt = publish_pipeline.extract_excerpt
 
-# Publish limit na běh. Analyzátor vrací až 5 kandidátů seřazených podle
-# důležitosti (claude_analyzer.CANDIDATE_TOPICS) — dedup je profiltruje a
-# publikuje se první přeživší. Níže seřazení kandidáti slouží jako záloha,
-# když nejvirálnější témata už vyšla dřív (jinak běh nepublikoval nic).
+# Limit na běh = kolik článků se smí VYGENEROVAT (placené volání), ne kolik
+# kandidátů se zkusí. Analyzátor vrací až 5 kandidátů seřazených podle
+# důležitosti (claude_analyzer.CANDIDATE_TOPICS); běh jde po pořadí a níže
+# seřazení slouží jako záloha — když je téma duplicitní nebo nemá ani jeden
+# stažitelný zdroj, zkusí se další (obojí je zadarmo). Dřív se seznam oříznul
+# na limit ještě před stahováním zdrojů a běh 22. 9. ve 13:00 tak skončil 0/1,
+# protože jediné vybrané téma mělo jen zdroj z GameSpotu (403).
 #
-# Od 16. 8. 2026 jeden článek na běh: dřív to byly 2 články × 5 běhů = 10 denně,
-# teď 1 × 8 běhů = 8 denně. Objem tedy nese rozvrh v LaunchAgentu
-# (com.gamefo.autopublish, každých 105 minut od 8:00), ne tahle konstanta —
-# díky tomu nevycházejí dva články ve stejnou minutu.
+# Jeden článek na běh; objem nese rozvrh v LaunchAgentu (com.gamefo.autopublish,
+# od 19. 8. 2026 sloty 8/13/19), ne tahle konstanta.
 MAX_TOPICS_PER_RUN = config._env_int("MAX_TOPICS_PER_RUN", 1)
 
 
+def _log_duplicate(dup, run_id):
+    publish_log.log_decision({
+        'action': 'skipped',
+        'reason': 'duplicate_topic',
+        'run_id': run_id,
+        'topic': dup.get('topic', ''),
+        'score': dup.get('virality_score', 0),
+        'dedup_match': dup.get('_dedup_match'),
+    })
+
+
 def _pick_topics(articles, run_dir, run_id):
-    """Etapa 1: Claude analýza → seznam témat po deduplikaci.
+    """Etapa 1: Claude analýza → kandidáti po deduplikaci.
 
     Loguje do publish_log:
     - `proposed`: kompletní seznam témat, co Claude navrhl (decision-transparency)
     - `skipped` s reason=duplicate_topic: každé téma odfiltrované dedup, vč. detailu shody
-    Vrací list(topic) nebo None pokud nelze pokračovat.
+    Vrací líný iterátor kandidátů v pořadí důležitosti (LLM dedup proběhne, až
+    si o kandidáta smyčka v `run()` řekne), nebo None pokud nelze pokračovat.
     """
     articles_text = rss_scraper.format_articles_for_analysis(articles)
 
@@ -111,31 +124,18 @@ def _pick_topics(articles, run_dir, run_id):
     })
 
     topics, dup_topics = topic_dedup.filter_duplicate_topics(topics)
-    # Sémantická druhá vrstva: chytí přejmenované entity (ráno bezejmenná hra,
-    # odpoledne s oficiálním názvem), na které lexikální shoda nestačí.
-    # `needed`: jakmile přežije MAX_TOPICS_PER_RUN témat, zbytek se nekontroluje.
-    topics, llm_dups = topic_dedup.llm_filter_duplicate_topics(topics, needed=MAX_TOPICS_PER_RUN)
-    dup_topics.extend(llm_dups)
     for dup in dup_topics:
-        publish_log.log_decision({
-            'action': 'skipped',
-            'reason': 'duplicate_topic',
-            'run_id': run_id,
-            'topic': dup.get('topic', ''),
-            'score': dup.get('virality_score', 0),
-            'dedup_match': dup.get('_dedup_match'),
-        })
+        _log_duplicate(dup, run_id)
 
     if not topics:
         log.info("Všechna témata jsou duplicitní. Končím.")
         return None
 
-    if len(topics) > MAX_TOPICS_PER_RUN:
-        log.info("Po dedupu zbývá %d kandidátů, publikuji top %d", len(topics), MAX_TOPICS_PER_RUN)
-        topics = topics[:MAX_TOPICS_PER_RUN]
-
-    log.info("Po deduplikaci: %d témat k publikaci", len(topics))
-    return topics
+    log.info("Po lexikální deduplikaci: %d kandidátů", len(topics))
+    # Sémantická druhá vrstva: chytí přejmenované entity (ráno bezejmenná hra,
+    # odpoledne s oficiálním názvem), na které lexikální shoda nestačí.
+    return topic_dedup.iter_llm_unique_topics(
+        topics, on_duplicate=lambda dup: _log_duplicate(dup, run_id))
 
 
 def _collect_source_texts(topic, articles):
@@ -166,14 +166,19 @@ def _collect_source_texts(topic, articles):
     topic_keywords = set(topic_name.lower().split())
     topic_keywords -= {'a', 'the', 'of', 'in', 'for', 'on', 'to', 'is', '-', '–', 'and', 'pro',
                        'nový', 'nová', 'nové', 'že', 'se', 'na', 'je', 'z', 'do', 'od', 'při', 'za'}
+    # Zdroj tématu je v RSS taky, takže by se jako „alternativa" našel znovu —
+    # a hned zase selhal (typicky 403 u GameSpotu).
+    tried_urls = set(source_urls_in[:3])
     fallback_urls = []
     for art in articles:
         art_text = f"{art.get('title', '')} {art.get('summary', '')}".lower()
         matches = sum(1 for kw in topic_keywords if kw in art_text)
-        if matches >= min(2, len(topic_keywords)) and art['link'] not in valid_source_urls:
+        if matches >= min(2, len(topic_keywords)) and art['link'] not in tried_urls:
             fallback_urls.append(art['link'])
 
-    if fallback_urls:
+    if not fallback_urls:
+        log.info("Žádná další URL k tématu v RSS")
+    else:
         log.info("Nalezeno %d alternativních URL, zkouším stáhnout...", len(fallback_urls))
         for url in fallback_urls[:5]:
             text = article_writer.scrape_full_article(url)
@@ -239,20 +244,44 @@ def run():
         return
 
     # 4. Etapa „pick_topics": Claude analýza + dedup
-    topics = _pick_topics(articles, run_dir, run_id)
-    if not topics:
+    candidates = _pick_topics(articles, run_dir, run_id)
+    if candidates is None:
         return
 
-    # 5. Etapa „produce_articles + publish_and_promote": pro každé téma napsat + publikovat
+    # 5. Etapa „produce_articles + publish_and_promote": kandidáty brát po pořadí,
+    # dokud se nevyčerpá limit placených generování. Další kandidát se vytáhne
+    # (a teprve pak LLM-dedupuje) jen tehdy, když na něj limit ještě zbývá.
+    candidates = iter(candidates)
+    tried_count = 0
+    generated_count = 0
     published_count = 0
     aborted_mid_run = False
-    for i, topic in enumerate(topics, 1):
+    while generated_count < MAX_TOPICS_PER_RUN:
+        topic = next(candidates, None)
+        if topic is None:
+            break
+        tried_count += 1
         topic_name = topic.get('topic', 'Neznámé')
         title = topic.get('title', topic_name)
         virality = topic.get('virality_score', 0)
 
         log.info("-" * 40)
-        log.info("TEMA %d/%d: %s (viralita: %d)", i, len(topics), topic_name, virality)
+        log.info("KANDIDÁT %d: %s (viralita: %d)", tried_count, topic_name, virality)
+
+        source_texts, source_urls, failed_sources = _collect_source_texts(topic, articles)
+
+        if not source_texts:
+            log.warning("Zadne zdrojove texty pro '%s' (ani po fallbacku), zkousim dalsiho kandidata",
+                        topic_name)
+            publish_log.log_decision({
+                'action': 'skipped',
+                'reason': 'no_source_texts',
+                'run_id': run_id,
+                'topic': topic_name,
+                'score': virality,
+                'failed_sources': failed_sources,
+            })
+            continue
 
         # Pre-flight: WP musí být dostupný PŘED drahým generováním. Jinak bychom
         # zaplatili Claude za článek, který nejde publikovat (spadlá VPN / Webglobe
@@ -281,21 +310,9 @@ def run():
             aborted_mid_run = True
             break
 
-        source_texts, source_urls, failed_sources = _collect_source_texts(topic, articles)
-
-        if not source_texts:
-            log.warning("Zadne zdrojove texty pro '%s' (ani po fallbacku), preskakuji", topic_name)
-            publish_log.log_decision({
-                'action': 'skipped',
-                'reason': 'no_source_texts',
-                'run_id': run_id,
-                'topic': topic_name,
-                'score': virality,
-                'failed_sources': failed_sources,
-            })
-            continue
-
-        # Generovani clanku (CZ + EN)
+        # Generovani clanku (CZ + EN) — od teď placené, počítá se do limitu běhu
+        # i když selže (jinak by výpadek API pálil peníze na každém kandidátovi).
+        generated_count += 1
         log.info("Generuji clanek...")
         article = article_writer.write_article(topic, source_texts)
         if 'error' in article:
@@ -385,7 +402,11 @@ def run():
     # 9. Shrnutí
     elapsed = (datetime.now() - start_time).total_seconds()
     log.info("=" * 60)
-    log.info("HOTOVO! Publikovano %d/%d clanku za %.0f sekund", published_count, len(topics), elapsed)
+    if generated_count == 0 and not aborted_mid_run:
+        log.warning("Nic k napsání — kandidáti byli duplicitní nebo bez stažitelných zdrojů "
+                    "(zdroje zkoušeny u %d)", tried_count)
+    log.info("HOTOVO! Publikovano %d/%d clanku za %.0f sekund (vyzkouseno kandidatu: %d)",
+             published_count, MAX_TOPICS_PER_RUN, elapsed, tried_count)
     log.info("=" * 60)
 
 

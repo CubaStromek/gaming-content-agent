@@ -1,5 +1,19 @@
 # Changelog — Gaming Content Agent
 
+## 2026-09-22 — Téma bez stažitelných zdrojů už neshodí celý slot
+
+Běh ve 13:00 (`20260922_130002`) skončil `Publikovano 0/1` za 34 s. Analýza našla 5 témat, LLM dedup ale seznam oříznul na jedno **ještě před stahováním zdrojů** (`needed=MAX_TOPICS_PER_RUN`). Tím jedním byl Minecraft Live 2026 s jediným zdrojem z GameSpotu, který skriptu vrací **403** (blokuje stahování dlouhodobě, v logu od 24. 8. 45 selhání). Záložní hledání v RSS našlo zase tutéž URL, zkusilo ji podruhé a téma se přeskočilo. Zbylí 4 kandidáti se nezkusili, přestože zdroje měli (přehráno nanečisto na datech běhu: #2 Xbox propouštění 2 zdroje, #3–#5 po jednom).
+
+Frekvence: od 24. 8. skončily bez publikace 2 běhy z 89 (22. 9. 13:00 a 1. 9. 19:00), téma bez zdrojů se přeskočilo celkem 33×, z toho 10× kvůli GameSpotu. Při třech slotech denně ale každé takové selhání stojí třetinu dne.
+
+- **`auto_publish.run`** — limit běhu (`MAX_TOPICS_PER_RUN`) nově počítá **placená generování**, ne vybraná témata. Kandidáti se berou po pořadí: duplicitní nebo bez stažitelného zdroje → další (obojí zadarmo). Selhané generování (`write_error`) nebo publikace se do limitu počítá, takže výpadek API nepálí peníze na každém kandidátovi zvlášť.
+- **`topic_dedup.iter_llm_unique_topics`** — LLM dedup je nově líný generátor a nahrazuje `llm_filter_duplicate_topics(needed=…)`. Haiku kontroluje kandidáta, až když si o něj smyčka řekne, takže úspora volání zůstává: po vygenerování článku se další kandidát nevytáhne.
+- **WP preflight** se přesunul za stahování zdrojů, hned před generování. Hlídá dál totéž a na kandidáta bez zdrojů už se WP zbytečně neptá.
+- **`_collect_source_texts`** — fallback z RSS vynechává URL, které už jednou selhaly (dřív znovu zkoušel tentýž článek z GameSpotu).
+- Log: `TEMA 1/1` → `KANDIDÁT n`, souhrn `Publikovano x/limit (vyzkouseno kandidatu: n)` a varování, když běh nenapsal nic.
+- Testy: 6 nových integračních (`tests/test_auto_publish_candidates.py`, z toho jeden přes skutečné `_pick_topics`, který na starém kódu reprodukuje přesně `Po deduplikaci: 1 témat` → `Publikovano 0/1`), 4 testy dedupu převedeny na generátor, celkem **377**. Všech 10 na starém kódu padá.
+- ⏳ **Neřešeno:** GameSpot 403 samotný. Téma, které má zdroj jen tam, se dál nenapíše, jen už neshodí slot.
+
 ## 2026-08-23 — WP výpadek po generování už nespálí téma
 
 Běh ve 13:00 (`20260823_130001`) skončil `Publikovano 0/1`. Preflight ve 13:00:43 hlásil WP nahoře, generování článku „Diablo 4: Lord of Hatred" trvalo 106 s a healthcheck ve 13:02:36 spadl na 8s timeout. gamefo.cz byl přitom o pár minut později zase v pořádku (0,35 s) — šlo o chvilkový blip, ne o výpadek.

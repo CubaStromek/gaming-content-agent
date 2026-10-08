@@ -34,7 +34,8 @@ log = setup_logger(__name__)
 
 # Počet kandidátních témat od analyzátoru. Publikuje se jen top N přeživších
 # dedup (auto_publish.MAX_TOPICS_PER_RUN); zbytek je záloha pro případ, že
-# nejvirálnější témata už byla publikována v dřívějším běhu dne.
+# nejvirálnější témata už byla publikována v dřívějším běhu dne, nebo nemají
+# ani jeden stažitelný zdroj.
 CANDIDATE_TOPICS = 5
 
 try:
